@@ -1,0 +1,69 @@
+{
+  "LLMClient": "ollama",
+  "args": {
+    "OLLAMA_API_URL": "http://ollama:11434"
+  },
+  "pipeline": {
+    "options": {
+      "model_name": "qwen2.5-coder:3b",
+      "strategy": "json",
+      "temperature": 0.1,
+      "top_p": 0.8,
+      "num_ctx": 32768
+    },
+    "tasks": [
+      {
+        "id": "root",
+        "task": "cleaner",
+        "maxRetryCount": 2,
+        "next": ["convert"],
+        "validation": "canCompile"
+      },
+      {
+        "id": "convert",
+        "task": "coder",
+        "task_args": { "reader": "go" },
+        "maxRetryCount": 2,
+        "validation": "canCompile",
+        "next": ["builder"]
+      },
+      {
+        "id": "builder",
+        "task": "goBuilder",
+        "canApply": "canCompile",
+        "recovery": "gollmRecovery",
+        "maxRetryCount": 4,
+        "next": ["goTester"]
+      },
+      {
+        "id": "gollmRecovery",
+        "task": "fixer",
+        "canApply": "canCompile",
+        "task_args": { "reader": "go" },
+        "maxRetryCount": 6
+      },
+      {
+        "id": "goTester",
+        "task": "goTester",
+        "canApply": "canCompile",
+        "maxRetryCount": 5,
+        "recovery": "testRecovery"
+      },
+      {
+        "id": "testRecovery",
+        "task": "realign",
+        "canApply": "canCompile",
+        "task_args": { "reader": "go" },
+        "maxRetryCount": 3,
+        "next": ["testRecoveryBuild"]
+      },
+      {
+        "id": "testRecoveryBuild",
+        "canApply": "canCompile",
+        "task": "goBuilder",
+        "recovery": "gollmRecovery",
+        "maxRetryCount": 3
+      }
+    ]
+  }
+}

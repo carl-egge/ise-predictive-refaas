@@ -1,0 +1,32 @@
+services:
+  refaas:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      - OLLAMA_API_URL=${OLLAMA_API_URL}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL}
+    volumes:
+      - ./chatlogs:/app/chatlogs
+      - ./data:/app/data
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      # Ollama runs its own defaults; no extra env vars required here.
+      - OLLAMA_ALLOW_NETWORK=false
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

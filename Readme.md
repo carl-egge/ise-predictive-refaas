@@ -34,6 +34,7 @@
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Usage](#usage)
+- [Docker](#docker)
   - [🧪 Example Usage](#-example-usage)
     - [1. Upload a File](#1-upload-a-file)
     - [2. Check if a Job Exists](#2-check-if-a-job-exists)
@@ -156,6 +157,21 @@ Run the project with:
 ```sh
 go run .
 ```
+
+## Docker
+
+Start the service using Docker Compose. Copy the example env file and update secrets before running:
+
+```sh
+cp .env.example .env
+# Edit .env and set your keys (e.g. GEMINI_API_KEY)
+docker compose up --build
+```
+
+The compose file exposes port `8080` on the host. Replace `OLLAMA_API_URL` in `.env` to point to a running Ollama instance if you use the `ollama` backend.
+
+If you need a local Ollama server, enable the optional `ollama` service in `docker-compose.yml` and adjust `OLLAMA_API_URL` accordingly.
+
 
 This will start the service running on port 8080. However, for isolation, it is recommended to run the service in a Docker container, see [Docker](#docker) for more details.
 

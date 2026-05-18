@@ -8,7 +8,7 @@ FROM golang:latest
 
 WORKDIR /app
 COPY --from=builder /app/refaas .
-COPY --from=builder /app/config.yaml .
+COPY --from=builder /app/default.yaml .
 
 EXPOSE 8080
 CMD ["./refaas"]
