@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"runtime/debug"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // NewPipeline initializes a new pipeline
@@ -97,7 +98,7 @@ func (p *Pipeline) executeTask(runner *PipelineRunner, req *ConversionRequest, t
 
 				if task.OnFailure != nil {
 					req.err = append(req.err, err)
-					log.Debugf("atempting to recover task %s before retring", task.ID)
+					log.Debugf("atempting to recover task %s before retrying", task.ID)
 					err = p.executeTask(runner, req, task.OnFailure)
 					if err == nil {
 						// Continue to next retry attempt of TaskB without exceeding max retries

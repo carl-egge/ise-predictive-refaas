@@ -3,9 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
-	"os"
 )
 
 type PipelineRunner struct {
@@ -18,7 +19,8 @@ type PipelineRunner struct {
 }
 
 type ConverterOptions struct {
-	Pipeline *PipelineFile `json:"pipeline",omitempty`
+	Pipeline         *PipelineFile `json:"pipeline",omitempty`
+	CompiledPipeline *Pipeline     `json:"compiledPipeline,omitempty"`
 
 	LLMClient string         `json:"LLMClient"`
 	Args      map[string]any `json:"args"`
@@ -59,7 +61,9 @@ func MakeCodeConverter(ops *ConverterOptions) (*PipelineRunner, error) {
 		return nil, err
 	}
 	var pipeline *Pipeline
-	if ops.Pipeline != nil {
+	if ops.CompiledPipeline != nil {
+		pipeline = ops.CompiledPipeline
+	} else if ops.Pipeline != nil {
 		pipeline, err = compilePipeline(*ops.Pipeline)
 		if err != nil {
 			return nil, err
@@ -98,7 +102,16 @@ func (cc *PipelineRunner) Reconfigure(ops *ConverterOptions) error {
 	}
 
 	if ops.Pipeline == nil {
-		return fmt.Errorf("no pipeline specified")
+		if ops.CompiledPipeline == nil {
+			return fmt.Errorf("no pipeline specified")
+		}
+	}
+
+	if ops.CompiledPipeline != nil {
+		cc.WorkingDir = ""
+		cc.pipeline = ops.CompiledPipeline
+		cc.client = api_client
+		return nil
 	}
 
 	pipeline, err := compilePipeline(*ops.Pipeline)

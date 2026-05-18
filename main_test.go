@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	log "github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/assert"
-	"golang.org/x/exp/maps"
 	"io"
 	"os"
 	"path"
@@ -14,6 +11,10 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
+	"golang.org/x/exp/maps"
 )
 
 func TestPipelineReader(t *testing.T) {
@@ -74,8 +75,11 @@ func TestFullConversion(t *testing.T) {
 
 	log.SetLevel(log.DebugLevel)
 	cc, err := MakeCodeConverter(&ConverterOptions{
-		"http://swkgpu1.informatik.uni-hamburg.de:11434",
-	}, pipeline)
+		CompiledPipeline: pipeline,
+		Args: map[string]any{
+			"OLLAMA_API_URL": "http://swkgpu1.informatik.uni-hamburg.de:11434",
+		},
+	})
 
 	assert.Nil(t, err)
 
@@ -235,8 +239,10 @@ func validateFromFolder(t *testing.T, dir string) {
 	for _, file := range files {
 		t.Run(fmt.Sprintf("%s_%s", experiment, file), func(t *testing.T) {
 			cc, err := MakeCodeConverter(&ConverterOptions{
-				OLLAMA_API_URL,
-			}, nil)
+				Args: map[string]any{
+					"OLLAMA_API_URL": OLLAMA_API_URL,
+				},
+			})
 			if err != nil {
 				t.Fatal(err)
 			}

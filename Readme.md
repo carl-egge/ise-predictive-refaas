@@ -240,12 +240,12 @@ curl -X POST -H "Content-Type: application/json" -d '{
         "id": "builder",
         "task": "goBuilder",
         "canApply": "canCompile",
-        "recovery": "gollmReovery",
+        "recovery": "gollmRecovery",
         "maxRetryCount": 4,
         "next": ["goTester"]
       },
       {
-        "id": "gollmReovery",
+        "id": "gollmRecovery",
         "task": "fixer",
         "canApply": "canCompile",
         "task_args": {"reader": "go"},
@@ -270,7 +270,7 @@ curl -X POST -H "Content-Type: application/json" -d '{
         "id": "testRecoveryBuild",
         "canApply": "canCompile",
         "task": "goBuilder",
-        "recovery": "gollmReovery",
+        "recovery": "gollmRecovery",
         "maxRetryCount": 3
       }
     ]

@@ -19,11 +19,11 @@ tasks:
       - "builder"
   - id: "builder"
     task: "goBuilder"
-    recovery: "gollmReovery"
+    recovery: "gollmRecovery"
     retryDelay: "5s"
     maxRetryCount: 3
     validation: "goTester"
-  - id: "gollmReovery"
+  - id: "gollmRecovery"
     task: "fixer"
     task_args:
       reader: go
