@@ -1,3 +1,5 @@
+// Package main provides the converter orchestration and option parsing
+// used to create and run `PipelineRunner` instances.
 package main
 
 import (
@@ -9,15 +11,18 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// PipelineRunner ties together an `LLMInvocationClient`, compiled
+// `Pipeline`, and runtime context for performing conversions.
 type PipelineRunner struct {
 	context.Context
-	//internals
 	client LLMInvocationClient
 
 	pipeline   *Pipeline
 	WorkingDir string
 }
 
+// ConverterOptions holds configuration used when creating or
+// reconfiguring a `PipelineRunner`.
 type ConverterOptions struct {
 	Pipeline         *PipelineFile `json:"pipeline",omitempty`
 	CompiledPipeline *Pipeline     `json:"compiledPipeline,omitempty"`
@@ -48,6 +53,7 @@ var DefaultOptions = ConverterOptions{
 	},
 }
 
+// MakeCodeConverter constructs a `PipelineRunner` from `ConverterOptions`.
 func MakeCodeConverter(ops *ConverterOptions) (*PipelineRunner, error) {
 	if ops == nil {
 		ops = &DefaultOptions
@@ -77,6 +83,8 @@ func MakeCodeConverter(ops *ConverterOptions) (*PipelineRunner, error) {
 	}, nil
 }
 
+// MakeConversionRequest creates a new `ConversionRequest` from a
+// source `DeploymentPackage`.
 func MakeConversionRequest(srcPkg *DeploymentPackage) *ConversionRequest {
 	return &ConversionRequest{
 		Id:            uuid.New(),
@@ -88,12 +96,16 @@ func MakeConversionRequest(srcPkg *DeploymentPackage) *ConversionRequest {
 	}
 }
 
+// Convert runs the configured pipeline against `req` and returns any
+// error encountered.
 func (cc *PipelineRunner) Convert(req *ConversionRequest) error {
 	req.WorkingPackage = req.SourcePackage.copy()
 
 	return cc.pipeline.Execute(cc, req)
 }
 
+// Reconfigure updates the runner with new `ConverterOptions`, swapping
+// its pipeline and LLM client.
 func (cc *PipelineRunner) Reconfigure(ops *ConverterOptions) error {
 	ops.setDefaults()
 	api_client, err := LLMClientFactories[ops.LLMClient](ops.Args)
@@ -130,6 +142,9 @@ func (cc *PipelineRunner) Reconfigure(ops *ConverterOptions) error {
 	return nil
 }
 
+// ConvertFromFileBest reads a deployment package from `sourceFile`,
+// marks it as a Python source and runs a conversion, returning the
+// request and any error.
 func (cc *PipelineRunner) ConvertFromFileBest(sourceFile string) (*ConversionRequest, error) {
 	dp, err := cc.ReadDeploymentPackageFromFile(sourceFile)
 	if err != nil {

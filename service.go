@@ -1,3 +1,5 @@
+// Package main exposes a small HTTP service that accepts zip packages,
+// enqueues conversion requests and exposes results and metrics.
 package main
 
 import (
@@ -5,16 +7,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/gorilla/mux"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	log "github.com/sirupsen/logrus"
 )
 
+// ConverterService manages background conversion jobs and exposes an
+// HTTP interface for submitting and retrieving results.
 type ConverterService struct {
 	converter    *PipelineRunner
 	requestQueue chan *ConversionRequest
@@ -49,6 +54,8 @@ func setFileFromEnv(key, defaultvalue string) string {
 	return defaultvalue
 }
 
+// MakeConverterService constructs and starts the HTTP converter
+// service; it blocks by calling `http.ListenAndServe`.
 func MakeConverterService() error {
 	options := DefaultOptions
 	options.Args["OLLAMA_API_URL"] = setOrDefault("OLLAMA_API_URL", OLLAMA_API_URL)
@@ -80,6 +87,8 @@ func MakeConverterService() error {
 	return http.ListenAndServe("0.0.0.0:8080", r)
 }
 
+// Start runs the background worker loop that processes queued
+// conversion requests.
 func (service *ConverterService) Start(ctx context.Context) {
 	for request := range service.requestQueue {
 		log.Infof("starting request for %s", request.Id)
@@ -108,6 +117,8 @@ func (service *ConverterService) Start(ctx context.Context) {
 		service.mutex.Unlock()
 	}
 }
+
+// metricsHandler returns JSON metrics for finished jobs.
 func (service *ConverterService) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	service.mutex.RLock()
 	metrics_data, err := json.Marshal(service.metrics)
@@ -118,6 +129,9 @@ func (service *ConverterService) metricsHandler(w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(metrics_data)
 }
+
+// pollHandler allows clients to check job status or download the
+// converted package.
 func (service *ConverterService) pollHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	jobUUID, err := uuid.Parse(vars["uuid"])
@@ -167,6 +181,7 @@ func (service *ConverterService) pollHandler(w http.ResponseWriter, r *http.Requ
 	}
 }
 
+// sendError writes a JSON error response to the client.
 func sendError(w http.ResponseWriter, core_err error) {
 
 	errorMsg := make(map[string]string)
@@ -181,6 +196,8 @@ func sendError(w http.ResponseWriter, core_err error) {
 	}
 }
 
+// uploadHandler accepts a multipart form with a `.zip` file and
+// enqueues it for conversion.
 func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Request) {
 	// Limit file size (50MB max)
 	r.Body = http.MaxBytesReader(w, r.Body, 50<<20) // 50MB
@@ -229,6 +246,8 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 	http.Redirect(w, r, fmt.Sprintf("/%s", request.Id.String()), http.StatusCreated)
 }
 
+// inMemoryReader implements `io.ReaderAt` for an in-memory byte slice
+// used by the upload handler.
 type inMemoryReader struct {
 	data []byte
 }

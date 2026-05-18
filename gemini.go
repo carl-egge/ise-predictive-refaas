@@ -1,3 +1,5 @@
+// Package main contains a Gemini client wrapper that uses Google's
+// generative AI SDK to produce package text and metrics.
 package main
 
 import (
@@ -5,19 +7,23 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"github.com/google/generative-ai-go/genai"
-	log "github.com/sirupsen/logrus"
-	"google.golang.org/api/option"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/google/generative-ai-go/genai"
+	log "github.com/sirupsen/logrus"
+	"google.golang.org/api/option"
 )
 
+// GeminiInvocationClient wraps the Gemini SDK and exposes the
+// LLMInvocationClient interface.
 type GeminiInvocationClient struct {
 	geminiAPIKey string
 	model        string
 }
 
+// Configure sets the API key and optionally a model name.
 func (g *GeminiInvocationClient) Configure(args map[string]interface{}) error {
 
 	key, err := args["GEMINI_API_KEY"]
@@ -36,6 +42,7 @@ func (g *GeminiInvocationClient) Configure(args map[string]interface{}) error {
 	return nil
 }
 
+// Prepare allows overriding the model via runtime args.
 func (g *GeminiInvocationClient) Prepare(args map[string]interface{}) error {
 	if args == nil {
 		return nil
@@ -47,6 +54,8 @@ func (g *GeminiInvocationClient) Prepare(args map[string]interface{}) error {
 	return nil
 }
 
+// InvokeLLM calls Gemini to generate content and returns the response
+// text with `Metrics` about the invocation.
 func (g *GeminiInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer) (string, Metrics, error) {
 	start := time.Now()
 	client, err := genai.NewClient(ctx, option.WithAPIKey(g.geminiAPIKey))
@@ -107,6 +116,7 @@ func (g *GeminiInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer
 	return out, metrics, nil
 }
 
+// logLLMResponse persists a chatlog of query/response for debugging.
 func (g *GeminiInvocationClient) logLLMResponse(args ...string) {
 	fhash := []byte(args[0])
 	fname := fmt.Sprintf("chatlogs/%s_%8x_%d.log", g.model, sha256.Sum256(fhash), time.Now().UnixMicro())

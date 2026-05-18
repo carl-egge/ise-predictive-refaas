@@ -1,3 +1,6 @@
+// Package main implements a small pipeline that converts Python artifacts
+// into Go code using various LLM-backed converters and helpers.
+// The comments in this file document exported types used across the project.
 package main
 
 import (
@@ -6,17 +9,22 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
 	"iter"
 	"maps"
 	"time"
+
+	"github.com/google/uuid"
 )
 
+// Converter defines a single conversion step that can be applied to a
+// `ConversionRequest` within a `PipelineRunner`.
 type Converter interface {
 	Apply(*PipelineRunner, *ConversionRequest) error
 }
 
 // ConversionTask represents a step in the pipeline
+// ConversionTask represents a step in the pipeline, including retry
+// behaviour, recovery and links to the next tasks.
 type ConversionTask struct {
 	ID            string
 	Execute       Converter         // Task execution function
@@ -29,6 +37,8 @@ type ConversionTask struct {
 	Validation    Converter
 }
 
+// ConverterFactory creates a `Converter` from a set of configuration
+// options.
 type ConverterFactory func(map[string]interface{}) Converter
 
 var ConverterFactories map[string]ConverterFactory = map[string]ConverterFactory{
@@ -44,21 +54,24 @@ var ConverterFactories map[string]ConverterFactory = map[string]ConverterFactory
 }
 
 // Pipeline represents the workflow pipeline
+// Pipeline is a sequence of `ConversionTask` steps with a defined root
+// `FirstTask`.
 type Pipeline struct {
 	FirstTask *ConversionTask
 }
 
+// LLMInvocationClient abstracts calls to an LLM provider: configure,
+// prepare options, invoke with a prompt buffer and optionally log the
+// response.
 type LLMInvocationClient interface {
-	//Configures the client to serve multiple invocations, e.g., setting up a conncetion pool
 	Configure(args map[string]interface{}) error
-	//Prepares a request to the client, e.g., changing invocation parameters. WARNNING, could create raise conditions.
 	Prepare(map[string]interface{}) error
-	//InvokeLLM takes the given prompt and invokes the llm
 	InvokeLLM(ctx context.Context, buf bytes.Buffer) (string, Metrics, error)
-	//logs details about a llm invocation to a file and console
 	logLLMResponse(...string)
 }
 
+// LLMFactory constructs an `LLMInvocationClient` given configuration
+// arguments.
 type LLMFactory func(map[string]interface{}) (LLMInvocationClient, error)
 
 var LLMClientFactories map[string]LLMFactory = map[string]LLMFactory{
@@ -88,6 +101,9 @@ var LLMClientFactories map[string]LLMFactory = map[string]LLMFactory{
 	},
 }
 
+// ConversionRequest carries the input `DeploymentPackage`, a working
+// copy, accumulated metrics and any errors that occur during
+// conversion.
 type ConversionRequest struct {
 	Id             uuid.UUID          `json:"id,omitempty"`
 	SourcePackage  *DeploymentPackage `json:"sourcePackage,omitempty"`
@@ -97,6 +113,8 @@ type ConversionRequest struct {
 	Completed      bool `json:"completed,omitempty"`
 }
 
+// DeploymentPackage represents the set of files, tests and build
+// commands for a deployment candidate.
 type DeploymentPackage struct {
 	RootFile   string
 	TestFiles  map[string]string
@@ -106,6 +124,7 @@ type DeploymentPackage struct {
 	Suffix     string
 }
 
+// getTestFiles yields `TestFile` entries stored in the package.
 func (dp *DeploymentPackage) getTestFiles() iter.Seq2[*TestFile, error] {
 	return func(yield func(*TestFile, error) bool) {
 		for name, v := range dp.TestFiles {
@@ -120,6 +139,8 @@ func (dp *DeploymentPackage) getTestFiles() iter.Seq2[*TestFile, error] {
 	}
 }
 
+// copy produces a shallow copy of the package maps and slices to be
+// used as a recoverable working snapshot.
 func (dp *DeploymentPackage) copy() *DeploymentPackage {
 	testCopy := make(map[string]string)
 	maps.Copy(testCopy, dp.TestFiles)
@@ -138,6 +159,8 @@ func (dp *DeploymentPackage) copy() *DeploymentPackage {
 	}
 }
 
+// Metrics collects timing and diagnostic information for a
+// conversion run.
 type Metrics struct {
 	StartTime time.Time
 	EndTime   time.Time
@@ -162,6 +185,7 @@ type Metrics struct {
 	Issues    []string        `json:"issues"`
 }
 
+// AddMetric aggregates another `Metrics` instance into this one.
 func (m *Metrics) AddMetric(mm Metrics) {
 	m.TotalTime += mm.TotalTime
 	m.ConversionTime += mm.ConversionTime
@@ -182,6 +206,8 @@ func (m *Metrics) AddMetric(mm Metrics) {
 	}
 }
 
+// TestFile holds the input/output fixtures and environment for a single
+// test of the converted function.
 type TestFile struct {
 	Name   string `json:"name"`
 	Input  string `json:"input"`

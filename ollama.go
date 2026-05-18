@@ -1,3 +1,5 @@
+// Package main contains an `OllamaInvocationClient` that wraps the
+// Ollama API client and returns converted text with timing metrics.
 package main
 
 import (
@@ -6,15 +8,18 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/ollama/ollama/api"
-	log "github.com/sirupsen/logrus"
 	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"time"
+
+	"github.com/ollama/ollama/api"
+	log "github.com/sirupsen/logrus"
 )
 
+// OllamaInvocationClient calls the Ollama API and adapts responses to
+// the project's `Metrics` structure.
 type OllamaInvocationClient struct {
 	ModelName      string
 	RequestOptions map[string]interface{}
@@ -25,10 +30,11 @@ var llmOutputSchema = json.RawMessage(`{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": {
-    "type": "string"
+	"type": "string"
   }
 }`)
 
+// Configure initializes the underlying Ollama client using `args`.
 func (llm *OllamaInvocationClient) Configure(args map[string]interface{}) error {
 	if llm.client == nil {
 		urlStr, err := args["OLLAMA_API_URL"]
@@ -45,6 +51,7 @@ func (llm *OllamaInvocationClient) Configure(args map[string]interface{}) error 
 	return nil
 }
 
+// Prepare sets model-specific runtime options from `args`.
 func (llm *OllamaInvocationClient) Prepare(args map[string]interface{}) error {
 	model, ok := args["model_name"]
 	if !ok {
@@ -60,10 +67,6 @@ func (llm *OllamaInvocationClient) Prepare(args map[string]interface{}) error {
 	//XXX depends on LLM Client/Model
 	defaultParams := map[string]interface{}{
 		"max_tokens": 2 << 14,
-		//"temperature": 1.0,
-		//"top_k":       64,
-		//"top_p":       0.95,
-		//"min_p":       0.0,
 		"response_format": map[string]interface{}{
 			"type": "json_object",
 		},
@@ -76,6 +79,7 @@ func (llm *OllamaInvocationClient) Prepare(args map[string]interface{}) error {
 	return nil
 }
 
+// logLLMResponse writes a chatlog of the prompt and response.
 func (llm *OllamaInvocationClient) logLLMResponse(args ...string) {
 	fhash := []byte(args[0])
 	fname := fmt.Sprintf("chatlogs/%s_%8x_%d.log", llm.ModelName, sha256.Sum256(fhash), time.Now().UnixMicro())
@@ -95,6 +99,8 @@ func (llm *OllamaInvocationClient) logLLMResponse(args ...string) {
 	log.Debugf("logged llm response to: %s with %d bytes", fname, written)
 }
 
+// InvokeLLM sends the prompt to Ollama and returns the textual response
+// along with timing metrics.
 func (llm *OllamaInvocationClient) InvokeLLM(runner context.Context, buf bytes.Buffer) (string, Metrics, error) {
 
 	var metrics = Metrics{}

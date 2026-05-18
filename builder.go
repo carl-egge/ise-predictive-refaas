@@ -1,3 +1,5 @@
+// Package main contains build helpers used to compile and test the
+// converted Go code inside a temporary working directory.
 package main
 
 import (
@@ -5,21 +7,26 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 //go:embed test_handler.txt
 var goTestHandler string
 
+// GolangBuilder writes a test harness and attempts to build the working
+// package to ensure the converted code compiles.
 type GolangBuilder struct {
 	TestHandler string
 }
 
+// makeGolangBuilder creates a `GolangBuilder` instance using an
+// optional test handler override from `args`.
 func makeGolangBuilder(args map[string]interface{}) Converter {
 	if handler, ok := args["handler"].(string); ok {
 		return &GolangBuilder{TestHandler: handler}
@@ -28,6 +35,8 @@ func makeGolangBuilder(args map[string]interface{}) Converter {
 	}
 }
 
+// Apply attempts to compile the `request.WorkingPackage` in a temporary
+// directory and records build timing/errors into `request.Metrics`.
 func (cc *GolangBuilder) Apply(runner *PipelineRunner, request *ConversionRequest) error {
 	//let's keep this clean
 	if runner.WorkingDir != "" {

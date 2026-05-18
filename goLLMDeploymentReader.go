@@ -1,18 +1,25 @@
+// Package main contains readers that convert JSON/code blocks from LLM
+// responses into `DeploymentPackage` values suitable for build and
+// testing.
 package main
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"regexp"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
+// GoJsonOllamaReader parses JSON mapping of filename->content returned
+// by an LLM and prepares a `DeploymentPackage` ready for building.
 type GoJsonOllamaReader struct {
 }
 
+// makeDeploymentFile converts a JSON response into a `DeploymentPackage`.
 func (gr GoJsonOllamaReader) makeDeploymentFile(response string, original *DeploymentPackage) (*DeploymentPackage, error) {
 	if response == "" {
 		return nil, fmt.Errorf("response is empty")
@@ -45,6 +52,8 @@ func (gr GoJsonOllamaReader) makeDeploymentFile(response string, original *Deplo
 	return &dp, nil
 }
 
+// prepareGoRootFile removes a `main` function when necessary so the
+// converted code can be used as a library entrypoint.
 func (gr GoJsonOllamaReader) prepareGoRootFile(file string) (string, error) {
 	if file == "" {
 		return "", fmt.Errorf("file is empty")
@@ -69,6 +78,8 @@ func getContentByNode(content string, decl ast.Decl) string {
 
 }
 
+// removeGoMainMethod strips a `main` function and any associated
+// lambda import when it appears to be an accidental inclusion.
 func (gr GoJsonOllamaReader) removeGoMainMethod(content string) string {
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, "main.go", content, parser.AllErrors)
@@ -101,6 +112,8 @@ func (gr GoJsonOllamaReader) removeGoMainMethod(content string) string {
 	return output.String()
 }
 
+// containsGoMainMethod detects whether content declares a `main()`
+// function.
 func (gr GoJsonOllamaReader) containsGoMainMethod(content string) bool {
 	mainMethodRegex := regexp.MustCompile(`func main\(\)`) // Regex to check for main function
 	return mainMethodRegex.MatchString(content)

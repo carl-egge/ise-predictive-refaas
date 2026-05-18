@@ -1,3 +1,5 @@
+// Package main implements test and validation helpers used to verify the
+// correctness of converted Go packages.
 package main
 
 import (
@@ -5,20 +7,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/adrg/strutil"
-	"github.com/adrg/strutil/metrics"
-	log "github.com/sirupsen/logrus"
 	"maps"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/adrg/strutil"
+	"github.com/adrg/strutil/metrics"
+	log "github.com/sirupsen/logrus"
 )
 
+// GoPackageTester runs the package in the working directory and
+// validates its stdout against expected test outputs.
 type GoPackageTester struct {
 	validator ValidationStrategy
 }
 
+// makeGoPackageTester constructs a tester with an optional validation
+// strategy from `args`.
 func makeGoPackageTester(args map[string]interface{}) Converter {
 	var validator ValidationStrategy
 	if kind, ok := args["strategy"].(string); ok {
@@ -36,6 +43,8 @@ func makeGoPackageTester(args map[string]interface{}) Converter {
 	}
 }
 
+// Apply builds/runs tests in the runner's `WorkingDir` and updates
+// the request's metrics and error state.
 func (cc *GoPackageTester) Apply(runner *PipelineRunner, request *ConversionRequest) error {
 	if request.WorkingPackage == nil {
 		log.Errorf("missing working package for %s", request.Id)

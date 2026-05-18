@@ -1,3 +1,5 @@
+// Package main implements the pipeline execution logic used to run a
+// sequence of conversion tasks with retry and recovery semantics.
 package main
 
 import (
@@ -9,11 +11,15 @@ import (
 )
 
 // NewPipeline initializes a new pipeline
+// NewPipeline initializes a new pipeline with `firstTask` as the root
+// node.
 func NewPipeline(firstTask *ConversionTask) *Pipeline {
 	return &Pipeline{FirstTask: firstTask}
 }
 
 // Execute runs the pipeline
+// Execute runs the pipeline against the provided `ConversionRequest`,
+// measuring timings and recovering from panics into an error result.
 func (p *Pipeline) Execute(runner *PipelineRunner, req *ConversionRequest) (out error) {
 	err := p.reset()
 	if err != nil {

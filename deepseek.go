@@ -1,3 +1,6 @@
+// Package main contains an LLM client implementation that uses the
+// Ollama/DeepSeek HTTP API. The client adapts API responses into the
+// internal metrics and string format expected by the pipeline.
 package main
 
 import (
@@ -5,22 +8,26 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"github.com/ollama/ollama/api"
-	log "github.com/sirupsen/logrus"
 	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/ollama/ollama/api"
+	log "github.com/sirupsen/logrus"
 )
 
+// DeepSeekInvocationClient calls the Ollama/DeepSeek API and converts
+// responses into strings plus timing `Metrics`.
 type DeepSeekInvocationClient struct {
 	ModelName      string
 	RequestOptions map[string]interface{}
 	client         *api.Client
 }
 
+// Configure initializes the underlying API client using `args`.
 func (llm *DeepSeekInvocationClient) Configure(args map[string]interface{}) error {
 	if llm.client == nil {
 		urlStr, err := args["OLLAMA_API_URL"]
@@ -37,6 +44,7 @@ func (llm *DeepSeekInvocationClient) Configure(args map[string]interface{}) erro
 	return nil
 }
 
+// Prepare sets model-specific options taken from `args`.
 func (llm *DeepSeekInvocationClient) Prepare(args map[string]interface{}) error {
 	model, ok := args["model_name"]
 	if !ok {
@@ -60,6 +68,7 @@ func (llm *DeepSeekInvocationClient) Prepare(args map[string]interface{}) error 
 	return nil
 }
 
+// logLLMResponse persists a human-readable log of query and response.
 func (llm *DeepSeekInvocationClient) logLLMResponse(args ...string) {
 	fhash := []byte(args[0])
 	fname := fmt.Sprintf("chatlogs/%s_%8x_%d.log", llm.ModelName, sha256.Sum256(fhash), time.Now().UnixMicro())
@@ -79,6 +88,8 @@ func (llm *DeepSeekInvocationClient) logLLMResponse(args ...string) {
 	log.Debugf("logged llm response to: %s with %d bytes", fname, written)
 }
 
+// InvokeLLM sends the prompt buffer to the remote API and returns the
+// textual response and timing metrics.
 func (llm *DeepSeekInvocationClient) InvokeLLM(runner context.Context, buf bytes.Buffer) (string, Metrics, error) {
 
 	var metrics = Metrics{}
@@ -127,10 +138,14 @@ func (llm *DeepSeekInvocationClient) InvokeLLM(runner context.Context, buf bytes
 	return response.Response, metrics, nil
 }
 
+// GoDeepSeekOllamaReader adapts DeepSeek responses into a
+// `DeploymentPackage` using the internal `GoJsonOllamaReader`.
 type GoDeepSeekOllamaReader struct {
 	internal GoJsonOllamaReader
 }
 
+// makeDeploymentFile extracts JSON blocks and delegates to the
+// internal JSON reader.
 func (gr GoDeepSeekOllamaReader) makeDeploymentFile(response string, original *DeploymentPackage) (*DeploymentPackage, error) {
 	if response == "" {
 		return nil, fmt.Errorf("response is empty")

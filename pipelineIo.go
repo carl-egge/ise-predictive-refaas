@@ -1,18 +1,25 @@
+// Package main provides pipeline YAML parsing and conversion helpers
+// used to compile a human-friendly pipeline description into an
+// executable `Pipeline`.
 package main
 
 import (
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"io"
 	"maps"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
+// PipelineFile models the YAML structure used to describe pipelines.
 type PipelineFile struct {
 	DefaultOptions map[string]interface{} `json:"options" yaml:"options"`
 	Tasks          []ConversionTaskStub   `json:"tasks" yaml:"tasks"`
 }
 
+// ConversionTaskStub is an intermediate representation used when
+// assembling `ConversionTask` instances from YAML.
 type ConversionTaskStub struct {
 	ID            string `json:"id" yaml:"id"`
 	Task          string `json:"task" yaml:"task"`
@@ -30,6 +37,8 @@ type ConversionTaskStub struct {
 	next          []*ConversionTask
 }
 
+// canConvert reports whether the stub has been fully resolved into
+// concrete converter instances and links.
 func (c *ConversionTaskStub) canConvert() bool {
 	if c.task == nil {
 		return false
@@ -53,6 +62,7 @@ func (c *ConversionTaskStub) canConvert() bool {
 	return true
 }
 
+// asConversionTask converts a resolved stub into a `ConversionTask`.
 func (c *ConversionTaskStub) asConversionTask() ConversionTask {
 	if !c.canConvert() {
 		panic(fmt.Errorf("can not convert task '%s'", c.ID))
@@ -70,6 +80,8 @@ func (c *ConversionTaskStub) asConversionTask() ConversionTask {
 	}
 }
 
+// MakeConverter looks up a converter factory by `key` and builds a
+// `Converter` using `args`.
 func MakeConverter(key string, args map[string]interface{}) (Converter, error) {
 	if key == "" {
 		return nil, nil
@@ -80,6 +92,8 @@ func MakeConverter(key string, args map[string]interface{}) (Converter, error) {
 	return nil, fmt.Errorf("no converter found for key: %s", key)
 }
 
+// PipelineReader parses a YAML pipeline description from `file` and
+// compiles it into an executable `Pipeline`.
 func PipelineReader(file io.Reader) (*Pipeline, error) {
 	var fileContent PipelineFile
 	data, err := io.ReadAll(file)

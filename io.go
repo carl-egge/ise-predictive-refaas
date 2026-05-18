@@ -1,13 +1,18 @@
+// Package main provides utilities for reading and writing deployment
+// packages from zip streams used by the conversion service.
 package main
 
 import (
 	"archive/zip"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"os"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
+// ReadDeploymentPackageFromFile reads a zip archive from `sourceFile`
+// and converts it into a `DeploymentPackage`.
 func (cc *PipelineRunner) ReadDeploymentPackageFromFile(sourceFile string) (*DeploymentPackage, error) {
 	fs, err := os.OpenFile(sourceFile, os.O_RDONLY, 0666)
 	if err != nil {
@@ -26,6 +31,8 @@ func (cc *PipelineRunner) ReadDeploymentPackageFromFile(sourceFile string) (*Dep
 	return dp, nil
 }
 
+// ReadDeploymentPackageFromReader reads a zip archive from an
+// `io.ReaderAt` and size and produces a `DeploymentPackage`.
 func (cc *PipelineRunner) ReadDeploymentPackageFromReader(reader io.ReaderAt, size int64) (*DeploymentPackage, error) {
 	dp := DeploymentPackage{
 		RootFile:   "",
@@ -81,6 +88,8 @@ func (cc *PipelineRunner) ReadDeploymentPackageFromReader(reader io.ReaderAt, si
 	return &dp, err
 }
 
+// WriteDeploymentPackage writes the given `DeploymentPackage` into the
+// supplied writer as a zip archive.
 func (cc *PipelineRunner) WriteDeploymentPackage(writer io.Writer, dp *DeploymentPackage) error {
 	zw := zip.NewWriter(writer)
 

@@ -1,24 +1,33 @@
+// Package main contains the glue between prompts and LLM readers used to
+// parse model responses into `DeploymentPackage` instances.
 package main
 
 import (
 	"bytes"
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"iter"
 	"strings"
 	"text/template"
+
+	log "github.com/sirupsen/logrus"
 )
 
+// LLMPackageReader converts a raw LLM string response into a
+// `DeploymentPackage` representation.
 type LLMPackageReader interface {
 	makeDeploymentFile(rawLLMResponse string, original *DeploymentPackage) (*DeploymentPackage, error)
 }
 
+// LLMConverter renders a prompt template, invokes the configured LLM
+// client and uses a reader to transform the response into a
+// `DeploymentPackage`.
 type LLMConverter struct {
 	template *template.Template
 	reader   LLMPackageReader
 	args     map[string]interface{}
 }
 
+// ReaderFactory returns a concrete `LLMPackageReader` by name.
 func ReaderFactory(name string) LLMPackageReader {
 	switch name {
 	case "go":
@@ -29,6 +38,7 @@ func ReaderFactory(name string) LLMPackageReader {
 	return BasicLLMDeploymentReader{}
 }
 
+// makeLLMConverter builds an LLM-backed `Converter` from template args.
 func makeLLMConverter(args map[string]interface{}) Converter {
 
 	prompt, ok := args["prompt"].(string)
@@ -61,6 +71,8 @@ func makeLLMConverter(args map[string]interface{}) Converter {
 	}
 }
 
+// Apply renders the prompt, calls the runner LLM client and updates the
+// supplied `ConversionRequest` with the resulting `DeploymentPackage`.
 func (cc *LLMConverter) Apply(runner *PipelineRunner, code *ConversionRequest) error {
 	var codePrompt bytes.Buffer
 
@@ -92,7 +104,6 @@ func (cc *LLMConverter) Apply(runner *PipelineRunner, code *ConversionRequest) e
 	if err != nil {
 		return LLMError{fmt.Errorf("failed to configure LLMClient: %+v", err)}
 	}
-	//XXX: interface entry point ...
 	response, metrics, err := runner.client.InvokeLLM(runner, codePrompt)
 	code.Metrics.AddMetric(metrics)
 	if err != nil {
@@ -115,6 +126,8 @@ func (cc *LLMConverter) Apply(runner *PipelineRunner, code *ConversionRequest) e
 	return nil
 }
 
+// getFirstTestFile returns the first `TestFile` from the source package
+// or an empty `TestFile` when none are present.
 func getFirstTestFile(code *ConversionRequest) *TestFile {
 	next, stop := iter.Pull2(code.SourcePackage.getTestFiles())
 	result, err, valid := next()
@@ -125,6 +138,8 @@ func getFirstTestFile(code *ConversionRequest) *TestFile {
 	return result
 }
 
+// codeBlockGenerator builds a markdown code block representing the
+// package files used in the prompt templates.
 func codeBlockGenerator(code *DeploymentPackage) strings.Builder {
 	var codeBlock strings.Builder
 	if code == nil {

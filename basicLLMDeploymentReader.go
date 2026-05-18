@@ -1,17 +1,24 @@
+// Package main defines a simple reader that extracts filename->content
+// mappings from JSON responses produced by LLM prompts.
 package main
 
 import (
 	"encoding/json"
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"maps"
 	"slices"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
+// BasicLLMDeploymentReader finds a `main` file among returned files
+// and constructs a `DeploymentPackage` using the original test set.
 type BasicLLMDeploymentReader struct {
 }
 
+// makeDeploymentFile converts a JSON map into a `DeploymentPackage`,
+// ensuring a main file is present.
 func (gr BasicLLMDeploymentReader) makeDeploymentFile(response string, original *DeploymentPackage) (*DeploymentPackage, error) {
 	if response == "" {
 		return nil, fmt.Errorf("response is empty")
@@ -40,6 +47,8 @@ func (gr BasicLLMDeploymentReader) makeDeploymentFile(response string, original 
 	return &dp, nil
 }
 
+// JsonCodeBlockReader unmarshals a JSON object mapping filenames to
+// file contents produced by an LLM.
 func JsonCodeBlockReader(response string) map[string]string {
 	var content map[string]string
 	err := json.Unmarshal([]byte(response), &content)
