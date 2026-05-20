@@ -60,7 +60,20 @@ An example pipeline configuration is provided in the [Example Usage](#5-reconfig
 ![Pipeline Overview](./img/pipeline.svg)
 </center>
 
-For more details check out the source code in the [pipeline.go](./pipeline.go) file and for predefined tasks look into [types.go](./types.go).
+For more details check out [internal/pipeline/pipeline.go](internal/pipeline/pipeline.go) and [internal/pipeline/pipeline_io.go](internal/pipeline/pipeline_io.go). Default task registrations live in [internal/translator/prompts.go](internal/translator/prompts.go) and [internal/builder/builder.go](internal/builder/builder.go).
+
+### Architecture
+
+The codebase follows Standard Go Project Layout with a thin entrypoint and internal packages:
+
+- **cmd/refaas**: service entrypoint.
+- **internal/pipeline**: pipeline orchestration, task registry, and config parsing.
+- **internal/llmconnector**: LLM client abstractions and provider implementations.
+- **internal/translator**: prompt rendering, LLM translation, and response parsing.
+- **internal/builder**: build/compile/test stages and validation strategies.
+- **internal/inputhandler**: zip input parsing and normalization.
+- **internal/outputhandler**: zip output writing and HTTP error reporting.
+- **internal/service**: HTTP API and background processing.
 
 ### 📚 API Endpoints
 
@@ -128,6 +141,8 @@ Defines a sequence of tasks for the conversion pipeline.
 - `options`: Settings for the LLM model and inference behavior.
 - `tasks`: A list of tasks executed sequentially or conditionally, each with retry logic, validation, and recovery tasks.
 
+The embedded default pipeline lives in [internal/pipeline/default.yaml](internal/pipeline/default.yaml). A JSON example is available in default.json at the repository root.
+
 ---
 
 ### ⚡ Additional Notes
@@ -155,7 +170,7 @@ Run the project with:
 
 **Using [go modules](https://golang.org/):**
 ```sh
-go run .
+go run ./cmd/refaas
 ```
 
 ## Docker

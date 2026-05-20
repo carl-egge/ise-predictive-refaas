@@ -1,0 +1,41 @@
+{
+  "options": {
+    "model_name": "qwen2.5-coder:14b",
+    "strategy": "json"
+  },
+  "tasks": [
+    {
+      "id": "root",
+      "task": "cleaner",
+      "maxRetryCount": 1,
+      "retryDelay": "5s",
+      "next": ["convert"]
+    },
+    {
+      "id": "convert",
+      "task": "coder",
+      "task_args": {
+        "reader": "go"
+      },
+      "maxRetryCount": 2,
+      "retryDelay": "3s",
+      "next": ["builder"]
+    },
+    {
+      "id": "builder",
+      "task": "goBuilder",
+      "recovery": "gollmRecovery",
+      "retryDelay": "5s",
+      "maxRetryCount": 3,
+      "validation": "goTester"
+    },
+    {
+      "id": "gollmRecovery",
+      "task": "fixer",
+      "task_args": {
+        "reader": "go"
+      },
+      "maxRetryCount": 2
+    }
+  ]
+}

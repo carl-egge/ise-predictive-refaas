@@ -1,38 +1,54 @@
-// Package main implements the pipeline execution logic used to run a
-// sequence of conversion tasks with retry and recovery semantics.
-package main
+package pipeline
 
 import (
 	"fmt"
 	"runtime/debug"
 	"time"
 
+	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
 	log "github.com/sirupsen/logrus"
 )
 
-// NewPipeline initializes a new pipeline
-// NewPipeline initializes a new pipeline with `firstTask` as the root
-// node.
+// ConversionTask represents a step in the pipeline, including retry behavior
+// and recovery links.
+type ConversionTask struct {
+	ID            string
+	Execute       Converter         // Task execution function
+	CanApply      Converter         // Checks preconditions
+	RetryCount    int               // Retry attempts
+	MaxRetryCount int               // Max retries
+	RetryDelay    time.Duration     // Delay between retries
+	Next          []*ConversionTask // Next tasks (normal execution flow)
+	OnFailure     *ConversionTask   // Recovery task if this task fails
+	Validation    Converter
+}
+
+// Pipeline represents a sequence of ConversionTask steps with a defined root.
+type Pipeline struct {
+	FirstTask *ConversionTask
+}
+
+// NewPipeline initializes a new pipeline with firstTask as the root node.
 func NewPipeline(firstTask *ConversionTask) *Pipeline {
 	return &Pipeline{FirstTask: firstTask}
 }
 
-// Execute runs the pipeline
-// Execute runs the pipeline against the provided `ConversionRequest`,
-// measuring timings and recovering from panics into an error result.
-func (p *Pipeline) Execute(runner *PipelineRunner, req *ConversionRequest) (out error) {
-	err := p.reset()
-	if err != nil {
+// Execute runs the pipeline against the provided ConversionRequest, measuring
+// timings and recovering from panics into an error result.
+func (p *Pipeline) Execute(runner *Runner, req *domain.ConversionRequest) (out error) {
+	if err := p.reset(); err != nil {
 		return err
 	}
-	req.Metrics.StartTime = time.Now()
-	defer func() {
-		req.Metrics.EndTime = time.Now()
-		req.Metrics.TotalTime = req.Metrics.EndTime.Sub(req.Metrics.StartTime)
-	}()
+	if req.Metrics != nil {
+		req.Metrics.StartTime = time.Now()
+		defer func() {
+			req.Metrics.EndTime = time.Now()
+			req.Metrics.TotalTime = req.Metrics.EndTime.Sub(req.Metrics.StartTime)
+		}()
+	}
 	defer func() {
 		if err := recover(); err != nil {
-			log.Errorf("pipline execution panic: %v", err)
+			log.Errorf("pipeline execution panic: %v", err)
 			out = fmt.Errorf("%v\n%s", err, string(debug.Stack()))
 		}
 	}()
@@ -52,31 +68,30 @@ func (p *Pipeline) resetTask(task *ConversionTask) error {
 	task.RetryCount = 0
 
 	if task.OnFailure != nil {
-		err := p.resetTask(task.OnFailure)
-		if err != nil {
+		if err := p.resetTask(task.OnFailure); err != nil {
 			return err
 		}
 	}
 
 	for _, next := range task.Next {
-		err := p.resetTask(next)
-		if err != nil {
+		if err := p.resetTask(next); err != nil {
 			return err
 		}
 	}
 
 	return nil
-
 }
 
-// executeTask runs an individual task with retry logic and failure handling
-func (p *Pipeline) executeTask(runner *PipelineRunner, req *ConversionRequest, task *ConversionTask) error {
+// executeTask runs an individual task with retry logic and failure handling.
+func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, task *ConversionTask) error {
 	if task == nil {
 		log.Debugf("Task is nil. Skipping")
 		return nil
 	}
 	log.Debugf("starting %s", task.ID)
-	req.Metrics.Tasks += 1
+	if req.Metrics != nil {
+		req.Metrics.Tasks += 1
+	}
 
 	if task.CanApply != nil {
 		if applyErr := task.CanApply.Apply(runner, req); applyErr != nil {
@@ -86,12 +101,12 @@ func (p *Pipeline) executeTask(runner *PipelineRunner, req *ConversionRequest, t
 	}
 
 	var err error
-	var workingPackage *DeploymentPackage = nil
+	var workingPackage *domain.DeploymentPackage
 	if task.Execute != nil {
 		log.Debugf("Running task %s with (%d - %d) executions", task.ID, task.RetryCount, task.MaxRetryCount)
 		for ; task.RetryCount < task.MaxRetryCount; task.RetryCount++ {
 			if req.WorkingPackage != nil {
-				workingPackage = req.WorkingPackage.copy()
+				workingPackage = req.WorkingPackage.Copy()
 			}
 			err = task.Execute.Apply(runner, req)
 			if err == nil {
@@ -103,38 +118,34 @@ func (p *Pipeline) executeTask(runner *PipelineRunner, req *ConversionRequest, t
 				log.Errorf("task %s retrying...", task.ID)
 
 				if task.OnFailure != nil {
-					req.err = append(req.err, err)
-					log.Debugf("atempting to recover task %s before retrying", task.ID)
+					req.AddError(err)
+					log.Debugf("attempting to recover task %s before retrying", task.ID)
 					err = p.executeTask(runner, req, task.OnFailure)
 					if err == nil {
-						// Continue to next retry attempt of TaskB without exceeding max retries
 						log.Debugf("Retrying failed task %s after recovery", task.ID)
 						continue
-					} else {
-						log.Debugf("Recovery failed.")
-						break
 					}
+					log.Debugf("Recovery failed.")
+					break
 				}
 				time.Sleep(task.RetryDelay)
 			}
-			//recover working package
 			if req.WorkingPackage != nil && task.CanApply != nil {
-				err := task.CanApply.Apply(runner, req)
-				if err != nil {
-					log.Errorf("the task coruppted the working package, recovering latest version.")
+				if err := task.CanApply.Apply(runner, req); err != nil {
+					log.Errorf("the task corrupted the working package, recovering latest version.")
 					if workingPackage != nil {
 						req.WorkingPackage = workingPackage
 					}
 				}
 			} else if req.WorkingPackage == nil && workingPackage != nil {
-				log.Debugf("the task coruppted the working package, recovering latest version.")
+				log.Debugf("the task corrupted the working package, recovering latest version.")
 				req.WorkingPackage = workingPackage
 			}
 		}
 
 		if err != nil {
 			log.Debugf("task %s failed. %+v", task.ID, err)
-			req.err = append(req.err, err)
+			req.AddError(err)
 			return err
 		}
 	} else {
@@ -146,20 +157,18 @@ func (p *Pipeline) executeTask(runner *PipelineRunner, req *ConversionRequest, t
 		err = task.Validation.Apply(runner, req)
 		if err != nil {
 			log.Debugf("task validation for %s failed.", task.ID)
-			req.err = append(req.err, err)
+			req.AddError(err)
 			if task.RetryCount < task.MaxRetryCount {
 				task.RetryCount++
 				return p.executeTask(runner, req, task)
-			} else {
-				return err
 			}
+			return err
 		}
 	}
 	log.Debugf("task %s executed successfully", task.ID)
-	// Execute next tasks
 	for _, next := range task.Next {
 		if err := p.executeTask(runner, req, next); err != nil {
-			req.err = append(req.err, err)
+			req.AddError(err)
 			return err
 		}
 	}

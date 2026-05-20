@@ -65,7 +65,7 @@ func handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyR
 	}
 	return events.APIGatewayProxyResponse{
 		StatusCode: http.StatusOK,
-		Body:       fmt.Sprintf("%v",map[string]interface{}{"result": request.Num1+request.Num2}),
+		Body:       fmt.Sprintf("%v", map[string]interface{}{"result": request.Num1 + request.Num2}),
 	}, nil
 }
 ```

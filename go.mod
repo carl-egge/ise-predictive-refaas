@@ -1,4 +1,4 @@
-module github.com/ISE-Sustainable-AI/faasllm
+module github.com/carl-egge/ise-predictive-refaas
 
 go 1.24.1
 

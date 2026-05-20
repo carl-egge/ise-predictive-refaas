@@ -1,6 +1,4 @@
-// Package main contains build helpers used to compile and test the
-// converted Go code inside a temporary working directory.
-package main
+package builder
 
 import (
 	"bytes"
@@ -13,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
+	"github.com/carl-egge/ise-predictive-refaas/internal/pipeline"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -25,51 +25,55 @@ type GolangBuilder struct {
 	TestHandler string
 }
 
-// makeGolangBuilder creates a `GolangBuilder` instance using an
-// optional test handler override from `args`.
-func makeGolangBuilder(args map[string]interface{}) Converter {
-	if handler, ok := args["handler"].(string); ok {
-		return &GolangBuilder{TestHandler: handler}
-	} else {
-		return &GolangBuilder{TestHandler: goTestHandler}
-	}
+func init() {
+	pipeline.RegisterConverterFactory("goBuilder", NewGolangBuilder)
 }
 
-// Apply attempts to compile the `request.WorkingPackage` in a temporary
-// directory and records build timing/errors into `request.Metrics`.
-func (cc *GolangBuilder) Apply(runner *PipelineRunner, request *ConversionRequest) error {
-	//let's keep this clean
-	if runner.WorkingDir != "" {
-		defer os.RemoveAll(runner.WorkingDir)
+// NewGolangBuilder creates a GolangBuilder instance using an optional test
+// handler override from args.
+func NewGolangBuilder(args map[string]interface{}) pipeline.Converter {
+	if handler, ok := args["handler"].(string); ok {
+		return &GolangBuilder{TestHandler: handler}
+	}
+	return &GolangBuilder{TestHandler: goTestHandler}
+}
+
+// Apply attempts to compile the request.WorkingPackage in a temporary directory
+// and records build timing/errors into request.Metrics.
+func (cc *GolangBuilder) Apply(runner *pipeline.Runner, request *domain.ConversionRequest) error {
+	if runner.WorkingDir() != "" {
+		defer os.RemoveAll(runner.WorkingDir())
 	}
 	start := time.Now()
 	defer func() {
-		request.Metrics.BuildTime = time.Since(start)
+		if request.Metrics != nil {
+			request.Metrics.BuildTime = time.Since(start)
+		}
 	}()
+
 	dir, err := os.MkdirTemp("", "fn_lmm")
 	if err != nil {
 		log.Errorf("Error creating temporary directory: %s", err)
-		request.err = append(request.err, err)
+		request.AddError(err)
 		return err
 	}
-	runner.WorkingDir = dir
+	runner.SetWorkingDir(dir)
 	code := request.WorkingPackage
 	code.BuildFiles["handler.go"] = string(cc.TestHandler)
-	//Build testable version
-	err = cc.build(request, dir)
-
-	if err != nil {
-		request.Metrics.BuildError += 1
+	if err := cc.build(request, dir); err != nil {
+		if request.Metrics != nil {
+			request.Metrics.BuildError += 1
+		}
 		log.Debugf("failed to build: %s", err.Error())
-		request.err = append(request.err, err)
-		return CompilationError{err}
+		request.AddError(err)
+		return domain.NewCompilationError(err)
 	}
 	log.Debugf("compiled code in %s", time.Since(start))
 
 	return nil
 }
 
-func (cc *GolangBuilder) build(requests *ConversionRequest, dir string) error {
+func (cc *GolangBuilder) build(requests *domain.ConversionRequest, dir string) error {
 	code := requests.WorkingPackage
 
 	_, err := cc.doBuild(code, dir)
@@ -81,9 +85,8 @@ func (cc *GolangBuilder) build(requests *ConversionRequest, dir string) error {
 	return nil
 }
 
-func (cc *GolangBuilder) doBuild(code *DeploymentPackage, dir string) (string, error) {
-	err := cc.prepareBuildFolder(dir, code)
-	if err != nil {
+func (cc *GolangBuilder) doBuild(code *domain.DeploymentPackage, dir string) (string, error) {
+	if err := cc.prepareBuildFolder(dir, code); err != nil {
 		log.Debugf("failed to prepare build folder: %s", err.Error())
 		return "", err
 	}
@@ -93,7 +96,6 @@ func (cc *GolangBuilder) doBuild(code *DeploymentPackage, dir string) (string, e
 		if err != nil {
 			log.Debugf("failed to run build commands: %+v", err)
 			if strings.Contains(err.Error(), " unknown revision") {
-				//atempt to remove go.mod to fix the issue
 				delete(code.BuildFiles, "go.mod")
 				code.BuildCmd = []string{
 					"go mod init example.com",
@@ -102,21 +104,18 @@ func (cc *GolangBuilder) doBuild(code *DeploymentPackage, dir string) (string, e
 				}
 				out, err := cc.runBuildCommands(ctx, dir, cmd)
 				return out, err
-			} else {
-				return out, err
 			}
-
+			return out, err
 		}
 	}
 	return "", nil
 }
 
-func (cc *GolangBuilder) prepareBuildFolder(dir string, code *DeploymentPackage) error {
+func (cc *GolangBuilder) prepareBuildFolder(dir string, code *domain.DeploymentPackage) error {
 	writeToDir := func(fname, code string) error {
 		fpath := filepath.Join(dir, fname)
 		if _, err := os.Stat(fpath); err == nil {
-			err := os.Remove(fpath)
-			if err != nil {
+			if err := os.Remove(fpath); err != nil {
 				return err
 			}
 		}
@@ -126,36 +125,32 @@ func (cc *GolangBuilder) prepareBuildFolder(dir string, code *DeploymentPackage)
 			return fmt.Errorf("failed to open file %s: %w", fname, err)
 		}
 		defer fs.Close()
-		_, err = fs.Write([]byte(code))
-		if err != nil {
+		if _, err := fs.Write([]byte(code)); err != nil {
 			return fmt.Errorf("failed to write file %s: %w", fname, err)
 		}
 		return nil
 	}
-	err := writeToDir("main.go", code.RootFile)
-	if err != nil {
+
+	if err := writeToDir("main.go", code.RootFile); err != nil {
 		return err
 	}
 	for fname, file := range code.BuildFiles {
-		err = writeToDir(fname, file)
-		if err != nil {
+		if err := writeToDir(fname, file); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (cc *GolangBuilder) runBuildCommands(ctx context.Context, dir, build_cmd string) (string, error) {
-	cmds := strings.Split(build_cmd, " ")
+func (cc *GolangBuilder) runBuildCommands(ctx context.Context, dir, buildCmd string) (string, error) {
+	cmds := strings.Split(buildCmd, " ")
 
 	cmd := exec.CommandContext(ctx, cmds[0], cmds[1:]...)
 	cmd.Dir = dir
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stdout
-	err := cmd.Run()
-
-	if err != nil {
+	if err := cmd.Run(); err != nil {
 		return stdout.String(), fmt.Errorf("failed to build. %s \n\n %+v", stdout.String(), err)
 	}
 	return stdout.String(), nil

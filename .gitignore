@@ -1,4 +1,6 @@
 /chatlogs/*.*
+/logs/*.*
+/data/*.*
 faasllm
 *.txt
 .env

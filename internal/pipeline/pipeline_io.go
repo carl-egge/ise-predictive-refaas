@@ -1,7 +1,4 @@
-// Package main provides pipeline YAML parsing and conversion helpers
-// used to compile a human-friendly pipeline description into an
-// executable `Pipeline`.
-package main
+package pipeline
 
 import (
 	"fmt"
@@ -18,8 +15,8 @@ type PipelineFile struct {
 	Tasks          []ConversionTaskStub   `json:"tasks" yaml:"tasks"`
 }
 
-// ConversionTaskStub is an intermediate representation used when
-// assembling `ConversionTask` instances from YAML.
+// ConversionTaskStub is an intermediate representation used when assembling
+// ConversionTask instances from YAML.
 type ConversionTaskStub struct {
 	ID            string `json:"id" yaml:"id"`
 	Task          string `json:"task" yaml:"task"`
@@ -37,8 +34,8 @@ type ConversionTaskStub struct {
 	next          []*ConversionTask
 }
 
-// canConvert reports whether the stub has been fully resolved into
-// concrete converter instances and links.
+// canConvert reports whether the stub has been fully resolved into concrete
+// converter instances and links.
 func (c *ConversionTaskStub) canConvert() bool {
 	if c.task == nil {
 		return false
@@ -62,7 +59,7 @@ func (c *ConversionTaskStub) canConvert() bool {
 	return true
 }
 
-// asConversionTask converts a resolved stub into a `ConversionTask`.
+// asConversionTask converts a resolved stub into a ConversionTask.
 func (c *ConversionTaskStub) asConversionTask() ConversionTask {
 	if !c.canConvert() {
 		panic(fmt.Errorf("can not convert task '%s'", c.ID))
@@ -80,28 +77,15 @@ func (c *ConversionTaskStub) asConversionTask() ConversionTask {
 	}
 }
 
-// MakeConverter looks up a converter factory by `key` and builds a
-// `Converter` using `args`.
-func MakeConverter(key string, args map[string]interface{}) (Converter, error) {
-	if key == "" {
-		return nil, nil
-	}
-	if _, ok := ConverterFactories[key]; ok {
-		return ConverterFactories[key](args), nil
-	}
-	return nil, fmt.Errorf("no converter found for key: %s", key)
-}
-
-// PipelineReader parses a YAML pipeline description from `file` and
-// compiles it into an executable `Pipeline`.
+// PipelineReader parses a YAML pipeline description from file and compiles it
+// into an executable Pipeline.
 func PipelineReader(file io.Reader) (*Pipeline, error) {
 	var fileContent PipelineFile
 	data, err := io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}
-	err = yaml.Unmarshal(data, &fileContent)
-	if err != nil {
+	if err := yaml.Unmarshal(data, &fileContent); err != nil {
 		return nil, err
 	}
 
@@ -117,23 +101,23 @@ func compilePipeline(fileContent PipelineFile) (*Pipeline, error) {
 		if task.TaskArgs != nil {
 			maps.Copy(args, task.TaskArgs)
 		}
-		_task, err := MakeConverter(task.Task, args)
+		taskImpl, err := MakeConverter(task.Task, args)
 		if err != nil {
 			return nil, err
 		}
-		task.task = _task
+		task.task = taskImpl
 
-		_apply, err := MakeConverter(task.CanApply, fileContent.DefaultOptions)
+		apply, err := MakeConverter(task.CanApply, fileContent.DefaultOptions)
 		if err != nil {
 			return nil, err
 		}
-		task.canApply = _apply
+		task.canApply = apply
 
-		_validation, err := MakeConverter(task.Validation, fileContent.DefaultOptions)
+		validation, err := MakeConverter(task.Validation, fileContent.DefaultOptions)
 		if err != nil {
 			return nil, err
 		}
-		task.validator = _validation
+		task.validator = validation
 
 		if task.canConvert() {
 			pipelineMapping[task.ID] = task.asConversionTask()
@@ -171,7 +155,6 @@ func compilePipeline(fileContent PipelineFile) (*Pipeline, error) {
 	}
 	if root, ok := pipelineMapping["root"]; ok {
 		return NewPipeline(&root), nil
-	} else {
-		return nil, fmt.Errorf("no root converter found")
 	}
+	return nil, fmt.Errorf("no root converter found")
 }

@@ -28,4 +28,3 @@ You started with this **original** python version:
 
 And have already produced the **current** version:
 {{ .code }}
-
