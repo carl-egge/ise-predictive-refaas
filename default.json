@@ -9,7 +9,16 @@
       "strategy": "json",
       "temperature": 0.1,
       "top_p": 0.8,
-      "num_ctx": 32768
+      "num_ctx": 32768,
+      "floci_enabled": false,
+      "floci_endpoint": "http://localhost:4566",
+      "floci_region": "us-east-1",
+      "floci_account_id": "000000000000",
+      "floci_function_name": "refaas-translated",
+      "floci_lambda_timeout_seconds": 10,
+      "floci_lambda_memory_mb": 128,
+      "floci_test_prefix": "test/floci/",
+      "floci_test_suffixes": [".floci.json", ".floci.yaml", ".floci.yml"]
     },
     "tasks": [
       {
@@ -47,7 +56,13 @@
         "task": "goTester",
         "canApply": "canCompile",
         "maxRetryCount": 5,
-        "recovery": "testRecovery"
+        "recovery": "testRecovery",
+        "next": ["flociTester"]
+      },
+      {
+        "id": "flociTester",
+        "task": "flociTester",
+        "maxRetryCount": 1
       },
       {
         "id": "testRecovery",

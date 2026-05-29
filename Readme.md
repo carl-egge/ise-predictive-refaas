@@ -187,6 +187,10 @@ The compose file exposes port `8080` on the host. Replace `OLLAMA_API_URL` in `.
 
 If you need a local Ollama server, enable the optional `ollama` service in `docker-compose.yml` and adjust `OLLAMA_API_URL` accordingly.
 
+### Floci Integration Tests (Optional)
+
+An optional Floci-backed stage can deploy translated Lambdas into a local AWS emulator and validate output plus side effects. See `docs/floci-integration.md` for setup, pipeline configuration, and test case format.
+
 
 This will start the service running on port 8080. However, for isolation, it is recommended to run the service in a Docker container, see [Docker](#docker) for more details.
 

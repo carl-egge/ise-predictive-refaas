@@ -14,6 +14,8 @@ services:
       - ./data:/app/data
     depends_on:
       - ollama
+    networks:
+      - refaas
     restart: unless-stopped
 
   ollama:
@@ -26,7 +28,29 @@ services:
     environment:
       # Ollama runs its own defaults; no extra env vars required here.
       - OLLAMA_ALLOW_NETWORK=false
+    networks:
+      - refaas
+    restart: unless-stopped
+
+  floci:
+    image: hectorvent/floci:latest
+    profiles:
+      - floci
+    ports:
+      - "4566:4566"
+    user: "0:0"
+    environment:
+      - FLOCI_SERVICES_LAMBDA_DOCKER_NETWORK=refaas
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data/floci:/app/data
+    networks:
+      - refaas
     restart: unless-stopped
 
 volumes:
   ollama_data:
+
+networks:
+  refaas:
+    name: refaas

@@ -1,6 +1,18 @@
 options:
   model_name: "qwen2.5-coder:14b"
   strategy: "json"
+  floci_enabled: false
+  floci_endpoint: "http://localhost:4566"
+  floci_region: "us-east-1"
+  floci_account_id: "000000000000"
+  floci_function_name: "refaas-translated"
+  floci_lambda_timeout_seconds: 10
+  floci_lambda_memory_mb: 128
+  floci_test_prefix: "test/floci/"
+  floci_test_suffixes:
+    - ".floci.json"
+    - ".floci.yaml"
+    - ".floci.yml"
 
 tasks:
   - id: "root"
@@ -23,6 +35,11 @@ tasks:
     retryDelay: "5s"
     maxRetryCount: 3
     validation: "goTester"
+    next:
+      - "flociTester"
+  - id: "flociTester"
+    task: "flociTester"
+    maxRetryCount: 1
   - id: "gollmRecovery"
     task: "fixer"
     task_args:

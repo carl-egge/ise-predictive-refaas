@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -64,6 +65,10 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 	ctx := runner
 	log.Debugf("Running GoPackageTester with %d tests", len(request.WorkingPackage.TestFiles))
 	for testFile, err := range maps.Collect(request.WorkingPackage.GetTestFiles()) {
+		if isFlociTestFile(testFile.Name) {
+			log.Debugf("skipping floci test file %s", testFile.Name)
+			continue
+		}
 		if request.Metrics != nil {
 			request.Metrics.TestCases[testFile.Name] = false
 		}
@@ -99,6 +104,16 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 	}
 	log.Debugf("%d tests succeeded", len(request.WorkingPackage.TestFiles))
 	return nil
+}
+
+func isFlociTestFile(name string) bool {
+	clean := filepath.ToSlash(name)
+	if strings.HasPrefix(clean, "test/floci/") {
+		return true
+	}
+	return strings.HasSuffix(clean, ".floci.json") ||
+		strings.HasSuffix(clean, ".floci.yaml") ||
+		strings.HasSuffix(clean, ".floci.yml")
 }
 
 func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.TestFile) (bool, error) {

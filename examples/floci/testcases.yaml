@@ -1,0 +1,41 @@
+name: "example-suite"
+description: "Writes to S3 and DynamoDB"
+setup:
+  - type: "s3/create-bucket"
+    params:
+      bucket: "orders"
+  - type: "dynamodb/create-table"
+    params:
+      table: "Orders"
+      hash_key: "id"
+      hash_key_type: "S"
+
+cases:
+  - name: "store-order"
+    payload:
+      id: "o-123"
+      bucket: "orders"
+      key: "o-123.json"
+      table: "Orders"
+      message: "order placed"
+    expected:
+      statusCode: 200
+      body:
+        ok: true
+    side_effects:
+      - type: "s3/object-exists"
+        params:
+          bucket: "orders"
+          key: "o-123.json"
+      - type: "s3/object-contains"
+        params:
+          bucket: "orders"
+          key: "o-123.json"
+          contains: "order placed"
+      - type: "dynamodb/item-exists"
+        params:
+          table: "Orders"
+          key:
+            id: "o-123"
+          attributes:
+            status: "stored"
