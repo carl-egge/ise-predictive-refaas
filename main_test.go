@@ -3,6 +3,7 @@ package refaas_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -30,11 +31,19 @@ func TestPipelineReader(t *testing.T) {
 }
 
 func TestJsonPipelineReader(t *testing.T) {
-	fs, err := os.OpenFile("test/pipeline_config.json", os.O_RDONLY, 0666)
+	fs, err := os.OpenFile("default.json", os.O_RDONLY, 0666)
 	assert.NoError(t, err)
 	defer fs.Close()
 
-	pipe, err := pipeline.PipelineReader(fs)
+	var options pipeline.ConverterOptions
+	err = json.NewDecoder(fs).Decode(&options)
+	assert.NoError(t, err)
+	assert.NotNil(t, options.Pipeline)
+
+	data, err := json.Marshal(options.Pipeline)
+	assert.NoError(t, err)
+
+	pipe, err := pipeline.PipelineReader(bytes.NewReader(data))
 	assert.NoError(t, err)
 	assert.NotNil(t, pipe)
 
