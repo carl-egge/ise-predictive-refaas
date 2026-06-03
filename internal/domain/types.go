@@ -61,7 +61,12 @@ func (dp *DeploymentPackage) GetTestFiles() iter.Seq2[*TestFile, error] {
 			file := &TestFile{}
 			err := json.Unmarshal([]byte(v), file)
 			file.Name = name
-			file.Env = dp.Env
+			if len(dp.Env) > 0 {
+				merged := make([]string, 0, len(dp.Env)+len(file.Env))
+				merged = append(merged, dp.Env...)
+				merged = append(merged, file.Env...)
+				file.Env = merged
+			}
 			if !yield(file, err) {
 				return
 			}

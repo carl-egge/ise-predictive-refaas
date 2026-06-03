@@ -14,6 +14,7 @@ import (
 
 	"github.com/adrg/strutil"
 	"github.com/adrg/strutil/metrics"
+	"github.com/carl-egge/ise-predictive-refaas/internal/awsenv"
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
 	"github.com/carl-egge/ise-predictive-refaas/internal/pipeline"
 	log "github.com/sirupsen/logrus"
@@ -22,7 +23,9 @@ import (
 // GoPackageTester runs the package in the working directory and validates its
 // stdout against expected test outputs.
 type GoPackageTester struct {
-	validator ValidationStrategy
+	validator     ValidationStrategy
+	flociEnabled  bool
+	flociEndpoint string
 }
 
 func init() {
@@ -41,8 +44,12 @@ func NewGoPackageTester(args map[string]interface{}) pipeline.Converter {
 			validator = &SimilarityValidation{}
 		}
 	}
+	flociEnabled := getBoolArg(args, "floci_enabled")
+	flociEndpoint := getStringArg(args, "floci_endpoint")
 	return &GoPackageTester{
-		validator: validator,
+		validator:     validator,
+		flociEnabled:  flociEnabled,
+		flociEndpoint: flociEndpoint,
 	}
 }
 
@@ -119,7 +126,13 @@ func isFlociTestFile(name string) bool {
 func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.TestFile) (bool, error) {
 	cmd := exec.CommandContext(ctx, "go", "run", ".")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), t.Env...)
+	envMap := awsenv.MergeEnv(os.Environ(), t.Env)
+	endpoint := ""
+	if cc.flociEnabled && cc.flociEndpoint != "" {
+		endpoint = awsenv.NormalizeEndpoint(cc.flociEndpoint)
+	}
+	envMap = awsenv.Augment(envMap, endpoint)
+	cmd.Env = awsenv.FlattenEnv(envMap)
 	in := strings.NewReader(t.Input)
 	out := &bytes.Buffer{}
 	errBuf := &bytes.Buffer{}
@@ -264,6 +277,37 @@ func (vs *JsonAwareSimilarityValidation) compareSimple(v, vv any) bool {
 		}
 	}
 	return true
+}
+
+func getStringArg(args map[string]interface{}, key string) string {
+	if args == nil {
+		return ""
+	}
+	if val, ok := args[key]; ok {
+		switch v := val.(type) {
+		case string:
+			return v
+		case fmt.Stringer:
+			return v.String()
+		}
+	}
+	return ""
+}
+
+func getBoolArg(args map[string]interface{}, key string) bool {
+	if args == nil {
+		return false
+	}
+	if val, ok := args[key]; ok {
+		switch v := val.(type) {
+		case bool:
+			return v
+		case string:
+			trimmed := strings.ToLower(strings.TrimSpace(v))
+			return trimmed == "true" || trimmed == "1" || trimmed == "yes"
+		}
+	}
+	return false
 }
 
 func (vs *JsonAwareSimilarityValidation) fallback(exp, act string) bool {

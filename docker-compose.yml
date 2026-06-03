@@ -34,8 +34,6 @@ services:
 
   floci:
     image: hectorvent/floci:latest
-    profiles:
-      - floci
     ports:
       - "4566:4566"
     user: "0:0"

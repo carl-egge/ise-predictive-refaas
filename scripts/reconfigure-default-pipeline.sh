@@ -1,0 +1,1 @@
+curl -X POST -H "Content-Type: application/json" -d "$(cat $(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/default.json)" http://localhost:8080/reconfigure

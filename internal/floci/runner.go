@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/carl-egge/ise-predictive-refaas/internal/awsenv"
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
 	"github.com/sirupsen/logrus"
 )
@@ -36,18 +37,7 @@ func RunIntegrationTests(ctx context.Context, cfg Config, pkg *domain.Deployment
 	}
 
 	baseEnv := envFromPackage(pkg.Env)
-	if _, ok := baseEnv["AWS_ENDPOINT_URL"]; !ok {
-		baseEnv["AWS_ENDPOINT_URL"] = cfg.Endpoint
-	}
-	if _, ok := baseEnv["AWS_REGION"]; !ok {
-		baseEnv["AWS_REGION"] = cfg.Region
-	}
-	if _, ok := baseEnv["AWS_ACCESS_KEY_ID"]; !ok {
-		baseEnv["AWS_ACCESS_KEY_ID"] = "test"
-	}
-	if _, ok := baseEnv["AWS_SECRET_ACCESS_KEY"]; !ok {
-		baseEnv["AWS_SECRET_ACCESS_KEY"] = "test"
-	}
+	baseEnv = awsenv.Augment(baseEnv, cfg.Endpoint)
 	validator := SubsetJSONValidator{}
 	currentEnv := baseEnv
 	currentFunction := ""

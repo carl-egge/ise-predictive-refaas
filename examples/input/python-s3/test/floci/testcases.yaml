@@ -1,27 +1,22 @@
-name: "example-suite"
-description: "Writes to S3 and DynamoDB"
+name: "python-s3"
+description: "Writes to S3"
 setup:
   - type: "s3/create-bucket"
     params:
       bucket: "orders"
-  - type: "dynamodb/create-table"
-    params:
-      table: "Orders"
-      hash_key: "id"
-      hash_key_type: "S"
 
 cases:
-  - name: "store-order"
+  - name: "store-message"
     payload:
-      id: "o-123"
       bucket: "orders"
       key: "o-123.json"
-      table: "Orders"
       message: "order placed"
     expected:
       statusCode: 200
       body:
         ok: true
+        bucket: "orders"
+        key: "o-123.json"
     side_effects:
       - type: "s3/object-exists"
         params:
@@ -32,10 +27,3 @@ cases:
           bucket: "orders"
           key: "o-123.json"
           contains: "order placed"
-      - type: "dynamodb/item-exists"
-        params:
-          table: "Orders"
-          key:
-            id: "o-123"
-          attributes:
-            status: "stored"

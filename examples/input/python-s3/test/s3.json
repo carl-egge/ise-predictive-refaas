@@ -1,0 +1,12 @@
+{
+  "name": "s3-put",
+  "input": "{\"bucket\":\"orders\",\"key\":\"o-123.json\",\"message\":\"order placed\"}",
+  "output": "{\"statusCode\":200,\"body\":{\"ok\":true,\"bucket\":\"orders\",\"key\":\"o-123.json\"}}",
+  "env": [
+    "AWS_ENDPOINT_URL=http://floci:4566",
+    "AWS_REGION=us-east-1",
+    "AWS_ACCESS_KEY_ID=test",
+    "AWS_SECRET_ACCESS_KEY=test",
+    "AWS_S3_FORCE_PATH_STYLE=true"
+  ]
+}

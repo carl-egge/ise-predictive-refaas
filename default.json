@@ -10,7 +10,7 @@
       "temperature": 0.1,
       "top_p": 0.8,
       "num_ctx": 32768,
-      "floci_enabled": false,
+      "floci_enabled": true,
       "floci_endpoint": "http://localhost:4566",
       "floci_region": "us-east-1",
       "floci_account_id": "000000000000",
