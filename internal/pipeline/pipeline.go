@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 	"runtime/debug"
 	"time"
@@ -39,6 +40,10 @@ func (p *Pipeline) Execute(runner *Runner, req *domain.ConversionRequest) (out e
 	if err := p.reset(); err != nil {
 		return err
 	}
+	if err := runnerContext(runner).Err(); err != nil {
+		req.AddError(err)
+		return err
+	}
 	if req.Metrics != nil {
 		req.Metrics.StartTime = time.Now()
 		defer func() {
@@ -58,6 +63,13 @@ func (p *Pipeline) Execute(runner *Runner, req *domain.ConversionRequest) (out e
 
 func (p *Pipeline) reset() error {
 	return p.resetTask(p.FirstTask)
+}
+
+func runnerContext(runner *Runner) context.Context {
+	if runner == nil || runner.Context == nil {
+		return context.Background()
+	}
+	return runner.Context
 }
 
 func (p *Pipeline) resetTask(task *ConversionTask) error {
@@ -88,6 +100,11 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 		log.Debugf("Task is nil. Skipping")
 		return nil
 	}
+	ctx := runnerContext(runner)
+	if err := ctx.Err(); err != nil {
+		req.AddError(err)
+		return err
+	}
 	log.Debugf("starting %s", task.ID)
 	if req.Metrics != nil {
 		req.Metrics.Tasks += 1
@@ -105,6 +122,10 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 	if task.Execute != nil {
 		log.Debugf("Running task %s with (%d - %d) executions", task.ID, task.RetryCount, task.MaxRetryCount)
 		for ; task.RetryCount < task.MaxRetryCount; task.RetryCount++ {
+			if err := ctx.Err(); err != nil {
+				req.AddError(err)
+				return err
+			}
 			if req.WorkingPackage != nil {
 				workingPackage = req.WorkingPackage.Copy()
 			}
@@ -128,7 +149,10 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 					log.Debugf("Recovery failed.")
 					break
 				}
-				time.Sleep(task.RetryDelay)
+				if err := sleepWithContext(ctx, task.RetryDelay); err != nil {
+					req.AddError(err)
+					return err
+				}
 			}
 			if req.WorkingPackage != nil && task.CanApply != nil {
 				if err := task.CanApply.Apply(runner, req); err != nil {
@@ -166,6 +190,10 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 		}
 	}
 	log.Debugf("task %s executed successfully", task.ID)
+	if err := ctx.Err(); err != nil {
+		req.AddError(err)
+		return err
+	}
 	for _, next := range task.Next {
 		if err := p.executeTask(runner, req, next); err != nil {
 			req.AddError(err)
@@ -174,4 +202,18 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 	}
 
 	return nil
+}
+
+func sleepWithContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

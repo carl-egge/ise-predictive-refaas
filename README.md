@@ -6,7 +6,7 @@
 <img src="img/logo.png" width="30%" style="position: relative; top: 0; right: 0;" alt="Project Logo"/>
 
 
-<em>A service for rewriting FaaS Functions into more energy efficient versions.</em>
+<em>A predictive service for rewriting FaaS Functions into more energy efficient versions.</em>
 
 <!-- BADGES -->
 <em>Built with the tools and technologies:</em>
@@ -20,27 +20,39 @@
 
 ---
 
+> Developed in partial fulfillment of the requirements for the degree of Master of Computer Science at the Technical University Berlin.
+> Based on the ReFaaS pipeline from ISE at TU Berlin.
+>
+Original Repository: [ReFaaS](https://github.com/ISE-TU-Berlin/ReFaaS)
+
+---
+
 ## Table of Contents
 
 - [Table of Contents](#table-of-contents)
 - [Overview](#overview)
   - [Pipeline Overview](#pipeline-overview)
-  - [📚 API Endpoints](#-api-endpoints)
-  - [📦 Data Structures](#-data-structures)
+  - [Architecture](#architecture)
+  - [API Endpoints](#api-endpoints)
+  - [Data Structures](#data-structures)
       - [ConversionRequest](#conversionrequest)
       - [ConverterOptions](#converteroptions)
     - [PipelineFile](#pipelinefile)
-  - [⚡ Additional Notes](#-additional-notes)
+  - [Additional Notes](#additional-notes)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Usage](#usage)
 - [Docker](#docker)
-  - [🧪 Example Usage](#-example-usage)
-    - [1. Upload a File](#1-upload-a-file)
-    - [2. Check if a Job Exists](#2-check-if-a-job-exists)
-    - [3. Download the Converted Package](#3-download-the-converted-package)
-    - [4. Retrieve All Metrics](#4-retrieve-all-metrics)
-    - [5. Reconfigure the Pipeline](#5-reconfigure-the-pipeline)
+  - [Floci Integration Tests (Optional)](#floci-integration-tests-optional)
+- [Example Usage](#example-usage)
+  - [1. Upload a File](#1-upload-a-file)
+  - [2. Check if a Job Exists](#2-check-if-a-job-exists)
+  - [3. Download the Converted Package](#3-download-the-converted-package)
+  - [4. Stop a Running Job](#4-stop-a-running-job)
+  - [5. Retrieve All Metrics](#5-retrieve-all-metrics)
+  - [6. Reconfigure the Pipeline](#6-reconfigure-the-pipeline)
+- [Acknowledgement](#acknowledgement)
+- [License](#license)
 
 ---
 
@@ -53,7 +65,7 @@ The ReFaaS transforms serverless functions from one language to another (e.g., P
 ### Pipeline Overview
 The conversion pipeline consists of several tasks, each with its own retry logic and validation steps. The tasks are executed in a sequence or conditionally based on the results of previous tasks.
 
-An example pipeline configuration is provided in the [Example Usage](#5-reconfigure-the-pipeline) section and in the following figure.
+An example pipeline configuration is provided in the [Example Usage](#6-reconfigure-the-pipeline) section and in the following figure.
 
 <center>
 
@@ -75,19 +87,20 @@ The codebase follows Standard Go Project Layout with a thin entrypoint and inter
 - **internal/outputhandler**: zip output writing and HTTP error reporting.
 - **internal/service**: HTTP API and background processing.
 
-### 📚 API Endpoints
+### API Endpoints
 
 | Endpoint | Method | Request | Response | Description |
 |:---|:---|:---|:---|:---|
 | `/` | POST | Multipart form with field `file` (`.zip`, max 50MB) | `201 Created` + Redirect to `/{uuid}`<br/>Errors: `400`, `415`, `500` | Upload a serverless function `.zip` for conversion. |
 | `/{uuid}` | HEAD | - | `200 OK` if job exists<br/>`404 Not Found` if job unknown | Check if a submitted conversion job exists. |
 | `/{uuid}` | GET | - | `200 OK` + Converted `.zip` file if completed<br/>`406 Not Acceptable` if not completed<br/>`404 Not Found` if unknown<br/>`500 Internal Server Error` on error | Download the converted serverless function package by UUID. |
+| `/stop/{uuid}` | POST | - | `202 Accepted` if the job was found and cancellation was requested<br/>`404 Not Found` if the job is unknown<br/>`409 Conflict` if the job already finished | Gracefully stop a running or queued conversion job. |
 | `/metrics` | GET | - | `200 OK` + JSON with metrics | Retrieve conversion processing metrics for all jobs. |
 | `/reconfigure` | POST | JSON body with `ConverterOptions` | `201 Created` on success<br/>`500 Internal Server Error` on failure | Reconfigure the conversion pipeline at runtime. |
 
 ---
 
-### 📦 Data Structures
+### Data Structures
 
 ##### ConversionRequest
 ```json
@@ -145,11 +158,12 @@ The embedded default pipeline lives in [internal/pipeline/default.yaml](internal
 
 ---
 
-### ⚡ Additional Notes
+### Additional Notes
 
 - **Upload size limit**: Maximum 50MB file size.
 - **Accepted format**: Only `.zip` files.
 - **Job expiration**: Jobs are deleted **after download** or **server restart**.
+- **Job cancellation**: `POST /stop/{uuid}` requests a graceful stop for a running job. Stopped jobs still write final metrics, including partial timing and any collected issues.
 - **Concurrency**: A background worker sequentially processes uploaded jobs.
 - **Pipeline Config**: The service supports **dynamic reconfiguration** without restarting.
 
@@ -204,9 +218,9 @@ This will start the service running on port 8080. However, for isolation, it is 
 ---
 
 
-### 🧪 Example Usage
+## Example Usage
 
-#### 1. Upload a File
+### 1. Upload a File
 ```bash
 curl -F 'file=@path/to/your_function.zip' http://localhost:8080/
 ```
@@ -214,7 +228,7 @@ curl -F 'file=@path/to/your_function.zip' http://localhost:8080/
 
 ---
 
-#### 2. Check if a Job Exists
+### 2. Check if a Job Exists
 ```bash
 curl -I http://localhost:8080/<job-uuid>
 ```
@@ -223,7 +237,7 @@ curl -I http://localhost:8080/<job-uuid>
 
 ---
 
-#### 3. Download the Converted Package
+### 3. Download the Converted Package
 ```bash
 curl -O http://localhost:8080/<job-uuid>
 ```
@@ -231,7 +245,17 @@ curl -O http://localhost:8080/<job-uuid>
 
 ---
 
-#### 4. Retrieve All Metrics
+### 4. Stop a Running Job
+```bash
+curl -X POST http://localhost:8080/stop/<job-uuid>
+```
+- Requests a graceful cancellation of the submitted job.
+- If the job is already running, the current stage is interrupted as soon as it reaches a cancellation point.
+- Final metrics are still written for stopped jobs.
+
+---
+
+### 5. Retrieve All Metrics
 ```bash
 curl http://localhost:8080/metrics
 ```
@@ -239,7 +263,7 @@ curl http://localhost:8080/metrics
 
 ---
 
-#### 5. Reconfigure the Pipeline
+### 6. Reconfigure the Pipeline
 
 ```bash
 curl -X POST -H "Content-Type: application/json" -d '{
@@ -315,9 +339,13 @@ curl -X POST -H "Content-Type: application/json" -d '{
 - Updates the pipeline configuration at runtime.
 - Clears all previously submitted jobs and metrics!
 
-<!-- ## License
+## Acknowledgement
 
- is protected under the [LICENSE](https://choosealicense.com/licenses) License. For more details, refer to the [LICENSE](https://choosealicense.com/licenses/) file. -->
+A big thank you goes to Sebastian Werner, the original developer of the ReFaaS tool and a great supervisor of my master thesis.
+
+## License
+
+A license will be picked at a later point of time.
 
 <div align="right">
 

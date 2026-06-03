@@ -60,7 +60,11 @@ func (cc *GolangBuilder) Apply(runner *pipeline.Runner, request *domain.Conversi
 	runner.SetWorkingDir(dir)
 	code := request.WorkingPackage
 	code.BuildFiles["handler.go"] = string(cc.TestHandler)
-	if err := cc.build(request, dir); err != nil {
+	ctx := runner.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := cc.build(request, dir, ctx); err != nil {
 		if request.Metrics != nil {
 			request.Metrics.BuildError += 1
 		}
@@ -73,10 +77,10 @@ func (cc *GolangBuilder) Apply(runner *pipeline.Runner, request *domain.Conversi
 	return nil
 }
 
-func (cc *GolangBuilder) build(requests *domain.ConversionRequest, dir string) error {
+func (cc *GolangBuilder) build(requests *domain.ConversionRequest, dir string, ctx context.Context) error {
 	code := requests.WorkingPackage
 
-	_, err := cc.doBuild(code, dir)
+	_, err := cc.doBuild(code, dir, ctx)
 	if err != nil {
 		log.Debugf("failed to build")
 		return err
@@ -85,12 +89,11 @@ func (cc *GolangBuilder) build(requests *domain.ConversionRequest, dir string) e
 	return nil
 }
 
-func (cc *GolangBuilder) doBuild(code *domain.DeploymentPackage, dir string) (string, error) {
+func (cc *GolangBuilder) doBuild(code *domain.DeploymentPackage, dir string, ctx context.Context) (string, error) {
 	if err := cc.prepareBuildFolder(dir, code); err != nil {
 		log.Debugf("failed to prepare build folder: %s", err.Error())
 		return "", err
 	}
-	ctx := context.Background()
 	for _, cmd := range code.BuildCmd {
 		out, err := cc.runBuildCommands(ctx, dir, cmd)
 		if err != nil {

@@ -25,8 +25,12 @@ import (
 type ConverterService struct {
 	converter    *pipeline.Runner
 	requestQueue chan *domain.ConversionRequest
+	requests     map[uuid.UUID]*domain.ConversionRequest
 	results      map[uuid.UUID]*domain.ConversionRequest
 	metrics      map[uuid.UUID]domain.Metrics
+	pendingStops map[uuid.UUID]struct{}
+	activeJobID  uuid.UUID
+	activeCancel context.CancelFunc
 	mutex        sync.RWMutex
 }
 
@@ -72,8 +76,10 @@ func MakeConverterService() error {
 	sv := ConverterService{
 		converter:    converter,
 		requestQueue: make(chan *domain.ConversionRequest, 100),
+		requests:     make(map[uuid.UUID]*domain.ConversionRequest),
 		results:      make(map[uuid.UUID]*domain.ConversionRequest),
 		metrics:      make(map[uuid.UUID]domain.Metrics),
+		pendingStops: make(map[uuid.UUID]struct{}),
 	}
 
 	log.Infof("Starting converter service with options: %+v", options)
@@ -81,6 +87,7 @@ func MakeConverterService() error {
 	r := mux.NewRouter()
 	r.Path("/").Methods(http.MethodPost).HandlerFunc(sv.uploadHandler)
 	r.Path("/metrics").Methods(http.MethodGet).HandlerFunc(sv.metricsHandler)
+	r.Path("/stop/{uuid}").Methods(http.MethodPost).HandlerFunc(sv.stopHandler)
 	r.Path("/reconfigure").Methods(http.MethodPost).HandlerFunc(sv.reconfigure)
 	r.Path("/{uuid}").Methods(http.MethodHead, http.MethodGet).HandlerFunc(sv.pollHandler)
 
@@ -92,11 +99,49 @@ func MakeConverterService() error {
 
 // Start runs the background worker loop that processes queued conversion requests.
 func (service *ConverterService) Start(ctx context.Context) {
-	for request := range service.requestQueue {
+	for {
+		var request *domain.ConversionRequest
+		var ok bool
+		select {
+		case <-ctx.Done():
+			return
+		case request, ok = <-service.requestQueue:
+		}
+		if !ok {
+			return
+		}
+
+		if request == nil {
+			continue
+		}
+
+		service.mutex.Lock()
+		if _, stopped := service.pendingStops[request.Id]; stopped {
+			delete(service.pendingStops, request.Id)
+			service.recordStoppedBeforeStartLocked(request)
+			service.mutex.Unlock()
+			continue
+		}
+		jobCtx, cancel := context.WithCancel(ctx)
+		service.activeJobID = request.Id
+		service.activeCancel = cancel
+		service.mutex.Unlock()
+
 		log.Infof("starting request for %s", request.Id)
 		startTime := time.Now()
-		err := service.converter.Convert(request)
+		requestRunner := *service.converter
+		requestRunner.Context = jobCtx
+		err := requestRunner.Convert(request)
 		endTime := time.Now()
+		cancel()
+
+		service.mutex.Lock()
+		if service.activeJobID == request.Id {
+			service.activeJobID = uuid.Nil
+			service.activeCancel = nil
+		}
+		service.mutex.Unlock()
+
 		if err != nil {
 			request.Completed = false
 			log.Debugf("error converting best n for %s: %v", request.Id, err)
@@ -117,9 +162,56 @@ func (service *ConverterService) Start(ctx context.Context) {
 			service.mutex.Lock()
 			service.metrics[request.Id] = *request.Metrics
 			service.results[request.Id] = request
+			service.requests[request.Id] = request
 			service.mutex.Unlock()
 		}
 	}
+}
+
+func (service *ConverterService) recordStoppedBeforeStartLocked(request *domain.ConversionRequest) {
+	request.Completed = false
+	if request.Metrics == nil {
+		return
+	}
+	now := time.Now()
+	request.Metrics.StartTime = now
+	request.Metrics.EndTime = now
+	request.Metrics.TotalTime = 0
+	request.Metrics.Issues = append(request.Metrics.Issues, "conversion stopped before start")
+	service.metrics[request.Id] = *request.Metrics
+	service.requests[request.Id] = request
+}
+
+func (service *ConverterService) stopHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	jobUUID, err := uuid.Parse(vars["uuid"])
+	if err != nil {
+		http.Error(w, fmt.Sprintf("uuid error:%+v %+v", vars, err), http.StatusBadRequest)
+		return
+	}
+
+	service.mutex.Lock()
+	request, ok := service.requests[jobUUID]
+	if !ok {
+		service.mutex.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	if request.Completed {
+		service.mutex.Unlock()
+		http.Error(w, fmt.Sprintf("job %s is already complete", jobUUID.String()), http.StatusConflict)
+		return
+	}
+	service.pendingStops[jobUUID] = struct{}{}
+	active := service.activeJobID == jobUUID && service.activeCancel != nil
+	cancel := service.activeCancel
+	service.mutex.Unlock()
+
+	if active {
+		cancel()
+	}
+
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // metricsHandler returns JSON metrics for finished jobs.
@@ -163,9 +255,10 @@ func (service *ConverterService) pollHandler(w http.ResponseWriter, r *http.Requ
 
 	if ok {
 		defer func() {
-			service.mutex.RLock()
+			service.mutex.Lock()
 			delete(service.results, jobUUID)
-			service.mutex.RUnlock()
+			delete(service.requests, jobUUID)
+			service.mutex.Unlock()
 		}()
 		if resp == nil || resp.WorkingPackage == nil {
 			outputhandler.WriteHTTPError(w, fmt.Errorf("no working package for job uuid %s", jobUUID.String()))
@@ -224,6 +317,10 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 
 	request := pipeline.MakeConversionRequest(dp)
 
+	service.mutex.Lock()
+	service.requests[request.Id] = request
+	service.mutex.Unlock()
+
 	service.requestQueue <- request
 	log.Infof("got new conversion request for %s", request.Id)
 	http.Redirect(w, r, fmt.Sprintf("/%s", request.Id.String()), http.StatusCreated)
@@ -241,6 +338,10 @@ func (service *ConverterService) reconfigure(w http.ResponseWriter, r *http.Requ
 	err := service.converter.Reconfigure(&options)
 	service.metrics = make(map[uuid.UUID]domain.Metrics)
 	service.results = make(map[uuid.UUID]*domain.ConversionRequest)
+	service.requests = make(map[uuid.UUID]*domain.ConversionRequest)
+	service.pendingStops = make(map[uuid.UUID]struct{})
+	service.activeJobID = uuid.Nil
+	service.activeCancel = nil
 	service.mutex.Unlock()
 
 	if err != nil {
