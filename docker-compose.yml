@@ -9,6 +9,9 @@ services:
       - OLLAMA_API_URL=${OLLAMA_API_URL}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL}
+      - ACADEMIC_CLOUD_API_KEY=${ACADEMIC_CLOUD_API_KEY}
+      - ACADEMIC_CLOUD_ENDPOINT=${ACADEMIC_CLOUD_ENDPOINT}
+      - ACADEMIC_CLOUD_MODEL=${ACADEMIC_CLOUD_MODEL}
     volumes:
       - ./chatlogs:/app/chatlogs
       - ./data:/app/data
