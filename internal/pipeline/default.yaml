@@ -1,5 +1,5 @@
 options:
-  model_name: "qwen2.5-coder:14b"
+  model_name: "gemma4:31b-cloud"
   strategy: "json"
   floci_enabled: false
   floci_endpoint: "http://localhost:4566"
