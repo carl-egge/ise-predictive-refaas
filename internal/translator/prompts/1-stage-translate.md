@@ -82,10 +82,10 @@ Please ensure that:
 - you only return the code for the handler function no need to include a main
 - make absolutely sure that the handler function matches this interface `func handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyResponse, error)`.
 
-
 {{ .code }}
 
 Also see the following example of and output of the function:
+
 #### Output 
 ```json
 {{ .output }}
@@ -100,6 +100,7 @@ Also see the following example of and output of the function:
 5. Use the `package main` for any go file.
 6. Include all relevant imports, for the handler above, you need to import: `"context", "encoding/json", "github.com/aws/aws-lambda-go/events"`
 7. CRITICAL! Do not output anything else, no explanation or justification. Please provide a response in a structured JSON to make it easier to use return the code and other required files in the following format:
+
 ### EXAMPLE Output:
 ```json
 {

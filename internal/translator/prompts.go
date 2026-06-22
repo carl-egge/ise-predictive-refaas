@@ -6,46 +6,61 @@ import (
 	"github.com/carl-egge/ise-predictive-refaas/internal/pipeline"
 )
 
-//go:embed prompts/stage-zero.md
+//go:embed prompts/0-stage-document.md
 var defaultCleanupPrompt string
 
-//go:embed prompts/stage-one.md
-var defaultPrompt string
+//go:embed prompts/0-stage-summarize.md
+var defaultSummaryPrompt string
 
-//go:embed prompts/stage-two.md
-var defaultBuildRePrompt string
+//go:embed prompts/1-stage-translate.md
+var defaultTranslatePrompt string
 
-//go:embed prompts/stage-three.md
+//go:embed prompts/2-stage-repair.md
+var defaultRepairPrompt string
+
+//go:embed prompts/3-stage-align.md
 var defaultAlignmentPrompt string
 
 func init() {
-	pipeline.RegisterConverterFactory("llmTask", NewLLMConverter)
+	// pipeline.RegisterConverterFactory("llmTask", NewLLMConverter)
 	pipeline.RegisterConverterFactory("cleaner", NewCleanupConverter)
-	pipeline.RegisterConverterFactory("coder", NewCodeConverter)
-	pipeline.RegisterConverterFactory("fixer", NewRePromptConverter)
+	pipeline.RegisterConverterFactory("summarizer", NewSummaryConverter)
+	pipeline.RegisterConverterFactory("coder", NewTranslateConverter)
+	pipeline.RegisterConverterFactory("fixer", NewRepairConverter)
 	pipeline.RegisterConverterFactory("realign", NewAlignmentConverter)
 }
 
 // NewCleanupConverter configures a converter using the cleanup prompt.
 func NewCleanupConverter(args map[string]interface{}) pipeline.Converter {
 	args["prompt"] = defaultCleanupPrompt
+	args["llmClientName"] = "cleaner"
 	return NewLLMConverter(args)
 }
 
-// NewCodeConverter configures a converter using the default translation prompt.
-func NewCodeConverter(args map[string]interface{}) pipeline.Converter {
-	args["prompt"] = defaultPrompt
+// NewSummaryConverter configures a converter using the summary prompt.
+func NewSummaryConverter(args map[string]interface{}) pipeline.Converter {
+	args["prompt"] = defaultSummaryPrompt
+	args["llmClientName"] = "summarizer"
 	return NewLLMConverter(args)
 }
 
-// NewRePromptConverter configures a converter using the build-fix prompt.
-func NewRePromptConverter(args map[string]interface{}) pipeline.Converter {
-	args["prompt"] = defaultBuildRePrompt
+// NewTranslateConverter configures a converter using the default translation prompt.
+func NewTranslateConverter(args map[string]interface{}) pipeline.Converter {
+	args["prompt"] = defaultTranslatePrompt
+	args["llmClientName"] = "coder"
+	return NewLLMConverter(args)
+}
+
+// NewRepairConverter configures a converter using the repair prompt.
+func NewRepairConverter(args map[string]interface{}) pipeline.Converter {
+	args["prompt"] = defaultRepairPrompt
+	args["llmClientName"] = "fixer"
 	return NewLLMConverter(args)
 }
 
 // NewAlignmentConverter configures a converter using the alignment prompt.
 func NewAlignmentConverter(args map[string]interface{}) pipeline.Converter {
 	args["prompt"] = defaultAlignmentPrompt
+	args["llmClientName"] = "realign"
 	return NewLLMConverter(args)
 }
