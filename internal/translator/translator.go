@@ -9,6 +9,7 @@ import (
 	"text/template"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
+	"github.com/carl-egge/ise-predictive-refaas/internal/llmconnector"
 	"github.com/carl-egge/ise-predictive-refaas/internal/pipeline"
 	log "github.com/sirupsen/logrus"
 )
@@ -49,7 +50,7 @@ func ReaderFactory(name string) PackageReader {
 func NewLLMConverter(args map[string]interface{}) pipeline.Converter {
 	prompt, ok := args["prompt"].(string)
 	if !ok {
-		log.Fatal("prompt must be a string")
+		log.Fatal("prompt is missing or not a string")
 		return nil
 	}
 
@@ -69,7 +70,8 @@ func NewLLMConverter(args map[string]interface{}) pipeline.Converter {
 	delete(args, "prompt")
 	delete(args, "reader")
 
-	log.Debugf("creating LLM converter with params: %v", args)
+	log.Debugf("creating LLM converter (%s) with params: %v", args["llmClientName"], args)
+
 	return &LLMConverter{
 		template: promptTmpl,
 		reader:   reader,
@@ -112,6 +114,8 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 		return domain.NewLLMError(fmt.Errorf("failed to configure LLMClient: %+v", err))
 	}
 
+	log.Debugf("invoking LLM (%s) with llm client (%s)", cc.args["model_name"], cc.args["llmClientName"])
+
 	response, metrics, err := client.InvokeLLM(runner, codePrompt)
 	if code.Metrics != nil {
 		code.Metrics.AddMetric(metrics)
@@ -120,7 +124,8 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 		return err
 	}
 
-	client.LogResponse(srcFile, response, codePrompt.String())
+	// client.LogResponse(srcFile, response, codePrompt.String())
+	llmconnector.LogResponse(cc.args["model_name"].(string), cc.args["llmClientName"].(string), codePrompt.String(), response)
 	original := code.WorkingPackage
 	if original == nil {
 		original = code.SourcePackage
@@ -151,7 +156,8 @@ func codeBlockGenerator(code *domain.DeploymentPackage) strings.Builder {
 	if code == nil {
 		return codeBlock
 	}
-	codeBlock.WriteString(fmt.Sprintf("#### main.%s\n```go\n", code.Suffix))
+	// codeBlock.WriteString(fmt.Sprintf("#### main.%s\n```go\n", code.Suffix))
+	codeBlock.WriteString(fmt.Sprintf("#### main.%s\n```\n", code.Suffix))
 	codeBlock.WriteString(code.RootFile)
 	codeBlock.WriteString("\n```\n\n")
 	for _, fname := range code.BuildFiles {
