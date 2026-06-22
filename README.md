@@ -44,6 +44,7 @@ Original Repository: [ReFaaS](https://github.com/ISE-TU-Berlin/ReFaaS)
   - [Usage](#usage)
 - [Docker](#docker)
   - [Floci Integration Tests (Optional)](#floci-integration-tests-optional)
+- [| `ACADEMIC_CLOUD_ENDPOINT` | `https://chat-ai.academiccloud.de/v1` | Base URL for the Chat AI backend. |](#-academic_cloud_endpoint--httpschat-aiacademicclouddev1--base-url-for-the-chat-ai-backend-)
 - [Example Usage](#example-usage)
   - [1. Upload a File](#1-upload-a-file)
   - [2. Check if a Job Exists](#2-check-if-a-job-exists)
@@ -212,9 +213,10 @@ This will start the service running on port 8080. However, for isolation, it is 
 
 | Variable | Default | Description |
 |:---|:---|:---|
-| `OLLAMA_API_URL` | Internal default (`OLLAMA_API_URL`) | URL for connecting to Ollama LLM API. |
-| `GEMINI_API_KEY` | `"NOT+SET"` | API key for Gemini LLM (optional if not using Gemini backend). |
-
+| `OLLAMA_API_URL` | Internal default (`OLLAMA_API_URL`) | URL for connecting to Ollama-compatible LLM APIs. |
+| `GEMINI_API_KEY` | `"NOT+SET"` | API key for Gemini LLM. |
+| `ACADEMIC_CLOUD_API_KEY` | unset | API key for the AcademicCloud Chat AI backend. |
+| `ACADEMIC_CLOUD_ENDPOINT` | `https://chat-ai.academiccloud.de/v1` | Base URL for the Chat AI backend. |
 ---
 
 

@@ -1,5 +1,5 @@
 {
-  "LLMClient": "ollama",
+  "LLMClient": "chatai",
   "pipeline": {
     "options": {
       "model_name": "qwen2.5-coder:3b",
@@ -9,7 +9,7 @@
       "num_ctx": 32768
     },
     "flociOptions": {
-      "floci_enabled": true,
+      "floci_enabled": false,
       "floci_endpoint": "http://localhost:4566",
       "floci_region": "us-east-1",
       "floci_account_id": "000000000000",
@@ -40,7 +40,7 @@
         "task": "goBuilder",
         "canApply": "canCompile",
         "recovery": "gollmRecovery",
-        "maxRetryCount": 4,
+        "maxRetryCount": 1,
         "next": ["goTester"]
       },
       {
@@ -48,35 +48,13 @@
         "task": "fixer",
         "canApply": "canCompile",
         "task_args": { "reader": "go" },
-        "maxRetryCount": 6
+        "maxRetryCount": 2
       },
       {
         "id": "goTester",
         "task": "goTester",
         "canApply": "canCompile",
-        "maxRetryCount": 5,
-        "recovery": "testRecovery",
-        "next": ["flociTester"]
-      },
-      {
-        "id": "flociTester",
-        "task": "flociTester",
-        "maxRetryCount": 1
-      },
-      {
-        "id": "testRecovery",
-        "task": "realign",
-        "canApply": "canCompile",
-        "task_args": { "reader": "go" },
-        "maxRetryCount": 3,
-        "next": ["testRecoveryBuild"]
-      },
-      {
-        "id": "testRecoveryBuild",
-        "canApply": "canCompile",
-        "task": "goBuilder",
-        "recovery": "gollmRecovery",
-        "maxRetryCount": 3
+        "maxRetryCount": 2
       }
     ]
   }

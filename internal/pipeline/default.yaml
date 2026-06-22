@@ -1,6 +1,10 @@
+LLMClient: "ollama"
+
 options:
-  model_name: "gemma4:31b-cloud"
+  model_name: "qwen2.5-coder:3b"
   strategy: "json"
+
+flociOptions:
   floci_enabled: false
   floci_endpoint: "http://localhost:4566"
   floci_region: "us-east-1"

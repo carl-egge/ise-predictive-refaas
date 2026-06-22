@@ -11,7 +11,9 @@ import (
 
 // PipelineFile models the YAML structure used to describe pipelines.
 type PipelineFile struct {
+	LLMClient      string                 `json:"LLMClient" yaml:"LLMClient"`
 	DefaultOptions map[string]interface{} `json:"options" yaml:"options"`
+	FlociOptions   map[string]interface{} `json:"flociOptions" yaml:"flociOptions"`
 	Tasks          []ConversionTaskStub   `json:"tasks" yaml:"tasks"`
 }
 

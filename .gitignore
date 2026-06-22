@@ -8,3 +8,5 @@ data
 faasllm
 *.txt
 .env
+
+.claude
