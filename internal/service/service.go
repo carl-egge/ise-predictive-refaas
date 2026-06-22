@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -34,39 +33,11 @@ type ConverterService struct {
 	mutex        sync.RWMutex
 }
 
-func setOrDefault(key, defaultValue string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return defaultValue
-}
-
-func setFileFromEnv(key, defaultValue string) string {
-	if val := os.Getenv(key); val != "" {
-		fs, err := os.OpenFile(val, os.O_RDONLY, 0644)
-		if err != nil {
-			return defaultValue
-		}
-		defer fs.Close()
-		fsdat, err := io.ReadAll(fs)
-		if err != nil {
-			return defaultValue
-		}
-		if len(fsdat) == 0 {
-			return defaultValue
-		}
-		return string(fsdat)
-	}
-	return defaultValue
-}
-
 // MakeConverterService constructs and starts the HTTP converter service; it
 // blocks by calling http.ListenAndServe.
 func MakeConverterService() error {
 	options := pipeline.DefaultOptions
 	options.Args = maps.Clone(pipeline.DefaultOptions.Args)
-	options.Args["OLLAMA_API_URL"] = setOrDefault("OLLAMA_API_URL", pipeline.DefaultOllamaAPIURL)
-	options.Args["GEMINI_API_KEY"] = setOrDefault("GEMINI_API_KEY", "NOT+SET")
 
 	converter, err := pipeline.MakeCodeConverter(&options)
 	if err != nil {
@@ -82,7 +53,7 @@ func MakeConverterService() error {
 		pendingStops: make(map[uuid.UUID]struct{}),
 	}
 
-	log.Infof("Starting converter service with options: %+v", options)
+	log.Infof("starting converter service with options: %+v", options)
 
 	r := mux.NewRouter()
 	r.Path("/").Methods(http.MethodPost).HandlerFunc(sv.uploadHandler)
@@ -323,7 +294,9 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 
 	service.requestQueue <- request
 	log.Infof("got new conversion request for %s", request.Id)
-	http.Redirect(w, r, fmt.Sprintf("/%s", request.Id.String()), http.StatusCreated)
+	// http.Redirect(w, r, fmt.Sprintf("/%s", request.Id.String()), http.StatusCreated)
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte(fmt.Sprintf("%s\n", request.Id.String())))
 }
 
 func (service *ConverterService) reconfigure(w http.ResponseWriter, r *http.Request) {

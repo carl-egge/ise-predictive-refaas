@@ -105,22 +105,22 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 		req.AddError(err)
 		return err
 	}
-	log.Debugf("starting %s", task.ID)
+	log.Debugf("starting (%s)", task.ID)
 	if req.Metrics != nil {
 		req.Metrics.Tasks += 1
 	}
 
 	if task.CanApply != nil {
 		if applyErr := task.CanApply.Apply(runner, req); applyErr != nil {
-			log.Errorf("failed to apply task %s: %s", task.ID, applyErr)
-			return fmt.Errorf("task %s precondition failed - %v", task.ID, applyErr)
+			log.Errorf("failed to apply task (%s): %s", task.ID, applyErr)
+			return fmt.Errorf("task (%s) precondition failed - %v", task.ID, applyErr)
 		}
 	}
 
 	var err error
 	var workingPackage *domain.DeploymentPackage
 	if task.Execute != nil {
-		log.Debugf("Running task %s with (%d - %d) executions", task.ID, task.RetryCount, task.MaxRetryCount)
+		log.Debugf("running task (%s) with (%d / %d) executions", task.ID, task.RetryCount+1, task.MaxRetryCount+1)
 		for ; task.RetryCount < task.MaxRetryCount; task.RetryCount++ {
 			if err := ctx.Err(); err != nil {
 				req.AddError(err)
@@ -131,19 +131,19 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 			}
 			err = task.Execute.Apply(runner, req)
 			if err == nil {
-				log.Debugf("task %s executed successfully", task.ID)
+				log.Debugf("try (%d) of task (%s) executed successfully", task.RetryCount+1, task.ID)
 				break
 			}
-			log.Debugf("task %s retry (%d) failed - %s", task.ID, task.RetryCount, err)
+			log.Debugf("task (%s) retry (%d) failed - %s", task.ID, task.RetryCount+1, err)
 			if task.RetryCount+1 < task.MaxRetryCount {
-				log.Errorf("task %s retrying...", task.ID)
+				log.Errorf("task (%s) retrying...", task.ID)
 
 				if task.OnFailure != nil {
 					req.AddError(err)
-					log.Debugf("attempting to recover task %s before retrying", task.ID)
+					log.Debugf("attempting to recover task (%s) before retrying", task.ID)
 					err = p.executeTask(runner, req, task.OnFailure)
 					if err == nil {
-						log.Debugf("Retrying failed task %s after recovery", task.ID)
+						log.Debugf("Retrying failed task (%s) after recovery", task.ID)
 						continue
 					}
 					log.Debugf("Recovery failed.")
@@ -156,31 +156,31 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 			}
 			if req.WorkingPackage != nil && task.CanApply != nil {
 				if err := task.CanApply.Apply(runner, req); err != nil {
-					log.Errorf("the task corrupted the working package, recovering latest version.")
+					log.Errorf("the task (%s) corrupted the working package, recovering latest version.", task.ID)
 					if workingPackage != nil {
 						req.WorkingPackage = workingPackage
 					}
 				}
 			} else if req.WorkingPackage == nil && workingPackage != nil {
-				log.Debugf("the task corrupted the working package, recovering latest version.")
+				log.Debugf("the task (%s) corrupted the working package, recovering latest version.", task.ID)
 				req.WorkingPackage = workingPackage
 			}
 		}
 
 		if err != nil {
-			log.Debugf("task %s failed. %+v", task.ID, err)
+			log.Debugf("task (%s) failed. %+v", task.ID, err)
 			req.AddError(err)
 			return err
 		}
 	} else {
-		log.Debugf("task is not an executable task. Skipping")
+		log.Debugf("task (%s) is not an executable task. Skipping", task.ID)
 	}
 
 	if task.Validation != nil {
-		log.Debugf("performing validation task %s", task.ID)
+		log.Debugf("performing validation task (%s)", task.ID)
 		err = task.Validation.Apply(runner, req)
 		if err != nil {
-			log.Debugf("task validation for %s failed.", task.ID)
+			log.Debugf("task validation for (%s) failed.", task.ID)
 			req.AddError(err)
 			if task.RetryCount < task.MaxRetryCount {
 				task.RetryCount++
@@ -189,7 +189,7 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 			return err
 		}
 	}
-	log.Debugf("task %s executed successfully", task.ID)
+	log.Debugf("task (%s) executed successfully", task.ID)
 	if err := ctx.Err(); err != nil {
 		req.AddError(err)
 		return err

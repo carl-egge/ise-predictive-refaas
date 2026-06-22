@@ -3,6 +3,7 @@ package pipeline
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/carl-egge/ise-predictive-refaas/internal/llmconnector"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
+
+	_ "github.com/joho/godotenv/autoload"
 )
 
 // Runner ties together an LLM client, compiled Pipeline, and runtime context
@@ -73,11 +76,22 @@ func (co *ConverterOptions) setDefaults() {
 	}
 }
 
+// DefaultPipelineYAML contains the embedded default pipeline configuration.
+//
+//go:embed default.yaml
+var DefaultPipelineYAML string
+
 // DefaultOptions provides default converter configuration.
+// Using the lazy autoloader (_ "github.com/joho/godotenv/autoload") gets the env vars loaded
+// before this runs, so we can set defaults from env or hardcoded values.
 var DefaultOptions = ConverterOptions{
 	LLMClient: "ollama",
 	Args: map[string]any{
-		"OLLAMA_API_URL": DefaultOllamaAPIURL,
+		"OLLAMA_API_URL":          setOrDefault("OLLAMA_API_URL", "http://localhost:11434"),
+		"GEMINI_API_KEY":          setOrDefault("GEMINI_API_KEY", "NOT+SET"),
+		"ACADEMIC_CLOUD_ENDPOINT": setOrDefault("ACADEMIC_CLOUD_ENDPOINT", "https://chat-ai.academiccloud.de/v1"),
+		"ACADEMIC_CLOUD_API_KEY":  setOrDefault("ACADEMIC_CLOUD_API_KEY", "NOT+SET"),
+		"APP_PORT":                setOrDefault("APP_PORT", "8080"),
 	},
 }
 
@@ -192,4 +206,12 @@ func (cc *Runner) ConvertFromFileBest(sourceFile string) (*domain.ConversionRequ
 	}
 
 	return req, nil
+}
+
+// Set environment variable or return default value if not set.
+func setOrDefault(key, defaultValue string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return defaultValue
 }
