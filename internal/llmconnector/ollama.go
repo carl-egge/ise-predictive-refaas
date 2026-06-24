@@ -1,12 +1,11 @@
 package llmconnector
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
@@ -32,6 +31,11 @@ func init() {
 	})
 }
 
+// clientName returns the name of the LLM client, which is "ollama" for this implementation.
+func (llm *OllamaInvocationClient) ClientName() string {
+	return "ollama"
+}
+
 // Configure initializes the underlying Ollama client using args.
 func (llm *OllamaInvocationClient) Configure(args map[string]interface{}) error {
 	if llm.client == nil {
@@ -49,76 +53,119 @@ func (llm *OllamaInvocationClient) Configure(args map[string]interface{}) error 
 	return nil
 }
 
-// Prepare sets model-specific runtime options from args.
+// Prepare sets model-specific runtime options from args
 func (llm *OllamaInvocationClient) Prepare(args map[string]interface{}) error {
 	model, ok := args["model_name"]
 	if !ok {
-		log.Fatal("model_name must be a string")
-		return nil
+		log.Fatal("model_name must be provided")
+		return fmt.Errorf("model_name is required")
 	}
 
-	nargs := make(map[string]interface{})
-	maps.Copy(nargs, args)
+	// Define valid Ollama parameters with their types
+	validOllamaParams := map[string]bool{
+		"num_ctx":        true, // Context window size
+		"repeat_last_n":  true, // Repetition prevention window
+		"repeat_penalty": true, // Repetition penalty
+		"temperature":    true, // Creativity level
+		"seed":           true, // Random seed
+		"stop":           true, // Stop sequences
+		"num_predict":    true, // Max tokens to generate
+		"top_k":          true, // Top-k sampling
+		"top_p":          true, // Nucleus sampling
+		"min_p":          true, // Minimum probability
+		"max_tokens":     true, // Maps to num_predict
+	}
 
-	delete(nargs, "model_name")
+	// Filter args to only include Ollama parameters
+	ollamaOptions := make(map[string]interface{})
 
+	for key, value := range args {
+		if validOllamaParams[key] {
+			// Special handling for parameter mapping
+			if key == "max_tokens" {
+				ollamaOptions["num_predict"] = value
+			} else {
+				ollamaOptions[key] = value
+			}
+		}
+	}
+
+	// Set reasonable defaults for code translation/repair tasks
+	// These defaults prioritize accuracy and determinism over creativity
 	defaultParams := map[string]interface{}{
-		"max_tokens": 2 << 14,
-		"response_format": map[string]interface{}{
-			"type": "json_object",
-		},
+		"temperature":    0.2,  // Lower temperature for more deterministic output
+		"top_k":          30,   // Slightly lower than default for more focused output
+		"top_p":          0.9,  // Standard nucleus sampling
+		"repeat_penalty": 1.1,  // Slight penalty for repetitions
+		"num_predict":    4096, // Reasonable max output for code tasks
+		"num_ctx":        4096, // Larger context window for code understanding
 	}
-	maps.Insert(nargs, maps.All(defaultParams))
+
+	// Apply defaults only if not explicitly set
+	for key, value := range defaultParams {
+		if _, exists := ollamaOptions[key]; !exists {
+			ollamaOptions[key] = value
+		}
+	}
+
+	log.Debugf("Ollama prepared with model (%s) and options: %v", model.(string), ollamaOptions)
 
 	llm.ModelName = model.(string)
-	llm.RequestOptions = nargs
+	llm.RequestOptions = ollamaOptions
 
 	return nil
 }
 
 // InvokeLLM sends the prompt to Ollama and returns the textual response along
 // with timing metrics.
-func (llm *OllamaInvocationClient) InvokeLLM(runner context.Context, buf bytes.Buffer) (string, domain.Metrics, error) {
+func (llm *OllamaInvocationClient) InvokeLLM(ctx context.Context, prompt string) (string, domain.Metrics, error) {
 	var metrics domain.Metrics
+
 	if llm.client == nil {
 		return "", metrics, fmt.Errorf("LLM client not initialized")
 	}
 
-	stream := new(bool)
+	stream := true
+
 	req := api.GenerateRequest{
 		Model:   llm.ModelName,
-		Prompt:  buf.String(),
-		Stream:  stream,
+		Prompt:  prompt,
+		Stream:  &stream,
 		Options: llm.RequestOptions,
 		Format:  llmOutputSchema,
 	}
 
-	callback := make(chan api.GenerateResponse)
-	deadline, cancel := context.WithDeadline(runner, time.Now().Add(time.Minute*5))
+	// log.Debugf("Invoking request to model %s with prompt length: %d", req.Model, len(req.Prompt))
+
+	// Create a new isolated context for this operation
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	go func() {
-		err := llm.client.Generate(deadline, &req, func(gr api.GenerateResponse) error {
-			callback <- gr
+
+	var responseBuilder strings.Builder
+	var finalResponse api.GenerateResponse
+
+	err := llm.client.Generate(ctx, &req, func(gr api.GenerateResponse) error {
+		if gr.Done {
+			finalResponse = gr
 			return nil
-		})
-		if err != nil {
-			callback <- api.GenerateResponse{
-				DoneReason: err.Error(),
-			}
 		}
-	}()
+		responseBuilder.WriteString(gr.Response)
+		return nil
+	})
 
-	response := <-callback
-
-	metrics.ConversionTime += response.TotalDuration
-	metrics.ConversionPromptTime += response.PromptEvalDuration
-	metrics.ConversionEvalTime += response.EvalDuration
-	metrics.ConversionPromptTokenCount += response.PromptEvalCount
-	metrics.ConversionEvalTokenCount += response.EvalCount
-
-	if response.Response == "" {
-		return "", metrics, fmt.Errorf("response is empty - %s", response.DoneReason)
+	if err != nil {
+		return "", metrics, fmt.Errorf("generate failed: %w", err)
 	}
 
-	return response.Response, metrics, nil
+	metrics.ConversionTime = finalResponse.TotalDuration
+	metrics.ConversionPromptTime = finalResponse.PromptEvalDuration
+	metrics.ConversionEvalTime = finalResponse.EvalDuration
+	metrics.ConversionPromptTokenCount = finalResponse.PromptEvalCount
+	metrics.ConversionEvalTokenCount = finalResponse.EvalCount
+
+	if responseBuilder.Len() == 0 {
+		return "", metrics, fmt.Errorf("empty response received: %s", finalResponse.DoneReason)
+	}
+
+	return responseBuilder.String(), metrics, nil
 }

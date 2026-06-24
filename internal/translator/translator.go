@@ -47,10 +47,9 @@ func ReaderFactory(name string) PackageReader {
 }
 
 // NewLLMConverter builds an LLM-backed Converter from template args.
-func NewLLMConverter(args map[string]interface{}) pipeline.Converter {
-	prompt, ok := args["prompt"].(string)
-	if !ok {
-		log.Fatal("prompt is missing or not a string")
+func NewLLMConverter(args map[string]interface{}, prompt string) pipeline.Converter {
+	if prompt == "" {
+		log.Fatal("prompt is missing")
 		return nil
 	}
 
@@ -67,10 +66,7 @@ func NewLLMConverter(args map[string]interface{}) pipeline.Converter {
 		reader = BasicLLMDeploymentReader{}
 	}
 
-	delete(args, "prompt")
 	delete(args, "reader")
-
-	log.Debugf("creating LLM converter (%s) with params: %v", args["llmClientName"], args)
 
 	return &LLMConverter{
 		template: promptTmpl,
@@ -116,7 +112,7 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 
 	log.Debugf("invoking LLM (%s) with llm client (%s)", cc.args["model_name"], cc.args["llmClientName"])
 
-	response, metrics, err := client.InvokeLLM(runner, codePrompt)
+	response, metrics, err := client.InvokeLLM(runner, codePrompt.String())
 	if code.Metrics != nil {
 		code.Metrics.AddMetric(metrics)
 	}
@@ -125,7 +121,7 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 	}
 
 	// client.LogResponse(srcFile, response, codePrompt.String())
-	llmconnector.LogResponse(cc.args["model_name"].(string), cc.args["llmClientName"].(string), codePrompt.String(), response)
+	llmconnector.LogResponse(cc.args["model_name"].(string), codePrompt.String(), response)
 	original := code.WorkingPackage
 	if original == nil {
 		original = code.SourcePackage

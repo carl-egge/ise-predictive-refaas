@@ -11,10 +11,10 @@ import (
 
 // PipelineFile models the YAML structure used to describe pipelines.
 type PipelineFile struct {
-	LLMClient      string                 `json:"LLMClient" yaml:"LLMClient"`
-	DefaultOptions map[string]interface{} `json:"options" yaml:"options"`
-	FlociOptions   map[string]interface{} `json:"flociOptions" yaml:"flociOptions"`
-	Tasks          []ConversionTaskStub   `json:"tasks" yaml:"tasks"`
+	LLMClient    string                 `json:"LLMClient" yaml:"LLMClient"`
+	Options      map[string]interface{} `json:"options" yaml:"options"`
+	FlociOptions map[string]interface{} `json:"flociOptions" yaml:"flociOptions"`
+	Tasks        []ConversionTaskStub   `json:"tasks" yaml:"tasks"`
 }
 
 // ConversionTaskStub is an intermediate representation used when assembling
@@ -99,7 +99,7 @@ func compilePipeline(fileContent PipelineFile) (*Pipeline, error) {
 	uncompletedTasks := make([]ConversionTaskStub, 0)
 	for _, task := range fileContent.Tasks {
 		args := make(map[string]interface{})
-		maps.Copy(args, fileContent.DefaultOptions)
+		maps.Copy(args, fileContent.Options)
 		if task.TaskArgs != nil {
 			maps.Copy(args, task.TaskArgs)
 		}
@@ -109,13 +109,13 @@ func compilePipeline(fileContent PipelineFile) (*Pipeline, error) {
 		}
 		task.task = taskImpl
 
-		apply, err := MakeConverter(task.CanApply, fileContent.DefaultOptions)
+		apply, err := MakeConverter(task.CanApply, fileContent.Options)
 		if err != nil {
 			return nil, err
 		}
 		task.canApply = apply
 
-		validation, err := MakeConverter(task.Validation, fileContent.DefaultOptions)
+		validation, err := MakeConverter(task.Validation, fileContent.Options)
 		if err != nil {
 			return nil, err
 		}

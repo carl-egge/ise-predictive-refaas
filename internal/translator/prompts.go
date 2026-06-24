@@ -32,35 +32,25 @@ func init() {
 
 // NewCleanupConverter configures a converter using the cleanup prompt.
 func NewCleanupConverter(args map[string]interface{}) pipeline.Converter {
-	args["prompt"] = defaultCleanupPrompt
-	args["llmClientName"] = "cleaner"
-	return NewLLMConverter(args)
+	return NewLLMConverter(args, defaultCleanupPrompt)
 }
 
 // NewSummaryConverter configures a converter using the summary prompt.
 func NewSummaryConverter(args map[string]interface{}) pipeline.Converter {
-	args["prompt"] = defaultSummaryPrompt
-	args["llmClientName"] = "summarizer"
-	return NewLLMConverter(args)
+	return NewLLMConverter(args, defaultSummaryPrompt)
 }
 
 // NewTranslateConverter configures a converter using the default translation prompt.
 func NewTranslateConverter(args map[string]interface{}) pipeline.Converter {
-	args["prompt"] = defaultTranslatePrompt
-	args["llmClientName"] = "coder"
-	return NewLLMConverter(args)
+	return NewLLMConverter(args, defaultTranslatePrompt)
 }
 
 // NewRepairConverter configures a converter using the repair prompt.
 func NewRepairConverter(args map[string]interface{}) pipeline.Converter {
-	args["prompt"] = defaultRepairPrompt
-	args["llmClientName"] = "fixer"
-	return NewLLMConverter(args)
+	return NewLLMConverter(args, defaultRepairPrompt)
 }
 
 // NewAlignmentConverter configures a converter using the alignment prompt.
 func NewAlignmentConverter(args map[string]interface{}) pipeline.Converter {
-	args["prompt"] = defaultAlignmentPrompt
-	args["llmClientName"] = "realign"
-	return NewLLMConverter(args)
+	return NewLLMConverter(args, defaultAlignmentPrompt)
 }

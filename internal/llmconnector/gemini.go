@@ -28,6 +28,11 @@ func init() {
 	})
 }
 
+// clientName returns the name of the LLM client, which is "gemini" for this implementation.
+func (g *GeminiInvocationClient) ClientName() string {
+	return "gemini"
+}
+
 // Configure sets the API key and optionally a model name.
 func (g *GeminiInvocationClient) Configure(args map[string]interface{}) error {
 	key, ok := args["GEMINI_API_KEY"]
@@ -60,7 +65,7 @@ func (g *GeminiInvocationClient) Prepare(args map[string]interface{}) error {
 
 // InvokeLLM calls Gemini to generate content and returns the response text with
 // Metrics about the invocation.
-func (g *GeminiInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer) (string, domain.Metrics, error) {
+func (g *GeminiInvocationClient) InvokeLLM(ctx context.Context, prompt string) (string, domain.Metrics, error) {
 	start := time.Now()
 	client, err := genai.NewClient(ctx, option.WithAPIKey(g.geminiAPIKey))
 	if err != nil {
@@ -93,7 +98,7 @@ func (g *GeminiInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer
 
 	var metrics domain.Metrics
 
-	resp, err := model.GenerateContent(ctx, genai.Text(buf.String()))
+	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
 	metrics.ConversionTime = time.Since(start)
 	metrics.ConversionPromptTime = time.Since(start)
 	metrics.ConversionEvalTime = time.Since(start)

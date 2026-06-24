@@ -85,12 +85,13 @@ func TestFullConversion(t *testing.T) {
 	assert.NotNil(t, pipe)
 
 	log.SetLevel(log.DebugLevel)
-	cc, err := pipeline.MakeCodeConverter(&pipeline.ConverterOptions{
-		CompiledPipeline: pipe,
-		Args: map[string]any{
-			"OLLAMA_API_URL": "http://swkgpu1.informatik.uni-hamburg.de:11434",
-		},
-	})
+	cc, _ := pipeline.MakeCodeConverter()
+	// cc, err := pipeline.MakeCodeConverter(&pipeline.ConverterOptions{
+	// 	CompiledPipeline: pipe,
+	// 	Args: map[string]any{
+	// 		"OLLAMA_API_URL": "http://swkgpu1.informatik.uni-hamburg.de:11434",
+	// 	},
+	// })
 
 	assert.Nil(t, err)
 

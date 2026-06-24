@@ -1,7 +1,6 @@
 package llmconnector
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -16,9 +15,10 @@ import (
 
 // Client abstracts calls to an LLM provider.
 type Client interface {
+	ClientName() string
 	Configure(args map[string]interface{}) error
 	Prepare(args map[string]interface{}) error
-	InvokeLLM(ctx context.Context, buf bytes.Buffer) (string, domain.Metrics, error)
+	InvokeLLM(ctx context.Context, prompt string) (string, domain.Metrics, error)
 }
 
 // Factory constructs a Client with the provided configuration.
@@ -38,7 +38,7 @@ func RegisterFactory(name string, factory Factory) {
 // LogResponse logs the LLM interaction to a file.
 // It uses the model name, prompt, and response to generate a unique filename.
 // The filename format is: chatlogs/<model_name>_YYYYMMDDHHMMSS-<short_uuid>.log
-func LogResponse(modelName, llmClientName, prompt, response string) {
+func LogResponse(modelName, prompt, response string) {
 	// Ensure chatlogs directory exists
 	if err := os.MkdirAll("chatlogs", os.ModePerm); err != nil {
 		log.Debugf("failed to create chatlogs directory: %v", err)
@@ -60,7 +60,7 @@ func LogResponse(modelName, llmClientName, prompt, response string) {
 		return
 	}
 	defer logf.Close()
-	_, _ = logf.WriteString("[PROMPT] (" + llmClientName + ") ----------------------------\n\n")
+	_, _ = logf.WriteString("[PROMPT] ----------------------------\n\n")
 	wr, _ := logf.WriteString(prompt)
 	written += wr
 	_, _ = logf.WriteString("\n\n[RESPONSE] ----------------------------\n\n")

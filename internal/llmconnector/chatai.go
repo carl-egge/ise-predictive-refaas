@@ -36,6 +36,11 @@ func init() {
 	})
 }
 
+// clientName returns the name of the LLM client, which is "chatai" for this implementation.
+func (c *ChatAIInvocationClient) ClientName() string {
+	return "chatai"
+}
+
 // Configure extracts the required and optional configuration values from the
 // args map and stores them on the client struct.
 func (c *ChatAIInvocationClient) Configure(args map[string]interface{}) error {
@@ -78,13 +83,13 @@ func (c *ChatAIInvocationClient) Prepare(args map[string]interface{}) error {
 // Academic Cloud model and returns the generated text together with an empty
 // Metrics value (the concrete Metrics struct lives in internal/domain)
 // – the caller can attach custom metrics if desired.
-func (c *ChatAIInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer) (string, domain.Metrics, error) {
+func (c *ChatAIInvocationClient) InvokeLLM(ctx context.Context, prompt string) (string, domain.Metrics, error) {
 	// start := time.Now()
 
 	payload := map[string]interface{}{
 		"model": c.modelName,
 		"messages": []map[string]string{
-			{"role": "user", "content": buf.String()},
+			{"role": "user", "content": prompt},
 		},
 		"temperature": 0.1,
 	}

@@ -17,7 +17,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/exp/maps"
 )
 
 // ConverterService manages background conversion jobs and exposes an HTTP interface.
@@ -36,10 +35,7 @@ type ConverterService struct {
 // MakeConverterService constructs and starts the HTTP converter service; it
 // blocks by calling http.ListenAndServe.
 func MakeConverterService() error {
-	options := pipeline.DefaultOptions
-	options.Args = maps.Clone(pipeline.DefaultOptions.Args)
-
-	converter, err := pipeline.MakeCodeConverter(&options)
+	converter, err := pipeline.MakeCodeConverter()
 	if err != nil {
 		return err
 	}
@@ -53,7 +49,7 @@ func MakeConverterService() error {
 		pendingStops: make(map[uuid.UUID]struct{}),
 	}
 
-	log.Infof("starting converter service with options: %+v", options)
+	// log.Infof("starting converter service with options: %+v", converter.Args())
 
 	r := mux.NewRouter()
 	r.Path("/").Methods(http.MethodPost).HandlerFunc(sv.uploadHandler)

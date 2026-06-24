@@ -12,17 +12,21 @@ import (
 	"github.com/carl-egge/ise-predictive-refaas/internal/llmconnector"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v3"
 
 	_ "github.com/joho/godotenv/autoload"
 )
 
 // Runner ties together an LLM client, compiled Pipeline, and runtime context
-// for performing conversions.
+// for performing conversions. It can also store a working directory and
+// runtime arguments for the LLM client and Floci.
 type Runner struct {
 	context.Context
 	client     llmconnector.Client
 	pipeline   *Pipeline
 	workingDir string
+	args       map[string]interface{}
+	flociArgs  map[string]interface{}
 }
 
 // NewRunner returns a Runner with the provided context, pipeline, and LLM client.
@@ -31,9 +35,11 @@ func NewRunner(ctx context.Context, pipe *Pipeline, client llmconnector.Client) 
 		ctx = context.Background()
 	}
 	return &Runner{
-		Context:  ctx,
-		pipeline: pipe,
-		client:   client,
+		Context:   ctx,
+		pipeline:  pipe,
+		client:    client,
+		args:      make(map[string]interface{}),
+		flociArgs: make(map[string]interface{}),
 	}
 }
 
@@ -57,23 +63,9 @@ type ConverterOptions struct {
 	Pipeline         *PipelineFile `json:"pipeline,omitempty"`
 	CompiledPipeline *Pipeline     `json:"compiledPipeline,omitempty"`
 
-	LLMClient string         `json:"LLMClient"`
-	Args      map[string]any `json:"args"`
-}
-
-func (co *ConverterOptions) setDefaults() {
-	if co.LLMClient == "" {
-		co.LLMClient = DefaultOptions.LLMClient
-	}
-	if co.Args == nil {
-		co.Args = DefaultOptions.Args
-	} else {
-		for k, v := range DefaultOptions.Args {
-			if _, ok := co.Args[k]; !ok {
-				co.Args[k] = v
-			}
-		}
-	}
+	LLMClient string         `json:"llmClient"` // Name of the LLM client to use (e.g., "ollama", "gemini", "chatai")
+	Args      map[string]any `json:"args"`      // Pipeline options + environment variables for the LLM client
+	FlociArgs map[string]any `json:"flociArgs"` // Optional arguments for Floci, if used in the pipeline
 }
 
 // DefaultPipelineYAML contains the embedded default pipeline configuration.
@@ -82,40 +74,27 @@ func (co *ConverterOptions) setDefaults() {
 var DefaultPipelineYAML string
 
 // DefaultOptions provides default converter configuration.
-// Using the lazy autoloader (_ "github.com/joho/godotenv/autoload") gets the env vars loaded
-// before this runs, so we can set defaults from env or hardcoded values.
-var DefaultOptions = ConverterOptions{
-	LLMClient: "ollama",
-	Args: map[string]any{
-		"OLLAMA_API_URL":          setOrDefault("OLLAMA_API_URL", "http://localhost:11434"),
-		"GEMINI_API_KEY":          setOrDefault("GEMINI_API_KEY", "NOT+SET"),
-		"ACADEMIC_CLOUD_ENDPOINT": setOrDefault("ACADEMIC_CLOUD_ENDPOINT", "https://chat-ai.academiccloud.de/v1"),
-		"ACADEMIC_CLOUD_API_KEY":  setOrDefault("ACADEMIC_CLOUD_API_KEY", "NOT+SET"),
-		"APP_PORT":                setOrDefault("APP_PORT", "8080"),
-	},
-}
+var DefaultOptions = initDefaultOptions()
 
 // MakeCodeConverter constructs a Runner from ConverterOptions.
-func MakeCodeConverter(ops *ConverterOptions) (*Runner, error) {
-	if ops == nil {
-		ops = &DefaultOptions
-	} else {
-		ops.setDefaults()
-	}
+func MakeCodeConverter() (*Runner, error) {
 
-	factory, ok := llmconnector.Factories[ops.LLMClient]
+	// Read default options from default.yaml and environment variables
+	convOps := DefaultOptions
+
+	factory, ok := llmconnector.Factories[convOps.LLMClient]
 	if !ok {
-		return nil, fmt.Errorf("no LLM client factory found for %s", ops.LLMClient)
+		return nil, fmt.Errorf("no LLM client factory found for %s", convOps.LLMClient)
 	}
-	apiClient, err := factory(ops.Args)
+	apiClient, err := factory(convOps.Args)
 	if err != nil {
 		return nil, err
 	}
 	var pipeline *Pipeline
-	if ops.CompiledPipeline != nil {
-		pipeline = ops.CompiledPipeline
-	} else if ops.Pipeline != nil {
-		pipeline, err = compilePipeline(*ops.Pipeline)
+	if convOps.CompiledPipeline != nil {
+		pipeline = convOps.CompiledPipeline
+	} else if convOps.Pipeline != nil {
+		pipeline, err = compilePipeline(*convOps.Pipeline)
 		if err != nil {
 			return nil, err
 		}
@@ -127,10 +106,14 @@ func MakeCodeConverter(ops *ConverterOptions) (*Runner, error) {
 		}
 	}
 
+	log.Infof("creating runner with %s:%s", apiClient.ClientName(), convOps.Args["model_name"])
+
 	return &Runner{
-		Context:  context.Background(),
-		pipeline: pipeline,
-		client:   apiClient,
+		Context:   context.Background(),
+		pipeline:  pipeline,
+		client:    apiClient,
+		args:      convOps.Args,
+		flociArgs: convOps.FlociArgs,
 	}, nil
 }
 
@@ -151,34 +134,72 @@ func (cc *Runner) Convert(req *domain.ConversionRequest) error {
 	return cc.pipeline.Execute(cc, req)
 }
 
-// Reconfigure updates the runner with new ConverterOptions, swapping its pipeline and LLM client.
+// Reconfigure updates the runner with new ConverterOptions, using only the provided options
+// and loading environment variables via setOrDefault() to construct Args.
 func (cc *Runner) Reconfigure(ops *ConverterOptions) error {
-	ops.setDefaults()
-	factory, ok := llmconnector.Factories[ops.LLMClient]
-	if !ok {
-		return fmt.Errorf("no LLM client factory found for %s", ops.LLMClient)
+	// Use the provided LLMClient, or fall back to default if not set
+	llmClient := ops.LLMClient
+	if llmClient == "" {
+		llmClient = DefaultOptions.LLMClient
 	}
-	apiClient, err := factory(ops.Args)
+
+	// Build Args from environment variables using setOrDefault
+	args := map[string]any{
+		"OLLAMA_API_URL":          setOrDefault("OLLAMA_API_URL", "http://localhost:11434"),
+		"GEMINI_API_KEY":          setOrDefault("GEMINI_API_KEY", "NOT+SET"),
+		"ACADEMIC_CLOUD_ENDPOINT": setOrDefault("ACADEMIC_CLOUD_ENDPOINT", "https://chat-ai.academiccloud.de/v1"),
+		"ACADEMIC_CLOUD_API_KEY":  setOrDefault("ACADEMIC_CLOUD_API_KEY", "NOT+SET"),
+		"APP_PORT":                setOrDefault("APP_PORT", "8080"),
+	}
+
+	// Merge any provided Args from ops (overrides env vars)
+	if ops.Args != nil {
+		for k, v := range ops.Args {
+			args[k] = v
+		}
+	}
+
+	// Build FlociArgs from provided FlociArgs or fallback to defaults
+	flociArgs := make(map[string]any)
+	if ops.FlociArgs != nil {
+		for k, v := range ops.FlociArgs {
+			flociArgs[k] = v
+		}
+	}
+
+	// Get LLM client factory
+	factory, ok := llmconnector.Factories[llmClient]
+	if !ok {
+		return fmt.Errorf("no LLM client factory found for %s", llmClient)
+	}
+
+	apiClient, err := factory(args)
 	if err != nil {
 		return err
 	}
 
+	// Validate pipeline
 	if ops.Pipeline == nil && ops.CompiledPipeline == nil {
 		return fmt.Errorf("no pipeline specified")
 	}
 
+	// Handle compiled pipeline
 	if ops.CompiledPipeline != nil {
 		cc.workingDir = ""
 		cc.pipeline = ops.CompiledPipeline
 		cc.client = apiClient
+		cc.args = args
+		cc.flociArgs = flociArgs
 		return nil
 	}
 
+	// Compile new pipeline from ops.Pipeline
 	pipeline, err := compilePipeline(*ops.Pipeline)
 	if err != nil {
 		return err
 	}
 
+	// Clean up old working dir if needed
 	if cc.workingDir != "" {
 		defer os.RemoveAll(cc.workingDir)
 	}
@@ -186,6 +207,10 @@ func (cc *Runner) Reconfigure(ops *ConverterOptions) error {
 	cc.workingDir = ""
 	cc.pipeline = pipeline
 	cc.client = apiClient
+	cc.args = args
+	cc.flociArgs = flociArgs
+
+	log.Infof("creating runner with %s:%s", apiClient.ClientName(), cc.args["model_name"])
 
 	return nil
 }
@@ -208,7 +233,69 @@ func (cc *Runner) ConvertFromFileBest(sourceFile string) (*domain.ConversionRequ
 	return req, nil
 }
 
+// initDefaultOptions initializes the DefaultOptions by parsing default.yaml
+// and merging its content with environment variables.
+func initDefaultOptions() ConverterOptions {
+	var config struct {
+		LLMClient    string                 `yaml:"LLMClient"`
+		Options      map[string]interface{} `yaml:"options"`
+		FlociOptions map[string]interface{} `yaml:"flociOptions"`
+		Tasks        []interface{}          `yaml:"tasks"` // ignored for now
+	}
+
+	err := yaml.Unmarshal([]byte(DefaultPipelineYAML), &config)
+	if err != nil {
+		panic(fmt.Sprintf("failed to unmarshal default.yaml: %v", err))
+	}
+
+	// Start with environment variables
+	args := map[string]any{
+		"OLLAMA_API_URL":          setOrDefault("OLLAMA_API_URL", "http://localhost:11434"),
+		"GEMINI_API_KEY":          setOrDefault("GEMINI_API_KEY", "NOT+SET"),
+		"ACADEMIC_CLOUD_ENDPOINT": setOrDefault("ACADEMIC_CLOUD_ENDPOINT", "https://chat-ai.academiccloud.de/v1"),
+		"ACADEMIC_CLOUD_API_KEY":  setOrDefault("ACADEMIC_CLOUD_API_KEY", "NOT+SET"),
+		"APP_PORT":                setOrDefault("APP_PORT", "8080"),
+	}
+
+	// Merge options from default.yaml into Args
+	if config.Options != nil {
+		for k, v := range config.Options {
+			args[k] = v
+		}
+	}
+
+	// Set LLMClient from YAML (if present), otherwise default to "ollama"
+	llmClient := config.LLMClient
+	if llmClient == "" {
+		llmClient = "ollama"
+	}
+
+	// Parse PipelineFile from default.yaml
+	var pipelineFile PipelineFile
+	if err := yaml.Unmarshal([]byte(DefaultPipelineYAML), &pipelineFile); err != nil {
+		panic(fmt.Sprintf("failed to unmarshal PipelineFile from default.yaml: %v", err))
+	}
+
+	// Parse FlociArgs from flociOptions
+	flociArgs := make(map[string]any)
+	if config.FlociOptions != nil {
+		for k, v := range config.FlociOptions {
+			flociArgs[k] = v
+		}
+	}
+
+	return ConverterOptions{
+		LLMClient:        llmClient,
+		Args:             args,
+		FlociArgs:        flociArgs,
+		Pipeline:         &pipelineFile,
+		CompiledPipeline: nil,
+	}
+}
+
 // Set environment variable or return default value if not set.
+// Using the lazy autoloader (_ "github.com/joho/godotenv/autoload") gets the env vars loaded
+// before this runs, so we can set defaults from env or hardcoded values.
 func setOrDefault(key, defaultValue string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
