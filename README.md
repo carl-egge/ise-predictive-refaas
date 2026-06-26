@@ -3,7 +3,7 @@
 <!-- HEADER STYLE: CLASSIC -->
 <div align="center">
 
-<img src="img/logo.png" width="30%" style="position: relative; top: 0; right: 0;" alt="Project Logo"/>
+<img src="docs/img/logo.png" width="30%" style="position: relative; top: 0; right: 0;" alt="Project Logo"/>
 
 
 <em>A service for rewriting FaaS Functions into more energy efficient versions.</em>
@@ -25,6 +25,7 @@
 - [Table of Contents](#table-of-contents)
 - [Overview](#overview)
   - [Pipeline Overview](#pipeline-overview)
+  - [Architecture](#architecture)
   - [📚 API Endpoints](#-api-endpoints)
   - [📦 Data Structures](#-data-structures)
       - [ConversionRequest](#conversionrequest)
@@ -57,7 +58,7 @@ An example pipeline configuration is provided in the [Example Usage](#5-reconfig
 
 <center>
 
-![Pipeline Overview](./img/pipeline.svg)
+![Pipeline Overview](./docs/img/pipeline.svg)
 </center>
 
 For more details check out [internal/pipeline/pipeline.go](internal/pipeline/pipeline.go) and [internal/pipeline/pipeline_io.go](internal/pipeline/pipeline_io.go). Default task registrations live in [internal/translator/prompts.go](internal/translator/prompts.go) and [internal/builder/builder.go](internal/builder/builder.go).
