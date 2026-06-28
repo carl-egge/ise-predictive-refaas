@@ -51,11 +51,15 @@ func (cc *Runner) SetWorkingDir(dir string) {
 
 // ConverterOptions holds configuration used when creating or reconfiguring a Runner.
 type ConverterOptions struct {
-	Pipeline         *PipelineFile `json:"pipeline,omitempty"`
-	CompiledPipeline *Pipeline     `json:"compiledPipeline,omitempty"`
-
 	LLMClient string         `json:"LLMClient"`
 	Args      map[string]any `json:"args"`
+
+	// PipelineFile is embedded (rather than nested under a "pipeline" key) so
+	// its Options/Tasks fields are promoted directly onto the JSON/YAML
+	// representation of ConverterOptions.
+	PipelineFile `yaml:",inline"`
+
+	CompiledPipeline *Pipeline `json:"compiledPipeline,omitempty"`
 }
 
 // setDefaults fills in a missing LLMClient and merges environment-derived
@@ -98,8 +102,8 @@ func MakeCodeConverter(ops *ConverterOptions) (*Runner, error) {
 	var pipeline *Pipeline
 	if ops.CompiledPipeline != nil {
 		pipeline = ops.CompiledPipeline
-	} else if ops.Pipeline != nil {
-		pipeline, err = compilePipeline(*ops.Pipeline)
+	} else if len(ops.Tasks) > 0 {
+		pipeline, err = compilePipeline(ops.PipelineFile)
 		if err != nil {
 			return nil, err
 		}
@@ -147,7 +151,7 @@ func (cc *Runner) Reconfigure(ops *ConverterOptions) error {
 		return err
 	}
 
-	if ops.Pipeline == nil && ops.CompiledPipeline == nil {
+	if len(ops.Tasks) == 0 && ops.CompiledPipeline == nil {
 		return fmt.Errorf("no pipeline specified")
 	}
 
@@ -158,7 +162,7 @@ func (cc *Runner) Reconfigure(ops *ConverterOptions) error {
 		return nil
 	}
 
-	pipeline, err := compilePipeline(*ops.Pipeline)
+	pipeline, err := compilePipeline(ops.PipelineFile)
 	if err != nil {
 		return err
 	}

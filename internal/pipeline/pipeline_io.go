@@ -9,7 +9,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// PipelineFile models the YAML structure used to describe pipelines.
+// PipelineFile models the YAML structure used to describe pipelines. It is
+// used standalone for on-disk pipeline files (e.g. default.yaml) and embedded
+// directly into ConverterOptions so the /reconfigure JSON body carries
+// options/tasks at the top level instead of under a nested "pipeline" key.
 type PipelineFile struct {
 	Options map[string]interface{} `json:"options" yaml:"options"`
 	Tasks   []ConversionTaskStub   `json:"tasks" yaml:"tasks"`

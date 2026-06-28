@@ -30,7 +30,6 @@
   - [📦 Data Structures](#-data-structures)
       - [ConversionRequest](#conversionrequest)
       - [ConverterOptions](#converteroptions)
-    - [PipelineFile](#pipelinefile)
   - [⚡ Additional Notes](#-additional-notes)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
@@ -102,20 +101,12 @@ The codebase follows Standard Go Project Layout with a thin entrypoint and inter
 ```
 
 ##### ConverterOptions
+Configures both the LLM backend and the conversion pipeline. `options`/`tasks` define the pipeline directly on this object (no nested wrapper) and share their shape with `internal/pipeline.PipelineFile`.
+
 ```json
 {
-  "pipeline": "PipelineFile (optional)",
   "LLMClient": "string",
-  "args": { "key": "value" }
-}
-```
-
-
-#### PipelineFile
-Defines a sequence of tasks for the conversion pipeline.
-
-```json
-{
+  "args": { "key": "value" },
   "options": {
     "model_name": "string",
     "strategy": "string",
@@ -139,10 +130,11 @@ Defines a sequence of tasks for the conversion pipeline.
 ```
 
 **Key Elements:**
-- `options`: Settings for the LLM model and inference behavior.
+- `LLMClient` / `args`: selects and configures the LLM backend (`ollama`, `gemini`, or `chatai`). `args` is merged with environment-derived defaults (e.g. `OLLAMA_API_URL`, `GEMINI_API_KEY`, `ACADEMIC_CLOUD_ENDPOINT`, `ACADEMIC_CLOUD_API_KEY`) — see [internal/pipeline/defaults.go](internal/pipeline/defaults.go).
+- `options`: Settings for the LLM model and inference behavior, merged into every task unless overridden by that task's own `task_args`.
 - `tasks`: A list of tasks executed sequentially or conditionally, each with retry logic, validation, and recovery tasks.
 
-The embedded default pipeline lives in [internal/pipeline/default.yaml](internal/pipeline/default.yaml). A JSON example is available in default.json at the repository root.
+The same `options`/`tasks` shape is used standalone for the embedded default pipeline in [internal/pipeline/default.yaml](internal/pipeline/default.yaml). A full `ConverterOptions` JSON example is available in default.json at the repository root.
 
 ---
 
@@ -244,69 +236,67 @@ curl -X POST -H "Content-Type: application/json" -d '{
   "args": {
     "OLLAMA_API_URL": "http://your-ollama-instance:11434"
   },
-  "pipeline": {
-    "options": {
-      "model_name": "qwen2.5-coder:32b",
-      "strategy": "json",
-      "temperature": 0.1,
-      "top_p": 0.8,
-      "num_ctx": 32768
+  "options": {
+    "model_name": "qwen2.5-coder:32b",
+    "strategy": "json",
+    "temperature": 0.1,
+    "top_p": 0.8,
+    "num_ctx": 32768
+  },
+  "tasks": [
+    {
+      "id": "root",
+      "task": "cleaner",
+      "maxRetryCount": 2,
+      "next": ["convert"],
+      "validation": "canCompile"
     },
-    "tasks": [
-      {
-        "id": "root",
-        "task": "cleaner",
-        "maxRetryCount": 2,
-        "next": ["convert"],
-        "validation": "canCompile"
-      },
-      {
-        "id": "convert",
-        "task": "coder",
-        "task_args": {"reader": "go"},
-        "maxRetryCount": 2,
-        "validation": "canCompile",
-        "next": ["builder"]
-      },
-      {
-        "id": "builder",
-        "task": "goBuilder",
-        "canApply": "canCompile",
-        "recovery": "gollmRecovery",
-        "maxRetryCount": 4,
-        "next": ["goTester"]
-      },
-      {
-        "id": "gollmRecovery",
-        "task": "fixer",
-        "canApply": "canCompile",
-        "task_args": {"reader": "go"},
-        "maxRetryCount": 6
-      },
-      {
-        "id": "goTester",
-        "task": "goTester",
-        "canApply": "canCompile",
-        "maxRetryCount": 5,
-        "recovery": "testRecovery"
-      },
-      {
-        "id": "testRecovery",
-        "task": "realign",
-        "canApply": "canCompile",
-        "task_args": {"reader": "go"},
-        "maxRetryCount": 3,
-        "next": ["testRecoveryBuild"]
-      },
-      {
-        "id": "testRecoveryBuild",
-        "canApply": "canCompile",
-        "task": "goBuilder",
-        "recovery": "gollmRecovery",
-        "maxRetryCount": 3
-      }
-    ]
-  }
+    {
+      "id": "convert",
+      "task": "coder",
+      "task_args": {"reader": "go"},
+      "maxRetryCount": 2,
+      "validation": "canCompile",
+      "next": ["builder"]
+    },
+    {
+      "id": "builder",
+      "task": "goBuilder",
+      "canApply": "canCompile",
+      "recovery": "gollmRecovery",
+      "maxRetryCount": 4,
+      "next": ["goTester"]
+    },
+    {
+      "id": "gollmRecovery",
+      "task": "fixer",
+      "canApply": "canCompile",
+      "task_args": {"reader": "go"},
+      "maxRetryCount": 6
+    },
+    {
+      "id": "goTester",
+      "task": "goTester",
+      "canApply": "canCompile",
+      "maxRetryCount": 5,
+      "recovery": "testRecovery"
+    },
+    {
+      "id": "testRecovery",
+      "task": "realign",
+      "canApply": "canCompile",
+      "task_args": {"reader": "go"},
+      "maxRetryCount": 3,
+      "next": ["testRecoveryBuild"]
+    },
+    {
+      "id": "testRecoveryBuild",
+      "canApply": "canCompile",
+      "task": "goBuilder",
+      "recovery": "gollmRecovery",
+      "maxRetryCount": 3
+    }
+  ]
 }' http://localhost:8080/reconfigure
 ```
 - Updates the pipeline configuration at runtime.
