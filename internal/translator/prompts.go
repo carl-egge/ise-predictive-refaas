@@ -6,16 +6,16 @@ import (
 	"github.com/carl-egge/ise-predictive-refaas/internal/pipeline"
 )
 
-//go:embed prompts/stage-zero.md
+//go:embed prompts/0-stage-document.md
 var defaultCleanupPrompt string
 
-//go:embed prompts/stage-one.md
+//go:embed prompts/1-stage-translate.md
 var defaultPrompt string
 
-//go:embed prompts/stage-two.md
+//go:embed prompts/2-stage-repair.md
 var defaultBuildRePrompt string
 
-//go:embed prompts/stage-three.md
+//go:embed prompts/3-stage-align.md
 var defaultAlignmentPrompt string
 
 func init() {

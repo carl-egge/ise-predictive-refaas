@@ -194,7 +194,9 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 
 	service.requestQueue <- request
 	log.Infof("got new conversion request for %s", request.Id)
-	http.Redirect(w, r, fmt.Sprintf("/%s", request.Id.String()), http.StatusCreated)
+	// http.Redirect(w, r, fmt.Sprintf("/%s", request.Id.String()), http.StatusCreated)
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte(fmt.Sprintf("%s\n", request.Id.String())))
 }
 
 func (service *ConverterService) reconfigure(w http.ResponseWriter, r *http.Request) {

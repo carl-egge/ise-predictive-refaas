@@ -2,7 +2,7 @@
   "LLMClient": "chatai",
   "pipeline": {
     "options": {
-      "model_name": "qwen2.5-coder:3b",
+      "model_name": "meta-llama-3.1-8b-instruct",
       "strategy": "json",
       "temperature": 0.1,
       "top_p": 0.8,
