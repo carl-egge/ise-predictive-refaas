@@ -139,8 +139,15 @@ func MakeConversionRequest(srcPkg *domain.DeploymentPackage) *domain.ConversionR
 	}
 }
 
-// Convert runs the configured pipeline against req and returns any error encountered.
-func (cc *Runner) Convert(req *domain.ConversionRequest) error {
+// Convert runs the configured pipeline against req using ctx as the
+// cancellation source for this conversion: cancelling ctx aborts the
+// pipeline at the next opportunity (between retries/tasks) instead of
+// continuing to spend build/test/LLM resources on it.
+func (cc *Runner) Convert(ctx context.Context, req *domain.ConversionRequest) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cc.Context = ctx
 	req.WorkingPackage = req.SourcePackage.Copy()
 	return cc.pipeline.Execute(cc, req)
 }
@@ -195,7 +202,7 @@ func (cc *Runner) ConvertFromFileBest(sourceFile string) (*domain.ConversionRequ
 	log.Debugf("got deployment package: %s - %+v", sourceFile, dp)
 
 	req := MakeConversionRequest(dp)
-	if err := cc.Convert(req); err != nil {
+	if err := cc.Convert(context.Background(), req); err != nil {
 		return nil, err
 	}
 

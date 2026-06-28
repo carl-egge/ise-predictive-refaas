@@ -22,10 +22,22 @@ import (
 // ConverterService manages background conversion jobs and exposes an HTTP interface.
 type ConverterService struct {
 	converter    *pipeline.Runner
-	requestQueue chan *domain.ConversionRequest
+	requestQueue chan *queuedConversion
 	results      map[uuid.UUID]*domain.ConversionRequest
 	metrics      map[uuid.UUID]domain.Metrics
-	mutex        sync.RWMutex
+	// cancels holds the CancelFunc for every queued or in-progress job,
+	// keyed by job UUID. An entry exists from upload until the job finishes
+	// (success, failure, or cancellation), at which point it is removed.
+	cancels map[uuid.UUID]context.CancelFunc
+	mutex   sync.RWMutex
+}
+
+// queuedConversion pairs a conversion request with the context that controls
+// it, so cancelling that context (via stopHandler) aborts the job whether
+// it's still waiting in requestQueue or already running.
+type queuedConversion struct {
+	ctx     context.Context
+	request *domain.ConversionRequest
 }
 
 // MakeConverterService constructs and starts the HTTP converter service; it
@@ -39,9 +51,10 @@ func MakeConverterService() error {
 
 	sv := ConverterService{
 		converter:    converter,
-		requestQueue: make(chan *domain.ConversionRequest, 100),
+		requestQueue: make(chan *queuedConversion, 100),
 		results:      make(map[uuid.UUID]*domain.ConversionRequest),
 		metrics:      make(map[uuid.UUID]domain.Metrics),
+		cancels:      make(map[uuid.UUID]context.CancelFunc),
 	}
 
 	log.Infof("Starting converter service with options: %+v", options)
@@ -50,6 +63,7 @@ func MakeConverterService() error {
 	r.Path("/").Methods(http.MethodPost).HandlerFunc(sv.uploadHandler)
 	r.Path("/metrics").Methods(http.MethodGet).HandlerFunc(sv.metricsHandler)
 	r.Path("/reconfigure").Methods(http.MethodPost).HandlerFunc(sv.reconfigure)
+	r.Path("/stop/{uuid}").Methods(http.MethodPost).HandlerFunc(sv.stopHandler)
 	r.Path("/{uuid}").Methods(http.MethodHead, http.MethodGet).HandlerFunc(sv.pollHandler)
 
 	ctx := context.Background()
@@ -60,11 +74,20 @@ func MakeConverterService() error {
 
 // Start runs the background worker loop that processes queued conversion requests.
 func (service *ConverterService) Start(ctx context.Context) {
-	for request := range service.requestQueue {
+	for job := range service.requestQueue {
+		request := job.request
 		log.Infof("starting request for %s", request.Id)
 		startTime := time.Now()
-		err := service.converter.Convert(request)
+		err := service.converter.Convert(job.ctx, request)
 		endTime := time.Now()
+
+		service.mutex.Lock()
+		if cancel, ok := service.cancels[request.Id]; ok {
+			cancel()
+			delete(service.cancels, request.Id)
+		}
+		service.mutex.Unlock()
+
 		if err != nil {
 			request.Completed = false
 			log.Debugf("error converting best n for %s: %v", request.Id, err)
@@ -192,11 +215,42 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 
 	request := pipeline.MakeConversionRequest(dp)
 
-	service.requestQueue <- request
+	jobCtx, cancel := context.WithCancel(context.Background())
+	service.mutex.Lock()
+	service.cancels[request.Id] = cancel
+	service.mutex.Unlock()
+
+	service.requestQueue <- &queuedConversion{ctx: jobCtx, request: request}
 	log.Infof("got new conversion request for %s", request.Id)
 	// http.Redirect(w, r, fmt.Sprintf("/%s", request.Id.String()), http.StatusCreated)
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte(fmt.Sprintf("%s\n", request.Id.String())))
+}
+
+// stopHandler cancels a queued or in-progress conversion identified by uuid.
+// The pipeline aborts at the next opportunity instead of continuing to spend
+// build/test/LLM resources on it; already-finished jobs are not tracked here
+// anymore and report 404.
+func (service *ConverterService) stopHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	jobUUID, err := uuid.Parse(vars["uuid"])
+	if err != nil {
+		http.Error(w, fmt.Sprintf("uuid error:%+v %+v", vars, err), http.StatusBadRequest)
+		return
+	}
+
+	service.mutex.RLock()
+	cancel, ok := service.cancels[jobUUID]
+	service.mutex.RUnlock()
+
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	cancel()
+	log.Infof("cancellation requested for %s", jobUUID)
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (service *ConverterService) reconfigure(w http.ResponseWriter, r *http.Request) {

@@ -39,8 +39,9 @@
     - [1. Upload a File](#1-upload-a-file)
     - [2. Check if a Job Exists](#2-check-if-a-job-exists)
     - [3. Download the Converted Package](#3-download-the-converted-package)
-    - [4. Retrieve All Metrics](#4-retrieve-all-metrics)
-    - [5. Reconfigure the Pipeline](#5-reconfigure-the-pipeline)
+    - [4. Stop a Running Conversion](#4-stop-a-running-conversion)
+    - [5. Retrieve All Metrics](#5-retrieve-all-metrics)
+    - [6. Reconfigure the Pipeline](#6-reconfigure-the-pipeline)
 
 ---
 
@@ -79,9 +80,10 @@ The codebase follows Standard Go Project Layout with a thin entrypoint and inter
 
 | Endpoint | Method | Request | Response | Description |
 |:---|:---|:---|:---|:---|
-| `/` | POST | Multipart form with field `file` (`.zip`, max 50MB) | `201 Created` + Redirect to `/{uuid}`<br/>Errors: `400`, `415`, `500` | Upload a serverless function `.zip` for conversion. |
+| `/` | POST | Multipart form with field `file` (`.zip`, max 50MB) | `201 Created` + job UUID in the response body<br/>Errors: `400`, `415`, `500` | Upload a serverless function `.zip` for conversion. |
 | `/{uuid}` | HEAD | - | `200 OK` if job exists<br/>`404 Not Found` if job unknown | Check if a submitted conversion job exists. |
 | `/{uuid}` | GET | - | `200 OK` + Converted `.zip` file if completed<br/>`406 Not Acceptable` if not completed<br/>`404 Not Found` if unknown<br/>`500 Internal Server Error` on error | Download the converted serverless function package by UUID. |
+| `/stop/{uuid}` | POST | - | `202 Accepted` if the job was queued or running<br/>`404 Not Found` if unknown or already finished | Cancel a queued or in-progress conversion so it stops spending further build/test/LLM resources. |
 | `/metrics` | GET | - | `200 OK` + JSON with metrics | Retrieve conversion processing metrics for all jobs. |
 | `/reconfigure` | POST | JSON body with `ConverterOptions` | `201 Created` on success<br/>`500 Internal Server Error` on failure | Reconfigure the conversion pipeline at runtime. |
 
@@ -155,6 +157,7 @@ The same `options`/`tasks` shape is used standalone for the embedded default pip
 - **Accepted format**: Only `.zip` files.
 - **Job expiration**: Jobs are deleted **after download** or **server restart**.
 - **Concurrency**: A background worker sequentially processes uploaded jobs.
+- **Cancellation**: `POST /stop/{uuid}` cancels a queued or in-progress job; the pipeline aborts at the next opportunity (between retries/tasks) rather than continuing to spend build/test/LLM resources on it.
 - **Pipeline Config**: The service supports **dynamic reconfiguration** without restarting.
 
 ---
@@ -231,7 +234,16 @@ curl -O http://localhost:8080/<job-uuid>
 
 ---
 
-#### 4. Retrieve All Metrics
+#### 4. Stop a Running Conversion
+```bash
+curl -X POST http://localhost:8080/stop/<job-uuid>
+```
+- HTTP `202 Accepted`: Job was queued or running; it will stop at the next opportunity instead of spending further build/test/LLM resources on it.
+- HTTP `404 Not Found`: No such job, or it already finished.
+
+---
+
+#### 5. Retrieve All Metrics
 ```bash
 curl http://localhost:8080/metrics
 ```
@@ -239,7 +251,7 @@ curl http://localhost:8080/metrics
 
 ---
 
-#### 5. Reconfigure the Pipeline
+#### 6. Reconfigure the Pipeline
 
 ```bash
 curl -X POST -H "Content-Type: application/json" -d '{

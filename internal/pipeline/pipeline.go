@@ -88,6 +88,12 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 		log.Debugf("Task is nil. Skipping")
 		return nil
 	}
+	if err := runner.Err(); err != nil {
+		// runner's context was cancelled (e.g. via /stop/{uuid}): abort
+		// immediately rather than starting another task, retry, or recovery.
+		log.Debugf("aborting task (%s): %v", task.ID, err)
+		return err
+	}
 	log.Debugf("starting task (%s)", task.ID)
 	if req.Metrics != nil {
 		req.Metrics.Tasks += 1
@@ -112,6 +118,13 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 			if err == nil {
 				log.Debugf("task (%s) executed successfully", task.ID)
 				break
+			}
+			if cancelErr := runner.Err(); cancelErr != nil {
+				// Don't retry or invoke recovery once cancelled - that would
+				// spend more build/test/LLM resources on a stopped job.
+				log.Debugf("task (%s) aborted: %v", task.ID, cancelErr)
+				req.AddError(err)
+				return cancelErr
 			}
 			log.Debugf("task (%s) retry (%d) failed - %s", task.ID, task.RetryCount, err)
 			if task.RetryCount+1 < task.MaxRetryCount {
@@ -158,6 +171,9 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 		if err != nil {
 			log.Debugf("task validation for (%s) failed.", task.ID)
 			req.AddError(err)
+			if cancelErr := runner.Err(); cancelErr != nil {
+				return cancelErr
+			}
 			if task.RetryCount < task.MaxRetryCount {
 				task.RetryCount++
 				return p.executeTask(runner, req, task)
