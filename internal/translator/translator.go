@@ -9,6 +9,7 @@ import (
 	"text/template"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
+	"github.com/carl-egge/ise-predictive-refaas/internal/llmconnector"
 	"github.com/carl-egge/ise-predictive-refaas/internal/pipeline"
 	log "github.com/sirupsen/logrus"
 )
@@ -120,7 +121,8 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 		return err
 	}
 
-	client.LogResponse(srcFile, response, codePrompt.String())
+	// client.LogResponse(srcFile, response, codePrompt.String())
+	llmconnector.LogResponse(cc.args["model_name"].(string), codePrompt.String(), response)
 	original := code.WorkingPackage
 	if original == nil {
 		original = code.SourcePackage

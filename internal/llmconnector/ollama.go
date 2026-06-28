@@ -3,12 +3,10 @@ package llmconnector
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"maps"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
@@ -32,6 +30,10 @@ func init() {
 		}
 		return oc, nil
 	})
+}
+
+func (llm *OllamaInvocationClient) ClientName() string {
+	return "ollama"
 }
 
 // Configure initializes the underlying Ollama client using args.
@@ -76,27 +78,6 @@ func (llm *OllamaInvocationClient) Prepare(args map[string]interface{}) error {
 	llm.RequestOptions = nargs
 
 	return nil
-}
-
-// LogResponse writes a chatlog of the prompt and response.
-func (llm *OllamaInvocationClient) LogResponse(args ...string) {
-	fhash := []byte(args[0])
-	fname := fmt.Sprintf("chatlogs/%s_%8x_%d.log", llm.ModelName, sha256.Sum256(fhash), time.Now().UnixMicro())
-	logf, err := os.OpenFile(fname, os.O_CREATE|os.O_RDWR, 0644)
-	written := 0
-	if err != nil {
-		log.Debugf("failed to open log file: %v", err)
-		return
-	}
-	defer logf.Close()
-	_, _ = logf.WriteString("# Query\n\n")
-	wr, _ := logf.WriteString(args[1])
-	written += wr
-	_, _ = logf.WriteString("\n\n# Response\n\n```\n")
-	wr, _ = logf.WriteString(args[2])
-	written += wr
-	_, _ = logf.WriteString("\n```\n")
-	log.Debugf("logged llm response to: %s with %d bytes", fname, written)
 }
 
 // InvokeLLM sends the prompt to Ollama and returns the textual response along
