@@ -58,17 +58,19 @@ type ConverterOptions struct {
 	Args      map[string]any `json:"args"`
 }
 
+// setDefaults fills in a missing LLMClient and merges environment-derived
+// defaults (see envDefaults) into Args, without overriding any value the
+// caller already set explicitly.
 func (co *ConverterOptions) setDefaults() {
 	if co.LLMClient == "" {
 		co.LLMClient = DefaultOptions.LLMClient
 	}
 	if co.Args == nil {
-		co.Args = DefaultOptions.Args
-	} else {
-		for k, v := range DefaultOptions.Args {
-			if _, ok := co.Args[k]; !ok {
-				co.Args[k] = v
-			}
+		co.Args = make(map[string]any)
+	}
+	for k, v := range envDefaults() {
+		if _, ok := co.Args[k]; !ok {
+			co.Args[k] = v
 		}
 	}
 }
@@ -76,18 +78,14 @@ func (co *ConverterOptions) setDefaults() {
 // DefaultOptions provides default converter configuration.
 var DefaultOptions = ConverterOptions{
 	LLMClient: "ollama",
-	Args: map[string]any{
-		"OLLAMA_API_URL": DefaultOllamaAPIURL,
-	},
 }
 
 // MakeCodeConverter constructs a Runner from ConverterOptions.
 func MakeCodeConverter(ops *ConverterOptions) (*Runner, error) {
 	if ops == nil {
-		ops = &DefaultOptions
-	} else {
-		ops.setDefaults()
+		ops = &ConverterOptions{}
 	}
+	ops.setDefaults()
 
 	factory, ok := llmconnector.Factories[ops.LLMClient]
 	if !ok {

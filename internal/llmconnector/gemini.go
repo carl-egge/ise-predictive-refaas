@@ -16,6 +16,7 @@ import (
 type GeminiInvocationClient struct {
 	ModelName    string
 	geminiAPIKey string
+	client       *genai.Client
 }
 
 func init() {
@@ -32,7 +33,8 @@ func (g *GeminiInvocationClient) ClientName() string {
 	return "gemini"
 }
 
-// Configure sets the API key and optionally a model name.
+// Configure sets the API key and optionally a model name, and initializes the
+// underlying Gemini client.
 func (g *GeminiInvocationClient) Configure(args map[string]interface{}) error {
 	key, ok := args["GEMINI_API_KEY"]
 	if !ok {
@@ -45,6 +47,14 @@ func (g *GeminiInvocationClient) Configure(args map[string]interface{}) error {
 		g.ModelName = model.(string)
 	} else {
 		g.ModelName = "gemini-2.5-flash"
+	}
+
+	if g.client == nil {
+		client, err := genai.NewClient(context.Background(), option.WithAPIKey(g.geminiAPIKey))
+		if err != nil {
+			return fmt.Errorf("failed to create gemini client: %w", err)
+		}
+		g.client = client
 	}
 
 	return nil
@@ -65,14 +75,12 @@ func (g *GeminiInvocationClient) Prepare(args map[string]interface{}) error {
 // InvokeLLM calls Gemini to generate content and returns the response text with
 // Metrics about the invocation.
 func (g *GeminiInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer) (string, domain.Metrics, error) {
-	start := time.Now()
-	client, err := genai.NewClient(ctx, option.WithAPIKey(g.geminiAPIKey))
-	if err != nil {
-		return "", domain.Metrics{}, err
+	if g.client == nil {
+		return "", domain.Metrics{}, fmt.Errorf("gemini client not initialized")
 	}
-	defer client.Close()
 
-	model := client.GenerativeModel(g.ModelName)
+	start := time.Now()
+	model := g.client.GenerativeModel(g.ModelName)
 
 	model.ResponseMIMEType = "application/json"
 	model.ResponseSchema = &genai.Schema{

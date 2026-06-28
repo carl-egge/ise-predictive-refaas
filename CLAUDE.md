@@ -8,7 +8,7 @@ ReFaaS converts serverless functions from one language to another (currently Pyt
 
 This is a research codebase (thesis project). The two open problems it's built around: (1) end-to-end validation that translated code is correct for non-trivial, side-effecting workloads, and (2) prediction mechanisms to avoid infeasible or energy-ineffective translation attempts before spending LLM/build time on them. Prediction is not yet implemented anywhere in this repo — don't assume a predictor, scoring model, or related API exists unless you find it in code.
 
-**Verify before claiming.** Several things referenced in docs/config are not implemented in code: `internal/floci` (Floci/AWS-emulator integration) does not exist as a package — `docs/floci.md` is just third-party reference documentation, not a description of code in this repo. Similarly the `chatai`/AcademicCloud LLM backend referenced in `.env.example` and `scripts/chatai.json` has no corresponding factory in `internal/llmconnector` — only `ollama` and `gemini` are registered (`internal/llmconnector/ollama.go`, `internal/llmconnector/gemini.go`). Always grep for a symbol/converter/endpoint before describing it as existing.
+**Verify before claiming.** Some things referenced in docs/config are not implemented in code: `internal/floci` (Floci/AWS-emulator integration) does not exist as a package — `docs/floci.md` is just third-party reference documentation, not a description of code in this repo. Always grep for a symbol/converter/endpoint before describing it as existing.
 
 There are currently no `*_test.go` files in the repository — no automated Go test suite exists yet.
 
@@ -25,12 +25,14 @@ There is no Makefile, lint config, or CI workflow in this repo, and no test suit
 
 Docker:
 ```sh
-cp .env.example .env             # then set GEMINI_API_KEY / OLLAMA_API_URL etc.
+cp .env.example .env             # then set GEMINI_API_KEY / OLLAMA_API_URL / ACADEMIC_CLOUD_* etc.
 docker compose up --build        # builds Dockerfile, starts refaas + ollama on :8080 / :11434
 ```
 
+A `.env` file in the working directory is also picked up directly by the binary (not just Docker) via `github.com/joho/godotenv/autoload`, imported in `internal/pipeline/defaults.go`.
+
 Helper scripts (`scripts/`):
-- `reconfigure.sh <config.json>` — POSTs a JSON `ConverterOptions` body to `/reconfigure` (see `scripts/chatai.json` for a config shape example — note its `LLMClient: "chatai"` is not actually a registered backend, treat it as a template only).
+- `reconfigure.sh <config.json>` — POSTs a JSON `ConverterOptions` body to `/reconfigure` (see `scripts/chatai.json` for an example that switches the runner to the `chatai` LLM client).
 - `store-metrics.sh` — GETs `/metrics` and saves the JSON into `examples/metrics/`.
 
 ## Architecture
@@ -43,7 +45,7 @@ cmd/refaas/main.go
        -> internal/pipeline Runner: holds compiled Pipeline + LLM Client, executes ConversionRequests
             -> internal/translator   LLM-backed Converters (cleaner/coder/fixer/realign)
             -> internal/builder      build + test Converters/validators
-            -> internal/llmconnector LLM Client implementations (ollama, gemini)
+            -> internal/llmconnector LLM Client implementations (ollama, gemini, chatai)
        -> internal/inputhandler   .zip -> domain.DeploymentPackage
        -> internal/outputhandler  domain.DeploymentPackage -> .zip / HTTP errors
   -> internal/domain         shared types: ConversionRequest, DeploymentPackage, TestFile, Metrics
@@ -64,6 +66,13 @@ cmd/refaas/main.go
 - `translator.go`'s `LLMConverter.Apply` renders the prompt template (with the current working code, the last recorded error, the original source, and the first test's input/output as template vars), calls `runner.LLMClient().Prepare(args)` then `InvokeLLM`, accumulates returned `domain.Metrics` onto the request, logs the raw prompt/response via `llmconnector.LogResponse` into `chatlogs/`, and replaces `req.WorkingPackage` with whatever `PackageReader` parses out of the LLM response.
 - `readers.go` / `ReaderFactory` selects how the raw LLM text is turned back into a `DeploymentPackage` (`"go"` → `GoJsonOllamaReader`, `"deepseek"` → `GoDeepSeekOllamaReader`, default → `BasicLLMDeploymentReader`); chosen per-task via `task_args.reader` in the pipeline YAML.
 
+### LLM connectors (`internal/llmconnector`)
+
+- `client.go` defines the `Client` interface (`ClientName`, `Configure(args)`, `Prepare(args)`, `InvokeLLM(ctx, buf)`) and a `Factories` registry populated via `RegisterFactory` from each connector's `init()`. `ConverterOptions.LLMClient` (`"ollama"`, `"gemini"`, or `"chatai"`) selects which factory `pipeline.MakeCodeConverter`/`Reconfigure` invoke.
+- All three connectors (`ollama.go`, `gemini.go`, `chatai.go`) follow the same shape: `Configure(args)` builds and caches the expensive client/transport object on the struct guarded by a `client == nil` check (so it's built once, not per-call), `Prepare(args)` applies per-task overrides (model name, temperature, etc. — note Ollama reads `model_name`/`chatai` reads `model_name`, but Gemini reads its own `GEMINI_MODEL` key, an existing inconsistency), and `InvokeLLM` reuses the cached client rather than constructing a new one per request.
+- `chatai.go`'s `ChatAIInvocationClient` talks to the GWDG/AcademicCloud "Chat AI" service, an OpenAI-compatible `/chat/completions` API, over plain `net/http` (no SDK dependency). It defaults `response_format` to `{"type":"json_object"}` and `max_tokens` to `2<<14` unless the task already set them, since the readers in `internal/translator` expect the entire response body to be a parseable JSON object.
+- `schema.go`'s `llmOutputSchema` is an Ollama-specific structured-output schema passed via `Format` in `ollama.go`'s `Generate` call; it has no equivalent for Gemini/ChatAI today.
+
 ### Build/test stages (`internal/builder`)
 
 - `builder.go`'s `GolangBuilder` (`goBuilder`) writes `req.WorkingPackage` plus an embedded `test_handler.txt` harness into a fresh temp dir (`runner.SetWorkingDir`), runs the package's `BuildCmd` list, and on a known Go-modules failure mode (`"unknown revision"`) falls back to regenerating `go.mod` via `go mod init`/`go mod tidy` before retrying the build once.
@@ -73,7 +82,7 @@ cmd/refaas/main.go
 
 - Single `ConverterService` holds one `pipeline.Runner`, a buffered job channel (`requestQueue`, capacity 100), and in-memory `results`/`metrics` maps keyed by job UUID, guarded by one `sync.RWMutex`. There is exactly one background worker goroutine (`Start`) draining the queue sequentially — conversions are not processed concurrently.
 - Routes (`mux.Router`): `POST /` upload (multipart `file`, ≤50MB, must end in `.zip`) → enqueues and 201-redirects to `/{uuid}`; `HEAD|GET /{uuid}` → job existence check or download-and-delete-on-GET of the resulting `.zip`; `GET /metrics` → dump of the in-memory metrics map; `POST /reconfigure` → decodes a `pipeline.ConverterOptions` body, swaps the runner's LLM client/pipeline, and **wipes all existing `results`/`metrics`**.
-- Env vars consumed directly in `service.go`: `OLLAMA_API_URL` (default `http://localhost:11434`), `GEMINI_API_KEY` (default sentinel `"NOT+SET"`).
+- `service.go` itself no longer reads environment variables directly — it just calls `pipeline.MakeCodeConverter(&pipeline.ConverterOptions{})`. Environment defaults are resolved in `internal/pipeline/defaults.go`'s `envDefaults()` (`OLLAMA_API_URL`, `GEMINI_API_KEY`, `ACADEMIC_CLOUD_ENDPOINT`, `ACADEMIC_CLOUD_API_KEY`, `APP_PORT`, each with a hardcoded fallback) and merged into `ConverterOptions.Args` by `setDefaults()` in `runner.go`, which both `MakeCodeConverter` and `Reconfigure` call — so env vars are re-read fresh on every startup and every `/reconfigure`, not just once. A `.env` file is loaded automatically via the `godotenv/autoload` blank import.
 
 ### Domain types (`internal/domain/types.go`)
 

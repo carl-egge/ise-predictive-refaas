@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -18,7 +17,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/exp/maps"
 )
 
 // ConverterService manages background conversion jobs and exposes an HTTP interface.
@@ -30,40 +28,10 @@ type ConverterService struct {
 	mutex        sync.RWMutex
 }
 
-func setOrDefault(key, defaultValue string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return defaultValue
-}
-
-func setFileFromEnv(key, defaultValue string) string {
-	if val := os.Getenv(key); val != "" {
-		fs, err := os.OpenFile(val, os.O_RDONLY, 0644)
-		if err != nil {
-			return defaultValue
-		}
-		defer fs.Close()
-		fsdat, err := io.ReadAll(fs)
-		if err != nil {
-			return defaultValue
-		}
-		if len(fsdat) == 0 {
-			return defaultValue
-		}
-		return string(fsdat)
-	}
-	return defaultValue
-}
-
 // MakeConverterService constructs and starts the HTTP converter service; it
 // blocks by calling http.ListenAndServe.
 func MakeConverterService() error {
-	options := pipeline.DefaultOptions
-	options.Args = maps.Clone(pipeline.DefaultOptions.Args)
-	options.Args["OLLAMA_API_URL"] = setOrDefault("OLLAMA_API_URL", pipeline.DefaultOllamaAPIURL)
-	options.Args["GEMINI_API_KEY"] = setOrDefault("GEMINI_API_KEY", "NOT+SET")
-
+	options := pipeline.ConverterOptions{}
 	converter, err := pipeline.MakeCodeConverter(&options)
 	if err != nil {
 		return err
