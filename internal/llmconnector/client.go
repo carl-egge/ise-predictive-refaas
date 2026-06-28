@@ -17,8 +17,18 @@ import (
 // Client abstracts calls to an LLM provider.
 type Client interface {
 	ClientName() string
-	Configure(args map[string]interface{}) error
-	Prepare(args map[string]interface{}) error
+
+	// Configure receives connector-level config (API keys, endpoints) and is
+	// called once, when the client is built (Runner construction or
+	// /reconfigure) — never per task. Implementations typically cache an
+	// expensive client/transport here, guarded by a nil check.
+	Configure(connectorArgs map[string]interface{}) error
+
+	// Prepare receives per-task params (model name, temperature, etc. — the
+	// merged result of a pipeline's options and a task's own task_args) and
+	// is called fresh before every LLM invocation, including retries.
+	Prepare(taskParams map[string]interface{}) error
+
 	InvokeLLM(ctx context.Context, buf bytes.Buffer) (string, domain.Metrics, error)
 }
 

@@ -51,8 +51,14 @@ func (cc *Runner) SetWorkingDir(dir string) {
 
 // ConverterOptions holds configuration used when creating or reconfiguring a Runner.
 type ConverterOptions struct {
-	LLMClient string         `json:"LLMClient"`
-	Args      map[string]any `json:"args"`
+	LLMClient string `json:"LLMClient"`
+	// Args is connector-level config (API keys, endpoints), consumed once by
+	// llmconnector.Client.Configure when the Runner is built/reconfigured.
+	// It is merged with environment-derived defaults by setDefaults (see
+	// envDefaults in defaults.go) and is distinct from the per-task params
+	// in PipelineFile.Options/ConversionTaskStub.TaskArgs below, which are
+	// re-evaluated on every task execution via Client.Prepare.
+	Args map[string]any `json:"args"`
 
 	// PipelineFile is embedded (rather than nested under a "pipeline" key) so
 	// its Options/Tasks fields are promoted directly onto the JSON/YAML

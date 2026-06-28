@@ -103,6 +103,17 @@ The codebase follows Standard Go Project Layout with a thin entrypoint and inter
 ##### ConverterOptions
 Configures both the LLM backend and the conversion pipeline. `options`/`tasks` define the pipeline directly on this object (no nested wrapper) and share their shape with `internal/pipeline.PipelineFile`.
 
+`args`, `options`, and `task_args` look similar but scope to different things and live for different amounts of time. Use this as the lookup table instead of re-deriving it from the code:
+
+| Name (JSON key) | Go type | Scope | Set when | Consumed by |
+|:---|:---|:---|:---|:---|
+| `args` | `ConverterOptions.Args` | Connector wiring (API keys, endpoints) | Once, at Runner build / `/reconfigure` | `llmconnector.Client.Configure` |
+| `options` | `PipelineFile.Options` | Pipeline-wide defaults for every task (model_name, temperature, strategy, ...) | Once, at pipeline compile | Merged into every task's params |
+| `task_args` | `ConversionTaskStub.TaskArgs` | This task only — overrides `options` | Once, at pipeline compile | Merged on top of `options` for this task's `task` converter (not `canApply`/`validation`) |
+| *(unnamed — internally "task params")* | merged `options` + `task_args` | This task, every run | Fresh before every task execution, including retries | `llmconnector.Client.Prepare` |
+
+In short: `args` answers "how do I reach the LLM backend," `options`/`task_args` answer "what should this LLM call's parameters be" — the former is set once per connector, the latter is re-merged per task on every attempt.
+
 ```json
 {
   "LLMClient": "string",

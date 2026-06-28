@@ -33,16 +33,17 @@ func (g *GeminiInvocationClient) ClientName() string {
 	return "gemini"
 }
 
-// Configure sets the API key and optionally a model name, and initializes the
-// underlying Gemini client.
-func (g *GeminiInvocationClient) Configure(args map[string]interface{}) error {
-	key, ok := args["GEMINI_API_KEY"]
+// Configure sets the API key and optionally a model name from connector-level
+// config, and initializes the underlying Gemini client (called once, never
+// per task).
+func (g *GeminiInvocationClient) Configure(connectorArgs map[string]interface{}) error {
+	key, ok := connectorArgs["GEMINI_API_KEY"]
 	if !ok {
 		return fmt.Errorf("GEMINI_API_KEY required")
 	}
 	g.geminiAPIKey = key.(string)
 
-	model, ok := args["GEMINI_MODEL"]
+	model, ok := connectorArgs["GEMINI_MODEL"]
 	if ok {
 		g.ModelName = model.(string)
 	} else {
@@ -60,12 +61,13 @@ func (g *GeminiInvocationClient) Configure(args map[string]interface{}) error {
 	return nil
 }
 
-// Prepare allows overriding the model via runtime args.
-func (g *GeminiInvocationClient) Prepare(args map[string]interface{}) error {
-	if args == nil {
+// Prepare allows overriding the model via per-task params (called fresh
+// before every InvokeLLM, including retries).
+func (g *GeminiInvocationClient) Prepare(taskParams map[string]interface{}) error {
+	if taskParams == nil {
 		return nil
 	}
-	model, ok := args["GEMINI_MODEL"]
+	model, ok := taskParams["GEMINI_MODEL"]
 	if ok {
 		g.ModelName = model.(string)
 	}

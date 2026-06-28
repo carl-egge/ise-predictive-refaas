@@ -27,25 +27,25 @@ func init() {
 }
 
 // NewCleanupConverter configures a converter using the cleanup prompt.
-func NewCleanupConverter(args map[string]interface{}) pipeline.Converter {
-	args["prompt"] = defaultCleanupPrompt
-	return NewLLMConverter(args)
+func NewCleanupConverter(taskParams map[string]interface{}) pipeline.Converter {
+	taskParams["prompt"] = defaultCleanupPrompt
+	return NewLLMConverter(taskParams)
 }
 
 // NewCodeConverter configures a converter using the default translation prompt.
-func NewCodeConverter(args map[string]interface{}) pipeline.Converter {
-	args["prompt"] = defaultPrompt
-	return NewLLMConverter(args)
+func NewCodeConverter(taskParams map[string]interface{}) pipeline.Converter {
+	taskParams["prompt"] = defaultPrompt
+	return NewLLMConverter(taskParams)
 }
 
 // NewRePromptConverter configures a converter using the build-fix prompt.
-func NewRePromptConverter(args map[string]interface{}) pipeline.Converter {
-	args["prompt"] = defaultBuildRePrompt
-	return NewLLMConverter(args)
+func NewRePromptConverter(taskParams map[string]interface{}) pipeline.Converter {
+	taskParams["prompt"] = defaultBuildRePrompt
+	return NewLLMConverter(taskParams)
 }
 
 // NewAlignmentConverter configures a converter using the alignment prompt.
-func NewAlignmentConverter(args map[string]interface{}) pipeline.Converter {
-	args["prompt"] = defaultAlignmentPrompt
-	return NewLLMConverter(args)
+func NewAlignmentConverter(taskParams map[string]interface{}) pipeline.Converter {
+	taskParams["prompt"] = defaultAlignmentPrompt
+	return NewLLMConverter(taskParams)
 }

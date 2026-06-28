@@ -18,11 +18,13 @@ import (
 // exposes an OpenAI-compatible chat completions API, and adapts responses to
 // the project's Metrics structure.
 type ChatAIInvocationClient struct {
-	ModelName      string
-	RequestOptions map[string]interface{}
-	endpoint       string
-	apiKey         string
-	client         *http.Client
+	ModelName string
+	// RequestParams holds the per-task params (set by Prepare) merged into
+	// the outbound /chat/completions request body on every InvokeLLM call.
+	RequestParams map[string]interface{}
+	endpoint      string
+	apiKey        string
+	client        *http.Client
 }
 
 func init() {
@@ -39,20 +41,21 @@ func (cc *ChatAIInvocationClient) ClientName() string {
 	return "chatai"
 }
 
-// Configure initializes the underlying HTTP client using args.
-func (cc *ChatAIInvocationClient) Configure(args map[string]interface{}) error {
-	endpoint, ok := args["ACADEMIC_CLOUD_ENDPOINT"]
+// Configure initializes the underlying HTTP client using connector-level
+// config (called once, never per task).
+func (cc *ChatAIInvocationClient) Configure(connectorArgs map[string]interface{}) error {
+	endpoint, ok := connectorArgs["ACADEMIC_CLOUD_ENDPOINT"]
 	if !ok {
-		return fmt.Errorf("ACADEMIC_CLOUD_ENDPOINT could not be found in args")
+		return fmt.Errorf("ACADEMIC_CLOUD_ENDPOINT could not be found in connectorArgs")
 	}
 	endpointStr, ok := endpoint.(string)
 	if !ok {
 		return fmt.Errorf("ACADEMIC_CLOUD_ENDPOINT must be a string")
 	}
 
-	apiKey, ok := args["ACADEMIC_CLOUD_API_KEY"]
+	apiKey, ok := connectorArgs["ACADEMIC_CLOUD_API_KEY"]
 	if !ok {
-		return fmt.Errorf("ACADEMIC_CLOUD_API_KEY could not be found in args")
+		return fmt.Errorf("ACADEMIC_CLOUD_API_KEY could not be found in connectorArgs")
 	}
 	apiKeyStr, ok := apiKey.(string)
 	if !ok {
@@ -69,15 +72,16 @@ func (cc *ChatAIInvocationClient) Configure(args map[string]interface{}) error {
 	return nil
 }
 
-// Prepare sets model-specific runtime options from args.
-func (cc *ChatAIInvocationClient) Prepare(args map[string]interface{}) error {
-	model, ok := args["model_name"].(string)
+// Prepare sets model-specific runtime options from the merged per-task
+// params (called fresh before every InvokeLLM, including retries).
+func (cc *ChatAIInvocationClient) Prepare(taskParams map[string]interface{}) error {
+	model, ok := taskParams["model_name"].(string)
 	if !ok {
 		return fmt.Errorf("model_name must be a string")
 	}
 
 	nargs := make(map[string]interface{})
-	maps.Copy(nargs, args)
+	maps.Copy(nargs, taskParams)
 
 	delete(nargs, "model_name")
 	delete(nargs, "strategy") // pipeline-level validation hint, not an API parameter
@@ -97,7 +101,7 @@ func (cc *ChatAIInvocationClient) Prepare(args map[string]interface{}) error {
 	}
 
 	cc.ModelName = model
-	cc.RequestOptions = nargs
+	cc.RequestParams = nargs
 
 	return nil
 }
@@ -133,7 +137,7 @@ func (cc *ChatAIInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffe
 			{"role": "user", "content": buf.String()},
 		},
 	}
-	maps.Copy(body, cc.RequestOptions)
+	maps.Copy(body, cc.RequestParams)
 
 	payload, err := json.Marshal(body)
 	if err != nil {

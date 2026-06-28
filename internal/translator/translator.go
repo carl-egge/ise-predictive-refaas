@@ -25,13 +25,17 @@ type PackageReader interface {
 type LLMConverter struct {
 	template *template.Template
 	reader   PackageReader
-	args     map[string]interface{}
+	// taskParams is this task's merged params (pipeline-wide options plus
+	// this task's own task_args, minus "prompt"/"reader"). It is handed to
+	// the LLM client's Prepare on every Apply call — distinct from
+	// pipeline.ConverterOptions.Args, which configures the connector itself.
+	taskParams map[string]interface{}
 }
 
-// Args returns a copy of the converter arguments.
-func (cc *LLMConverter) Args() map[string]interface{} {
+// TaskParams returns a copy of this task's merged params.
+func (cc *LLMConverter) TaskParams() map[string]interface{} {
 	out := make(map[string]interface{})
-	maps.Copy(out, cc.args)
+	maps.Copy(out, cc.taskParams)
 	return out
 }
 
@@ -46,9 +50,10 @@ func ReaderFactory(name string) PackageReader {
 	return BasicLLMDeploymentReader{}
 }
 
-// NewLLMConverter builds an LLM-backed Converter from template args.
-func NewLLMConverter(args map[string]interface{}) pipeline.Converter {
-	prompt, ok := args["prompt"].(string)
+// NewLLMConverter builds an LLM-backed Converter from a task's merged params
+// (pipeline-wide options plus that task's own task_args).
+func NewLLMConverter(taskParams map[string]interface{}) pipeline.Converter {
+	prompt, ok := taskParams["prompt"].(string)
 	if !ok {
 		log.Fatal("prompt must be a string")
 		return nil
@@ -61,20 +66,20 @@ func NewLLMConverter(args map[string]interface{}) pipeline.Converter {
 	}
 
 	var reader PackageReader
-	if readerName, ok := args["reader"].(string); ok {
+	if readerName, ok := taskParams["reader"].(string); ok {
 		reader = ReaderFactory(readerName)
 	} else {
 		reader = BasicLLMDeploymentReader{}
 	}
 
-	delete(args, "prompt")
-	delete(args, "reader")
+	delete(taskParams, "prompt")
+	delete(taskParams, "reader")
 
-	log.Debugf("creating LLM converter with params: %v", args)
+	log.Debugf("creating LLM converter with params: %v", taskParams)
 	return &LLMConverter{
-		template: promptTmpl,
-		reader:   reader,
-		args:     args,
+		template:   promptTmpl,
+		reader:     reader,
+		taskParams: taskParams,
 	}
 }
 
@@ -109,7 +114,7 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 	}
 
 	client := runner.LLMClient()
-	if err := client.Prepare(cc.args); err != nil {
+	if err := client.Prepare(cc.taskParams); err != nil {
 		return domain.NewLLMError(fmt.Errorf("failed to configure LLMClient: %+v", err))
 	}
 
@@ -122,7 +127,7 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 	}
 
 	// client.LogResponse(srcFile, response, codePrompt.String())
-	llmconnector.LogResponse(cc.args["model_name"].(string), codePrompt.String(), response)
+	llmconnector.LogResponse(cc.taskParams["model_name"].(string), codePrompt.String(), response)
 	original := code.WorkingPackage
 	if original == nil {
 		original = code.SourcePackage

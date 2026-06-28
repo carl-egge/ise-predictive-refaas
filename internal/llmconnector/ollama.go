@@ -17,9 +17,11 @@ import (
 // OllamaInvocationClient calls the Ollama API and adapts responses to the
 // project's Metrics structure.
 type OllamaInvocationClient struct {
-	ModelName      string
-	RequestOptions map[string]interface{}
-	client         *api.Client
+	ModelName string
+	// RequestParams holds the per-task params (set by Prepare) forwarded as
+	// Ollama's request "Options" on every InvokeLLM call.
+	RequestParams map[string]interface{}
+	client        *api.Client
 }
 
 func init() {
@@ -36,12 +38,13 @@ func (llm *OllamaInvocationClient) ClientName() string {
 	return "ollama"
 }
 
-// Configure initializes the underlying Ollama client using args.
-func (llm *OllamaInvocationClient) Configure(args map[string]interface{}) error {
+// Configure initializes the underlying Ollama client using connector-level
+// config (called once, never per task).
+func (llm *OllamaInvocationClient) Configure(connectorArgs map[string]interface{}) error {
 	if llm.client == nil {
-		urlStr, ok := args["OLLAMA_API_URL"]
+		urlStr, ok := connectorArgs["OLLAMA_API_URL"]
 		if !ok {
-			return fmt.Errorf("OLLAMA_API_URL could not be found in args")
+			return fmt.Errorf("OLLAMA_API_URL could not be found in connectorArgs")
 		}
 
 		client := http.Client{}
@@ -53,16 +56,17 @@ func (llm *OllamaInvocationClient) Configure(args map[string]interface{}) error 
 	return nil
 }
 
-// Prepare sets model-specific runtime options from args.
-func (llm *OllamaInvocationClient) Prepare(args map[string]interface{}) error {
-	model, ok := args["model_name"]
+// Prepare sets model-specific runtime options from the merged per-task
+// params (called fresh before every InvokeLLM, including retries).
+func (llm *OllamaInvocationClient) Prepare(taskParams map[string]interface{}) error {
+	model, ok := taskParams["model_name"]
 	if !ok {
 		log.Fatal("model_name must be a string")
 		return nil
 	}
 
 	nargs := make(map[string]interface{})
-	maps.Copy(nargs, args)
+	maps.Copy(nargs, taskParams)
 
 	delete(nargs, "model_name")
 
@@ -75,7 +79,7 @@ func (llm *OllamaInvocationClient) Prepare(args map[string]interface{}) error {
 	maps.Insert(nargs, maps.All(defaultParams))
 
 	llm.ModelName = model.(string)
-	llm.RequestOptions = nargs
+	llm.RequestParams = nargs
 
 	return nil
 }
@@ -93,7 +97,7 @@ func (llm *OllamaInvocationClient) InvokeLLM(runner context.Context, buf bytes.B
 		Model:   llm.ModelName,
 		Prompt:  buf.String(),
 		Stream:  stream,
-		Options: llm.RequestOptions,
+		Options: llm.RequestParams,
 		Format:  llmOutputSchema,
 	}
 
