@@ -231,7 +231,7 @@
             <mxPoint x="1544" y="-1105" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="m21" edge="1" parent="1" style="html=1;align=left;spacingLeft=4;endArrow=block;rounded=0;" value="write WorkingPackage + handler.go to temp dir; run BuildCmd">
+        <mxCell id="m21" edge="1" parent="1" style="html=1;align=left;spacingLeft=4;endArrow=block;rounded=0;" value="write WorkingPackage + test_handler.go to temp dir; run BuildCmd">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="1624" y="-1090" />

@@ -2,9 +2,7 @@
 Act as diligent a software engineer with experience in writing Go programs for AWS Lambda, you fix compilation issues.
 
 You have the following existing code:
-```
 {{ .code }}
-```
 
 When compiling you got the following error:
 ```
@@ -19,7 +17,9 @@ Now your task is to do resolve this issue. Please ensure that:
 
 Remember the original function that we wanted to build came from the following python function. Make sure that we fix the issue in our go function while still keeping the logiic of the original.
 
+```python
 {{ .original }}
+```
 
 # Format Rules
 *Critical*:

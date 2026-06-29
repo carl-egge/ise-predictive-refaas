@@ -196,18 +196,41 @@ func getFirstTestFile(code *domain.ConversionRequest) *domain.TestFile {
 	return result
 }
 
+// testHandlerFilename is the build-file name internal/builder.GolangBuilder
+// injects for its fixed test harness (see builder.go's
+// code.BuildFiles["test_handler.go"] = ...). It's never LLM-generated, so
+// codeBlockGenerator excludes it from {{ .code }} - showing it to a
+// translation/repair/alignment prompt only adds noise the model can't act
+// on; any signature mismatch against it already surfaces in the build
+// error text itself ({{ .issue }}).
+const testHandlerFilename = "test_handler.go"
+
 func codeBlockGenerator(code *domain.DeploymentPackage) strings.Builder {
 	var codeBlock strings.Builder
 	if code == nil {
 		return codeBlock
 	}
-	codeBlock.WriteString(fmt.Sprintf("#### main.%s\n```go\n", code.Suffix))
+	codeBlock.WriteString(fmt.Sprintf("#### main.%s\n```%s\n", code.Suffix, fenceLanguage(code.Suffix)))
 	codeBlock.WriteString(code.RootFile)
 	codeBlock.WriteString("\n```\n\n")
-	for _, fname := range code.BuildFiles {
+	for fname, content := range code.BuildFiles {
+		if fname == testHandlerFilename {
+			continue
+		}
 		codeBlock.WriteString(fmt.Sprintf("\n#### %s\n```go\n", fname))
-		codeBlock.WriteString(code.BuildFiles[fname])
+		codeBlock.WriteString(content)
 		codeBlock.WriteString("\n```\n\n")
 	}
 	return codeBlock
+}
+
+// fenceLanguage maps a DeploymentPackage's Suffix to a Markdown code-fence
+// language tag for the root file, so a pre-translation Python source isn't
+// mislabeled as Go. BuildFiles are always Go artifacts in this codebase
+// (go.mod, the injected test harness), so their own fence stays "go".
+func fenceLanguage(suffix string) string {
+	if suffix == "py" {
+		return "python"
+	}
+	return "go"
 }

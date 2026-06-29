@@ -59,7 +59,7 @@ func (cc *GolangBuilder) Apply(runner *pipeline.Runner, request *domain.Conversi
 	}
 	runner.SetWorkingDir(dir)
 	code := request.WorkingPackage
-	code.BuildFiles["handler.go"] = string(cc.TestHandler)
+	code.BuildFiles["test_handler.go"] = string(cc.TestHandler)
 	if err := cc.build(request, dir, runner); err != nil {
 		if request.Metrics != nil {
 			request.Metrics.BuildError += 1

@@ -73,6 +73,11 @@ func ReadFromReader(reader io.ReaderAt, size int64) (*domain.DeploymentPackage, 
 				return nil, err
 			}
 			dp.RootFile = string(rootFile)
+			if strings.HasSuffix(file.Name, ".py") {
+				dp.Suffix = "py"
+			} else {
+				dp.Suffix = "go"
+			}
 		} else if strings.HasPrefix(file.Name, "test/") {
 			if file.FileInfo().IsDir() {
 				continue

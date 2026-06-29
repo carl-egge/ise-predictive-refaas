@@ -85,7 +85,7 @@ Please ensure that:
 
 {{ .code }}
 
-Also see the following example of and output of the function:
+Also see the following example of an output of the function:
 #### Output 
 ```json
 {{ .output }}

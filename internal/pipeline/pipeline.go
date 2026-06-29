@@ -109,6 +109,8 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 	var err error
 	var workingPackage *domain.DeploymentPackage
 	if task.Execute != nil {
+
+		// Loop for retry attempts, executing the task and handling errors as needed.
 		log.Debugf("running task (%s) with (%d / %d) executions", task.ID, task.RetryCount+1, task.MaxRetryCount+1)
 		for ; task.RetryCount < task.MaxRetryCount; task.RetryCount++ {
 			if req.WorkingPackage != nil {
@@ -164,7 +166,7 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 	} else {
 		log.Debugf("task (%s) is not an executable task. Skipping", task.ID)
 	}
-
+	// Perform validation if defined
 	if task.Validation != nil {
 		log.Debugf("performing validation task (%s)", task.ID)
 		err = task.Validation.Apply(runner, req)
@@ -180,8 +182,9 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 			}
 			return err
 		}
+		log.Debugf("task (%s) validated successfully", task.ID)
 	}
-	log.Debugf("task (%s) executed successfully", task.ID)
+	// Execute next tasks in the pipeline
 	for _, next := range task.Next {
 		if err := p.executeTask(runner, req, next); err != nil {
 			req.AddError(err)

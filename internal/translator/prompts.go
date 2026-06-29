@@ -12,7 +12,7 @@ var defaultCleanupPrompt string
 //go:embed prompts/0-stage-summarize.md
 var defaultSummaryPrompt string
 
-//go:embed prompts/1-stage-translate.md
+//go:embed prompts/1-stage-translate-1.md
 var defaultPrompt string
 
 //go:embed prompts/1-stage-translate-2.md
