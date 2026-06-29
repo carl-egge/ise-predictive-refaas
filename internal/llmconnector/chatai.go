@@ -22,9 +22,16 @@ type ChatAIInvocationClient struct {
 	// RequestParams holds the per-task params (set by Prepare) merged into
 	// the outbound /chat/completions request body on every InvokeLLM call.
 	RequestParams map[string]interface{}
-	endpoint      string
-	apiKey        string
-	client        *http.Client
+	// OutputSchema holds this task's expected response shape (set by
+	// Prepare, from task_args.output_keys), used to request a JSON Schema
+	// structured response. Falls back to the generic
+	// response_format: json_object mode when no task-specific schema is
+	// set. Whether the backend actually enforces the schema depends on the
+	// model/proxy's support for OpenAI's Structured Outputs feature.
+	OutputSchema OutputSchema
+	endpoint     string
+	apiKey       string
+	client       *http.Client
 }
 
 func init() {
@@ -84,8 +91,9 @@ func (cc *ChatAIInvocationClient) Prepare(taskParams map[string]interface{}) err
 	maps.Copy(nargs, taskParams)
 
 	delete(nargs, "model_name")
-	delete(nargs, "strategy") // pipeline-level validation hint, not an API parameter
-	delete(nargs, "num_ctx")  // Ollama-specific context window size, not part of the OpenAI-compatible schema
+	delete(nargs, "strategy")    // pipeline-level validation hint, not an API parameter
+	delete(nargs, "num_ctx")     // Ollama-specific context window size, not part of the OpenAI-compatible schema
+	delete(nargs, "output_keys") // consumed below into OutputSchema, not an API parameter itself
 
 	// Only fill in defaults that weren't explicitly set by the task/pipeline options.
 	defaultParams := map[string]interface{}{
@@ -102,6 +110,7 @@ func (cc *ChatAIInvocationClient) Prepare(taskParams map[string]interface{}) err
 
 	cc.ModelName = model
 	cc.RequestParams = nargs
+	cc.OutputSchema = ParseOutputSchema(taskParams["output_keys"])
 
 	return nil
 }
@@ -138,6 +147,18 @@ func (cc *ChatAIInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffe
 		},
 	}
 	maps.Copy(body, cc.RequestParams)
+	if len(cc.OutputSchema) > 0 {
+		body["response_format"] = map[string]interface{}{
+			"type": "json_schema",
+			"json_schema": map[string]interface{}{
+				"name": "task_output",
+				"schema": map[string]interface{}{
+					"type":       "object",
+					"properties": cc.OutputSchema.JSONSchemaProperties(),
+				},
+			},
+		}
+	}
 
 	payload, err := json.Marshal(body)
 	if err != nil {

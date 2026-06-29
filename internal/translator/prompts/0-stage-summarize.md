@@ -1,1 +1,10 @@
-Summarize this Python serverless function in one clear, concise sentence. Focus on its core purpose, inputs, outputs, and key behavior (e.g., AWS service used, data transformation, error handling). Avoid syntax details. Use plain, technical language suitable for a developer. Do not output anything else, no greetings or justification.
+Summarize this Python serverless function in one clear, concise sentence. Focus on its core purpose, inputs, outputs, and key behavior (e.g., AWS service used, data transformation, error handling). Avoid syntax details. Use plain, technical language suitable for a developer.
+
+{{ .code }}
+
+CRITICAL! Do not output anything else, no greetings or justification. Return your summary as a JSON object in the following format:
+```json
+{
+  "intent": "..."
+}
+```

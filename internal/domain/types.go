@@ -15,9 +15,15 @@ type ConversionRequest struct {
 	Id             uuid.UUID          `json:"id,omitempty"`
 	SourcePackage  *DeploymentPackage `json:"sourcePackage,omitempty"`
 	WorkingPackage *DeploymentPackage `json:"workingPackage,omitempty"`
-	Metrics        *Metrics           `json:"metrics,omitempty"`
-	errs           []error
-	Completed      bool `json:"completed,omitempty"`
+	// Metadata holds auxiliary, non-deployable values produced by
+	// metadata-mode LLM tasks (e.g. a summary's "intent"), keyed by the JSON
+	// field name the task's prompt was asked to return. Later tasks' prompt
+	// templates can reference these directly as top-level vars (see
+	// LLMConverter.Apply in internal/translator), e.g. {{ .intent }}.
+	Metadata  map[string]string `json:"metadata,omitempty"`
+	Metrics   *Metrics          `json:"metrics,omitempty"`
+	errs      []error
+	Completed bool `json:"completed,omitempty"`
 }
 
 // AddError appends err to the request error list when non-nil.

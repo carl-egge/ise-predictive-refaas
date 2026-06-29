@@ -25,10 +25,15 @@ type PackageReader interface {
 type LLMConverter struct {
 	template *template.Template
 	reader   PackageReader
+	// mode is "package" (default - replace WorkingPackage with the parsed
+	// response) or "metadata" (store the response in ConversionRequest.
+	// Metadata instead, leaving WorkingPackage untouched).
+	mode string
 	// taskParams is this task's merged params (pipeline-wide options plus
-	// this task's own task_args, minus "prompt"/"reader"). It is handed to
-	// the LLM client's Prepare on every Apply call — distinct from
-	// pipeline.ConverterOptions.Args, which configures the connector itself.
+	// this task's own task_args, minus "prompt"/"reader"/"mode"). It is
+	// handed to the LLM client's Prepare on every Apply call — distinct
+	// from pipeline.ConverterOptions.Args, which configures the connector
+	// itself.
 	taskParams map[string]interface{}
 }
 
@@ -72,13 +77,20 @@ func NewLLMConverter(taskParams map[string]interface{}) pipeline.Converter {
 		reader = BasicLLMDeploymentReader{}
 	}
 
+	mode, _ := taskParams["mode"].(string)
+	if mode == "" {
+		mode = "package"
+	}
+
 	delete(taskParams, "prompt")
 	delete(taskParams, "reader")
+	delete(taskParams, "mode")
 
 	log.Debugf("creating LLM converter with params: %v", taskParams)
 	return &LLMConverter{
 		template:   promptTmpl,
 		reader:     reader,
+		mode:       mode,
 		taskParams: taskParams,
 	}
 }
@@ -101,13 +113,21 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 		errStr = last.Error()
 	}
 
-	err := cc.template.Execute(&codePrompt, map[string]interface{}{
-		"code":     codeBlock.String(),
-		"issue":    errStr,
-		"original": srcFile,
-		"input":    result.Input,
-		"output":   result.Output,
-	})
+	// Known metadata keys (e.g. "intent" from a prior summary stage) are
+	// promoted to top-level template vars so later prompts can reference
+	// them directly, e.g. {{ .intent }}. The fixed vars below always take
+	// precedence over a same-named metadata key.
+	templateVars := make(map[string]interface{}, len(code.Metadata)+5)
+	for k, v := range code.Metadata {
+		templateVars[k] = v
+	}
+	templateVars["code"] = codeBlock.String()
+	templateVars["issue"] = errStr
+	templateVars["original"] = srcFile
+	templateVars["input"] = result.Input
+	templateVars["output"] = result.Output
+
+	err := cc.template.Execute(&codePrompt, templateVars)
 	if err != nil {
 		code.AddError(err)
 		return err
@@ -128,6 +148,11 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 
 	// client.LogResponse(srcFile, response, codePrompt.String())
 	llmconnector.LogResponse(cc.taskParams["model_name"].(string), codePrompt.String(), response)
+
+	if cc.mode == "metadata" {
+		return cc.applyMetadata(response, code)
+	}
+
 	original := code.WorkingPackage
 	if original == nil {
 		original = code.SourcePackage
@@ -140,6 +165,24 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 		return err
 	}
 
+	return nil
+}
+
+// applyMetadata parses response as a flat JSON object and merges its values
+// into code.Metadata, leaving WorkingPackage untouched - used by tasks whose
+// output (e.g. a summary's "intent") isn't a code artifact and shouldn't
+// replace the package being translated.
+func (cc *LLMConverter) applyMetadata(response string, code *domain.ConversionRequest) error {
+	values := JsonCodeBlockReader(response)
+	if len(values) == 0 {
+		err := fmt.Errorf("metadata response could not be parsed as a flat JSON object: %s", response)
+		code.AddError(domain.NewLLMError(err))
+		return err
+	}
+	if code.Metadata == nil {
+		code.Metadata = make(map[string]string)
+	}
+	maps.Copy(code.Metadata, values)
 	return nil
 }
 

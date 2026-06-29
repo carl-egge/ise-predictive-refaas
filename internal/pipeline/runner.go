@@ -133,6 +133,7 @@ func MakeConversionRequest(srcPkg *domain.DeploymentPackage) *domain.ConversionR
 	return &domain.ConversionRequest{
 		Id:            uuid.New(),
 		SourcePackage: srcPkg,
+		Metadata:      make(map[string]string),
 		Metrics: &domain.Metrics{
 			TestCases: make(map[string]bool),
 		},

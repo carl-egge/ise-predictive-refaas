@@ -3,6 +3,7 @@ package llmconnector
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"net/http"
@@ -21,7 +22,12 @@ type OllamaInvocationClient struct {
 	// RequestParams holds the per-task params (set by Prepare) forwarded as
 	// Ollama's request "Options" on every InvokeLLM call.
 	RequestParams map[string]interface{}
-	client        *api.Client
+	// OutputSchema holds this task's expected response shape (set by
+	// Prepare, from task_args.output_keys). Falls back to the generic
+	// llmOutputSchema (any string-keyed object) when no task-specific
+	// schema is set.
+	OutputSchema OutputSchema
+	client       *api.Client
 }
 
 func init() {
@@ -69,6 +75,7 @@ func (llm *OllamaInvocationClient) Prepare(taskParams map[string]interface{}) er
 	maps.Copy(nargs, taskParams)
 
 	delete(nargs, "model_name")
+	delete(nargs, "output_keys")
 
 	defaultParams := map[string]interface{}{
 		"max_tokens": 2 << 14,
@@ -80,6 +87,7 @@ func (llm *OllamaInvocationClient) Prepare(taskParams map[string]interface{}) er
 
 	llm.ModelName = model.(string)
 	llm.RequestParams = nargs
+	llm.OutputSchema = ParseOutputSchema(taskParams["output_keys"])
 
 	return nil
 }
@@ -92,13 +100,23 @@ func (llm *OllamaInvocationClient) InvokeLLM(runner context.Context, buf bytes.B
 		return "", metrics, fmt.Errorf("LLM client not initialized")
 	}
 
+	format := llmOutputSchema
+	if len(llm.OutputSchema) > 0 {
+		if schema, err := json.Marshal(map[string]interface{}{
+			"type":       "object",
+			"properties": llm.OutputSchema.JSONSchemaProperties(),
+		}); err == nil {
+			format = schema
+		}
+	}
+
 	stream := new(bool)
 	req := api.GenerateRequest{
 		Model:   llm.ModelName,
 		Prompt:  buf.String(),
 		Stream:  stream,
 		Options: llm.RequestParams,
-		Format:  llmOutputSchema,
+		Format:  format,
 	}
 
 	callback := make(chan api.GenerateResponse)
