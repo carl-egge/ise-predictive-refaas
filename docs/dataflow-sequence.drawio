@@ -1,0 +1,434 @@
+<mxfile host="Electron" agent="claude-code">
+  <diagram name="ReFaaS Data Flow (Sequence)" id="refaas-seq">
+    <mxGraphModel dx="1437" dy="3068" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="2050" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="frame_test" parent="1" style="shape=umlFrame;whiteSpace=wrap;html=1;width=280;height=50;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=2;align=left;verticalAlign=top;fontColor=#333333;gradientColor=none;strokeWidth=2;" value="&lt;font style=&quot;font-size: 10px;&quot;&gt;&lt;b style=&quot;&quot;&gt;alt  [ tests fail -&amp;gt; recovery: testRecovery = realign -&amp;gt; testRecoveryBuild, then retry goTester ]&lt;/b&gt;&lt;/font&gt;" vertex="1">
+          <mxGeometry height="265" width="940" x="860" y="-720" as="geometry" />
+        </mxCell>
+        <mxCell id="title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=20;fontStyle=1;" value="ReFaaS -- Data Flow (UML Sequence Diagram, using default.json pipeline)" vertex="1">
+          <mxGeometry height="54" width="720" x="40" y="-1980" as="geometry" />
+        </mxCell>
+        <mxCell id="note" parent="1" style="text;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fillColor=#fffce0;strokeColor=#d6b656;rounded=1;fontSize=11;" value="default.json stage graph:&#xa;root=cleaner -&gt; convert=coder -&gt; builder=goBuilder (recovery: gollmRecovery=fixer) -&gt; goTester (recovery: testRecovery=realign -&gt; testRecoveryBuild=goBuilder).&#xa;A stage&#39;s WorkingPackage is mutated in place and threaded into the next stage. Source-&gt;Working snapshot is restored on a failed attempt." vertex="1">
+          <mxGeometry height="80" width="830" x="800" y="-1985" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_client" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;size=40;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;" value="Client (HTTP)" vertex="1">
+          <mxGeometry height="1801" width="120" x="40" y="-1881" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_svc" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;size=40;fillColor=#b0e3e6;strokeColor=#0e8088;fontStyle=1;" value="ConverterService&#xa;(handler + worker)" vertex="1">
+          <mxGeometry height="1801" width="160" x="220" y="-1881" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_in" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;size=40;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" value="inputhandler" vertex="1">
+          <mxGeometry height="1801" width="130" x="440" y="-1881" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_queue" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;size=40;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" value="requestQueue&#xa;(chan)" vertex="1">
+          <mxGeometry height="1801" width="130" x="604" y="-1881" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_runner" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;size=40;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" value="Runner" vertex="1">
+          <mxGeometry height="1800" width="85" x="765" y="-1880" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_pipe" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;size=40;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" value="Pipeline&#xa;(executeTask)" vertex="1">
+          <mxGeometry height="1801" width="120" x="903" y="-1881" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_llmc" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;size=40;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;" value="LLMConverter&#xa;(cleaner/coder/fixer/realign)" vertex="1">
+          <mxGeometry height="1800" width="167" x="1066" y="-1880" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_llmcli" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;size=40;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" value="LLM Client&#xa;(Ollama)" vertex="1">
+          <mxGeometry height="1801" width="150" x="1273" y="-1881" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_build" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;size=40;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" value="GolangBuilder&#xa;(goBuilder)" vertex="1">
+          <mxGeometry height="1801" width="140" x="1475" y="-1881" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_test" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;size=40;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" value="GoPackageTester&#xa;(goTester)" vertex="1">
+          <mxGeometry height="1801" width="150" x="1665" y="-1881" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_out" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;size=40;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" value="outputhandler" vertex="1">
+          <mxGeometry height="1801" width="140" x="1856" y="-1881" as="geometry" />
+        </mxCell>
+        <mxCell id="frame_build" parent="1" style="shape=umlFrame;whiteSpace=wrap;html=1;width=220;height=40;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=2;align=left;verticalAlign=top;fontColor=#333333;strokeWidth=2;" value="&lt;b&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;alt  [ build fails -&amp;gt; recovery: gollmRecovery = fixer, then retry builder ]&lt;/font&gt;&lt;/b&gt;" vertex="1">
+          <mxGeometry height="200" width="660" x="920" y="-1050" as="geometry" />
+        </mxCell>
+        <mxCell id="act_svc_up" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#0e8088;" value="" vertex="1">
+          <mxGeometry height="160" width="10" x="295" y="-1815" as="geometry" />
+        </mxCell>
+        <mxCell id="act_svc_worker" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#0e8088;" value="" vertex="1">
+          <mxGeometry height="1355" width="10" x="295" y="-1635" as="geometry" />
+        </mxCell>
+        <mxCell id="act_svc_dl" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#0e8088;" value="" vertex="1">
+          <mxGeometry height="120" width="10" x="295" y="-254" as="geometry" />
+        </mxCell>
+        <mxCell id="act_runner" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#6c8ebf;" value="" vertex="1">
+          <mxGeometry height="1265" width="10" x="802.5" y="-1600" as="geometry" />
+        </mxCell>
+        <mxCell id="act_pipe" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#6c8ebf;" value="" vertex="1">
+          <mxGeometry height="1140" width="10" x="958" y="-1520" as="geometry" />
+        </mxCell>
+        <mxCell id="act_clean" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#d79b00;" value="" vertex="1">
+          <mxGeometry height="160" width="10" x="1143" y="-1478" as="geometry" />
+        </mxCell>
+        <mxCell id="act_code" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#d79b00;" value="" vertex="1">
+          <mxGeometry height="120" width="10" x="1143" y="-1273" as="geometry" />
+        </mxCell>
+        <mxCell id="act_fix" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#d79b00;" value="" vertex="1">
+          <mxGeometry height="120" width="10" x="1144" y="-980" as="geometry" />
+        </mxCell>
+        <mxCell id="act_realign" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#d79b00;" value="" vertex="1">
+          <mxGeometry height="70" width="10" x="1144" y="-640" as="geometry" />
+        </mxCell>
+        <mxCell id="act_cli1" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#d6b656;" value="" vertex="1">
+          <mxGeometry height="40" width="10" x="1343" y="-1438" as="geometry" />
+        </mxCell>
+        <mxCell id="act_cli2" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#d6b656;" value="" vertex="1">
+          <mxGeometry height="40" width="10" x="1343" y="-1233" as="geometry" />
+        </mxCell>
+        <mxCell id="act_cli3" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#d6b656;" value="" vertex="1">
+          <mxGeometry height="40" width="10" x="1344" y="-940" as="geometry" />
+        </mxCell>
+        <mxCell id="act_cli4" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#d6b656;" value="" vertex="1">
+          <mxGeometry height="60" width="10" x="1344" y="-610" as="geometry" />
+        </mxCell>
+        <mxCell id="act_build1" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#b85450;" value="" vertex="1">
+          <mxGeometry height="295" width="10" x="1539" y="-1105" as="geometry" />
+        </mxCell>
+        <mxCell id="act_build2" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#b85450;" value="" vertex="1">
+          <mxGeometry height="40" width="10" x="1539" y="-520" as="geometry" />
+        </mxCell>
+        <mxCell id="act_test" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#b85450;" value="" vertex="1">
+          <mxGeometry height="370" width="10" x="1734" y="-790" as="geometry" />
+        </mxCell>
+        <mxCell id="m1" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;entryX=0.011;entryY=0.038;entryDx=0;entryDy=0;entryPerimeter=0;" target="act_svc_up" value="POST /  (multipart file: *.zip, ≤50MB)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="100" y="-1806" as="sourcePoint" />
+            <mxPoint x="290" y="-1805" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m2" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="ReadFromBytes(zip)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="299.94444444444446" y="-1788" as="sourcePoint" />
+            <mxPoint x="505" y="-1788" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m3" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="DeploymentPackage  (= SourcePackage)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="505" y="-1755" as="sourcePoint" />
+            <mxPoint x="310" y="-1755" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m4" edge="1" parent="1" style="html=1;align=left;spacingLeft=4;endArrow=block;rounded=0;" value="MakeConversionRequest(dp)&lt;div&gt;&amp;nbsp; &amp;nbsp;-&amp;gt;  ConversionRequest{Source, Working=nil, Metadata}&lt;/div&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="377" y="-1729" />
+              <mxPoint x="377" y="-1705" />
+            </Array>
+            <mxPoint x="305" y="-1729" as="sourcePoint" />
+            <mxPoint x="305" y="-1705" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m5" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;entryX=0.332;entryY=0.066;entryDx=0;entryDy=0;entryPerimeter=0;" target="ZCcUWYA7lB82VeWeGfS2-4" value="enqueue queuedConversion{ctx, req}">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="305" y="-1672" as="sourcePoint" />
+            <mxPoint x="685" y="-1672" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m6" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="201 Created + job UUID">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="295" y="-1661" as="sourcePoint" />
+            <mxPoint x="100" y="-1661" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m7" edge="1" parent="1" source="ZCcUWYA7lB82VeWeGfS2-4" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="«async» worker dequeues job">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="685" y="-1631" as="sourcePoint" />
+            <mxPoint x="305" y="-1631" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m8" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" target="ll_runner" value="Convert(ctx, req)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="305" y="-1591" as="sourcePoint" />
+            <mxPoint x="820" y="-1591" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m9" edge="1" parent="1" source="act_runner" style="html=1;align=left;spacingLeft=4;endArrow=block;rounded=0;entryX=1.085;entryY=0.047;entryDx=0;entryDy=0;entryPerimeter=0;exitX=1.007;exitY=0.015;exitDx=0;exitDy=0;exitPerimeter=0;" target="act_runner" value="WorkingPackage&lt;div&gt;&amp;nbsp; &amp;nbsp;= SourcePackage.Copy()&lt;/div&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="902" y="-1580" />
+              <mxPoint x="902" y="-1540" />
+            </Array>
+            <mxPoint x="830" y="-1580" as="sourcePoint" />
+            <mxPoint x="830" y="-1556" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m10" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" target="ll_pipe" value="Execute(runner, req)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="812.5" y="-1510" as="sourcePoint" />
+            <mxPoint x="977.5" y="-1510" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m11" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="«root» cleaner.Apply(runner, req)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="968" y="-1478" as="sourcePoint" />
+            <mxPoint x="1148" y="-1478" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m12" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="Prepare(taskParams) +&amp;nbsp;&lt;div&gt;InvokeLLM (document-prompt)&lt;/div&gt;">
+          <mxGeometry relative="1" x="-0.0051" y="-8" as="geometry">
+            <mxPoint as="offset" />
+            <mxPoint x="1153" y="-1438" as="sourcePoint" />
+            <mxPoint x="1348" y="-1438" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m13" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="cleaned source (JSON)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1348" y="-1401" as="sourcePoint" />
+            <mxPoint x="1153" y="-1401" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m14" edge="1" parent="1" style="html=1;align=left;spacingLeft=4;endArrow=block;rounded=0;" value="reader&lt;div&gt;&amp;nbsp; &amp;nbsp; -&amp;gt; WorkingPackage&lt;/div&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1220" y="-1370" />
+              <mxPoint x="1220" y="-1346" />
+            </Array>
+            <mxPoint x="1153" y="-1370" as="sourcePoint" />
+            <mxPoint x="1153" y="-1346" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m15" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="ok  -&gt;  validate: canCompile">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1143" y="-1320" as="sourcePoint" />
+            <mxPoint x="968" y="-1320" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m16" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="«convert» coder.Apply()  (reader=go)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="968" y="-1273" as="sourcePoint" />
+            <mxPoint x="1148" y="-1273" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m17" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="InvokeLLM (translate-prompt)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1153" y="-1233" as="sourcePoint" />
+            <mxPoint x="1348" y="-1233" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m18" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="Go package {main.go, go.mod}">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1348" y="-1195" as="sourcePoint" />
+            <mxPoint x="1153" y="-1195" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m19" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="WorkingPackage =&amp;nbsp;&lt;div&gt;Go  -&amp;gt;  validate: canCompile&lt;/div&gt;">
+          <mxGeometry relative="1" x="0.0629" y="13" as="geometry">
+            <mxPoint as="offset" />
+            <mxPoint x="1143" y="-1154" as="sourcePoint" />
+            <mxPoint x="968" y="-1154" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m20" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="«builder» goBuilder.Apply()  (canApply: canCompile)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="969" y="-1105" as="sourcePoint" />
+            <mxPoint x="1544" y="-1105" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m21" edge="1" parent="1" style="html=1;align=left;spacingLeft=4;endArrow=block;rounded=0;" value="write WorkingPackage + handler.go to temp dir; run BuildCmd">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1624" y="-1090" />
+              <mxPoint x="1624" y="-1066" />
+            </Array>
+            <mxPoint x="1549" y="-1090" as="sourcePoint" />
+            <mxPoint x="1549" y="-1066" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m22" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;strokeColor=#b85450;" value="CompilationError">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1539" y="-1001" as="sourcePoint" />
+            <mxPoint x="969" y="-1001" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m23" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="«gollmRecovery»&lt;div&gt;fixer.Apply()  (reader=go)&lt;/div&gt;">
+          <mxGeometry relative="1" x="0.0111" y="-10" as="geometry">
+            <mxPoint as="offset" />
+            <mxPoint x="969" y="-970" as="sourcePoint" />
+            <mxPoint x="1149" y="-970" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m24" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="InvokeLLM (repair-prompt)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1154" y="-937" as="sourcePoint" />
+            <mxPoint x="1349" y="-937" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m25" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="repaired Go package">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1349" y="-903" as="sourcePoint" />
+            <mxPoint x="1154" y="-903" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m26" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="WorkingPackage&#39;  -&gt;  retry builder">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1144" y="-875" as="sourcePoint" />
+            <mxPoint x="969" y="-875" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m27" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="build OK  -&gt;  next: goTester">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1539" y="-810" as="sourcePoint" />
+            <mxPoint x="969" y="-810" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m28" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="«goTester» goTester.Apply()  (canApply: canCompile)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="969" y="-777" as="sourcePoint" />
+            <mxPoint x="1739" y="-777" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m29" edge="1" parent="1" style="html=1;align=left;spacingLeft=4;endArrow=block;rounded=0;entryX=0.981;entryY=0.142;entryDx=0;entryDy=0;entryPerimeter=0;" target="act_test" value="go run . per TestFile;&lt;br&gt;compare stdout vs TestFile.Output (ValidationStrategy)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1786" y="-770" />
+              <mxPoint x="1815" y="-770" />
+              <mxPoint x="1815" y="-737" />
+            </Array>
+            <mxPoint x="1740" y="-770" as="sourcePoint" />
+            <mxPoint x="1739.56" y="-750.7149999999999" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m30" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;strokeColor=#b85450;" value="TestingError">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1734" y="-654" as="sourcePoint" />
+            <mxPoint x="969" y="-654" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m31" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="«testRecovery»&amp;nbsp;&lt;div&gt;realign.Apply()  (reader=go)&lt;/div&gt;">
+          <mxGeometry relative="1" x="0.0111" y="-15" as="geometry">
+            <mxPoint as="offset" />
+            <mxPoint x="969" y="-631" as="sourcePoint" />
+            <mxPoint x="1149" y="-631" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m32" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="InvokeLLM (align-prompt)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1154" y="-600" as="sourcePoint" />
+            <mxPoint x="1349" y="-600" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m33" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="realigned package  -&gt;  WorkingPackage&#39;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1349" y="-551" as="sourcePoint" />
+            <mxPoint x="969" y="-551" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m34" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="«testRecoveryBuild» goBuilder.Apply()  (rebuild; recovery: fixer)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="969" y="-519" as="sourcePoint" />
+            <mxPoint x="1544" y="-519" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m35" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="build OK  -&gt;  retry goTester">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1539" y="-485" as="sourcePoint" />
+            <mxPoint x="969" y="-485" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m36" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="all tests pass  (Metrics.TestCases = true)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1734" y="-422" as="sourcePoint" />
+            <mxPoint x="969" y="-422" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m37" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;entryX=1.179;entryY=0.96;entryDx=0;entryDy=0;entryPerimeter=0;" target="act_runner" value="nil (success)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="958" y="-386" as="sourcePoint" />
+            <mxPoint x="798" y="-386" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m38" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="req.Completed = true">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="810" y="-341" as="sourcePoint" />
+            <mxPoint x="305" y="-341" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m39" edge="1" parent="1" style="html=1;align=left;spacingLeft=4;endArrow=block;rounded=0;entryX=1.1;entryY=0.114;entryDx=0;entryDy=0;entryPerimeter=0;" value="results[uuid]=req; metrics[uuid]=*Metrics">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="376" y="-286" />
+              <mxPoint x="376" y="-246" />
+            </Array>
+            <mxPoint x="304" y="-286" as="sourcePoint" />
+            <mxPoint x="306" y="-246.32000000000016" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m40" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="GET /{uuid}">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1740" y="-1935" as="sourcePoint" />
+            <mxPoint x="1940" y="-1935" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m41" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;" value="WritePackage(WorkingPackage)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="305" y="-219" as="sourcePoint" />
+            <mxPoint x="1925.5000000000005" y="-219" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m42" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="converted .zip bytes">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1925.5000000000005" y="-179" as="sourcePoint" />
+            <mxPoint x="305" y="-179" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m43" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;" value="200 OK + .zip   (then delete results[uuid])">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="295" y="-154" as="sourcePoint" />
+            <mxPoint x="100" y="-154" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg" parent="1" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontStyle=1;fillColor=#ffffff;strokeColor=#000000;" value="Legend" vertex="1">
+          <mxGeometry height="130" width="480" x="1680" y="-2030" as="geometry" />
+        </mxCell>
+        <mxCell id="leg1" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;rounded=0;fontSize=11;" value="synchronous call">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1700" y="-1985" as="sourcePoint" />
+            <mxPoint x="1790" y="-1985" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg2" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;fontSize=11;" value="return / reply">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1700" y="-1945" as="sourcePoint" />
+            <mxPoint x="1790" y="-1945" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg3" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=open;endFill=0;dashed=1;rounded=0;strokeColor=#b85450;fontSize=11;" value="error return (red)">
+          <mxGeometry relative="1" x="-0.1111" y="7" as="geometry">
+            <mxPoint as="offset" />
+            <mxPoint x="1830" y="-1943.47" as="sourcePoint" />
+            <mxPoint x="1920" y="-1943.47" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg4" edge="1" parent="1" style="html=1;align=left;spacingLeft=4;endArrow=block;rounded=0;fontSize=11;" value="self / internal step">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1870" y="-2000" />
+              <mxPoint x="1870" y="-1982" />
+            </Array>
+            <mxPoint x="1830" y="-2000" as="sourcePoint" />
+            <mxPoint x="1830" y="-1982" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg5" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" value="white bar = activation&lt;div&gt;&amp;nbsp;(object is on the stack)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="30" width="110" x="2020" y="-2005" as="geometry" />
+        </mxCell>
+        <mxCell id="ZCcUWYA7lB82VeWeGfS2-1" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#ffffff;strokeColor=#d6b656;" value="" vertex="1">
+          <mxGeometry height="40" width="10" x="2000" y="-2005" as="geometry" />
+        </mxCell>
+        <mxCell id="ZCcUWYA7lB82VeWeGfS2-4" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=none;strokeColor=#82b366;" value="" vertex="1">
+          <mxGeometry height="50" width="10" x="664" y="-1675" as="geometry" />
+        </mxCell>
+        <mxCell id="ZCcUWYA7lB82VeWeGfS2-6" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;rounded=0;fillColor=#FFFFFF;strokeColor=#9673a6;" value="" vertex="1">
+          <mxGeometry height="45" width="10" x="1921" y="-221" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
