@@ -1,0 +1,124 @@
+<mxfile host="app.diagrams.net" agent="claude-code" version="24.0.0" type="device">
+  <diagram name="ReFaaS Pipeline (Activity)" id="refaas-activity">
+    <mxGraphModel dx="900" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="ReFaaS Conversion Pipeline (default.json) -- stages, validation, retry &amp; LLM recovery" style="text;html=1;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="10" width="780" height="26" as="geometry" />
+        </mxCell>
+
+        <!-- main flow column -->
+        <mxCell id="start" value="" style="ellipse;html=1;fillColor=#000000;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="225" y="60" width="30" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cleaner" value="cleaner  &#171;LLM&#187;&#10;normalize / summarize source" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="150" y="120" width="180" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="coder" value="coder  &#171;LLM&#187;&#10;translate  Python &#8594; Go" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="150" y="210" width="180" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="build" value="goBuilder&#10;compile Go package" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="150" y="300" width="180" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="dbuild" value="build&#10;ok?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="200" y="390" width="80" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="test" value="goTester&#10;run each TestFile; compare output" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="150" y="490" width="180" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="dtest" value="tests&#10;pass?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="200" y="580" width="80" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="endring" value="" style="ellipse;html=1;fillColor=none;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="226" y="690" width="28" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="enddot" value="" style="ellipse;html=1;fillColor=#000000;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="232" y="696" width="16" height="16" as="geometry" />
+        </mxCell>
+
+        <!-- recovery column -->
+        <mxCell id="fixer" value="gollmRecovery = fixer  &#171;LLM&#187;&#10;repair build errors (+ LastError)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="300" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="realign" value="testRecovery = realign  &#171;LLM&#187;&#10;align output to expected fixture" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="490" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="rebuild" value="testRecoveryBuild = goBuilder&#10;rebuild realigned package" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="580" width="220" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- edges: normal flow -->
+        <mxCell id="a0" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="start" target="cleaner">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a1" value="validate: canCompile" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1" source="cleaner" target="coder">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a2" value="validate: canCompile" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1" source="coder" target="build">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a3" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="build" target="dbuild">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a4" value="yes" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1" source="dbuild" target="test">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a5" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="test" target="dtest">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a6" value="pass" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1" source="dtest" target="endring">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- edges: build recovery (dashed red) -->
+        <mxCell id="b1" value="no  (CompilationError)" style="endArrow=block;html=1;rounded=0;dashed=1;strokeColor=#b85450;fontColor=#b85450;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="dbuild" target="fixer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b2" value="retry build  (&#8804; maxRetryCount)" style="endArrow=block;html=1;rounded=0;dashed=1;strokeColor=#b85450;fontColor=#b85450;fontSize=10;" edge="1" parent="1" source="fixer" target="build">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- edges: test recovery (dashed red) -->
+        <mxCell id="c1" value="fail  (TestingError)" style="endArrow=block;html=1;rounded=0;dashed=1;strokeColor=#b85450;fontColor=#b85450;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="dtest" target="realign">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="610" y="610" /></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="c2" style="endArrow=block;html=1;rounded=0;dashed=1;strokeColor=#b85450;fontSize=10;" edge="1" parent="1" source="realign" target="rebuild">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" value="retry tests  (&#8804; maxRetryCount)" style="endArrow=block;html=1;rounded=0;dashed=1;strokeColor=#b85450;fontColor=#b85450;fontSize=10;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="rebuild" target="test">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="420" y="605" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- retry-exhausted note -->
+        <mxCell id="note" value="Each stage retries up to its maxRetryCount; before every attempt the WorkingPackage is snapshotted and rolled back on failure.&#10;If a recovery stage cannot fix the package within its own retry budget, the run aborts (req.Completed = false)." style="text;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fillColor=#fffce0;strokeColor=#d6b656;rounded=1;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="350" y="690" width="370" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- legend -->
+        <mxCell id="leg" value="Legend" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=4;fontStyle=1;fillColor=#ffffff;strokeColor=#000000;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="640" width="290" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_llm" value="LLM stage (translator)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="55" y="668" width="120" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_build" value="build / test stage" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="190" y="668" width="120" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_e1" value="normal flow" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="60" y="708" as="sourcePoint" /><mxPoint x="120" y="708" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="leg_e2" value="failure / recovery (retry)" style="endArrow=block;html=1;rounded=0;dashed=1;strokeColor=#b85450;fontColor=#b85450;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="60" y="735" as="sourcePoint" /><mxPoint x="120" y="735" as="targetPoint" /></mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

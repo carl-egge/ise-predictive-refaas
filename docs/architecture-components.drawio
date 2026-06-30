@@ -1,0 +1,86 @@
+<mxfile host="Electron" agent="claude-code">
+  <diagram name="ReFaaS Architecture (Components)" id="refaas-arch">
+    <mxGraphModel dx="934" dy="662" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="720" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;" value="ReFaaS Architecture -- package components &amp; dependencies" vertex="1">
+          <mxGeometry height="26" width="700" x="30" y="10" as="geometry" />
+        </mxCell>
+        <mxCell id="client" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontSize=11;" value="Client&#xa;(HTTP)" vertex="1">
+          <mxGeometry height="60" width="30" x="60" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="svc" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b0e3e6;strokeColor=#0e8088;fontSize=11;verticalAlign=top;spacingTop=6;" value="«component»&#xa;internal/service&#xa;ConverterService: HTTP API, job queue, worker, metrics, /reconfigure" vertex="1">
+          <mxGeometry height="70" width="340" x="280" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="in" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;verticalAlign=top;spacingTop=6;" value="«component»&#xa;internal/inputhandler&#xa;.zip → DeploymentPackage" vertex="1">
+          <mxGeometry height="60" width="190" x="680" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="out" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;verticalAlign=top;spacingTop=6;" value="«component»&#xa;internal/outputhandler&#xa;DeploymentPackage → .zip" vertex="1">
+          <mxGeometry height="60" width="190" x="680" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="pipe" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;verticalAlign=top;spacingTop=6;" value="«component»&#xa;internal/pipeline&#xa;Runner + compiled Pipeline (configurable stage graph)" vertex="1">
+          <mxGeometry height="70" width="300" x="300" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="trans" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;verticalAlign=top;spacingTop=6;" value="«component»&#xa;internal/translator&#xa;LLM converters:&#xa;cleaner / coder / fixer / realign" vertex="1">
+          <mxGeometry height="80" width="220" x="60" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="build" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;verticalAlign=top;spacingTop=6;" value="«component»&#xa;internal/builder&#xa;goBuilder (compile) /&#xa;goTester (run vs fixtures)" vertex="1">
+          <mxGeometry height="80" width="220" x="340" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="conn" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;verticalAlign=top;spacingTop=6;" value="«component»&#xa;internal/llmconnector&#xa;Client: ollama / gemini / chatai" vertex="1">
+          <mxGeometry height="80" width="220" x="620" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="gotool" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;dashed=1;fontSize=11;verticalAlign=top;spacingTop=6;" value="«external»&#xa;Go toolchain&#xa;(go build / go run)" vertex="1">
+          <mxGeometry height="56" width="220" x="340" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="llm" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;dashed=1;fontSize=11;verticalAlign=top;spacingTop=6;" value="«external»&#xa;LLM providers&#xa;Ollama / Gemini / Chat AI" vertex="1">
+          <mxGeometry height="56" width="220" x="620" y="510" as="geometry" />
+        </mxCell>
+        <mxCell id="domain" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" value="«component»  internal/domain  -- shared types:  ConversionRequest  -  DeploymentPackage  -  TestFile  -  Metrics   (used by all packages)" vertex="1">
+          <mxGeometry height="50" width="780" x="60" y="590" as="geometry" />
+        </mxCell>
+        <mxCell id="d1" edge="1" parent="1" source="client" style="endArrow=open;endFill=0;html=1;rounded=0;fontSize=10;" target="svc" value="POST / , GET /{uuid} , /reconfigure">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d2" edge="1" parent="1" source="svc" style="endArrow=open;endFill=0;dashed=1;html=1;rounded=0;fontSize=10;" target="in" value="read .zip">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d3" edge="1" parent="1" source="svc" style="endArrow=open;endFill=0;dashed=1;html=1;rounded=0;fontSize=10;" target="out" value="write .zip">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d4" edge="1" parent="1" source="svc" style="endArrow=open;endFill=0;html=1;rounded=0;fontSize=10;" target="pipe" value="Convert(ctx, req)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d5" edge="1" parent="1" source="pipe" style="endArrow=open;endFill=0;html=1;rounded=0;fontSize=10;" target="trans" value="runs stages">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d6" edge="1" parent="1" source="pipe" style="endArrow=open;endFill=0;html=1;rounded=0;fontSize=10;" target="build" value="runs stages">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d7" edge="1" parent="1" source="trans" style="endArrow=open;endFill=0;html=1;rounded=0;fontSize=10;" target="conn" value="InvokeLLM">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="170" y="480" />
+              <mxPoint x="730" y="480" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="d8" edge="1" parent="1" source="build" style="endArrow=open;endFill=0;dashed=1;html=1;rounded=0;fontSize=10;" target="gotool" value="exec">
+          <mxGeometry relative="1" x="-0.3333" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="d9" edge="1" parent="1" source="conn" style="endArrow=open;endFill=0;dashed=1;html=1;rounded=0;fontSize=10;" target="llm" value="HTTP / SDK">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="u1" edge="1" parent="1" source="trans" style="endArrow=open;endFill=0;dashed=1;html=1;rounded=0;strokeColor=#82b366;fontColor=#5a7a44;fontSize=10;" target="domain" value="«use» domain types">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="leg" parent="1" style="text;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fillColor=#ffffff;strokeColor=#000000;rounded=1;fontSize=10;" value="→ solid = call / data dependency&#xa;→ dashed = «use» / external boundary" vertex="1">
+          <mxGeometry height="50" width="210" x="60" y="220" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
