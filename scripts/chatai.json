@@ -18,7 +18,7 @@
     {
       "id": "convert",
       "task": "coder",
-      "task_args": { "reader": "go" },
+      "task_args": { "reader": "go", "output_keys": { "main.go": {}, "go.mod": {} } },
       "maxRetryCount": 2,
       "validation": "canCompile",
       "next": ["builder"]

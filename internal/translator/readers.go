@@ -107,7 +107,8 @@ func (gr GoJsonOllamaReader) prepareGoRootFile(file string) (string, error) {
 	}
 
 	if gr.containsGoMainMethod(file) {
-		log.Debugf("file %s contains main method", file)
+		// log.Debugf("file %s contains main method", file)
+		log.Debugf("the existing main() method will be removed from the file")
 		return gr.removeGoMainMethod(file), nil
 	}
 
@@ -136,6 +137,9 @@ func (gr GoJsonOllamaReader) removeGoMainMethod(content string) string {
 
 	removeLambdaImport := false
 	var output strings.Builder
+	// node.Decls excludes the package clause (it lives on node.Name), so it
+	// must be re-emitted explicitly or the rebuilt file loses "package X".
+	output.WriteString("package " + node.Name.Name + "\n\n")
 	for _, decl := range node.Decls {
 		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
 			if funcDecl.Name.Name == "main" {
