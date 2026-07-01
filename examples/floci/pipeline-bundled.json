@@ -21,7 +21,7 @@
     {
       "id": "convert",
       "task": "coder",
-      "task_args": { "reader": "go" },
+      "task_args": { "reader": "go", "output_keys": { "main.go": {}, "go.mod": {} } },
       "maxRetryCount": 2,
       "validation": "canCompile",
       "next": ["builder"]
@@ -38,7 +38,7 @@
       "id": "gollmRecovery",
       "task": "fixer",
       "canApply": "canCompile",
-      "task_args": { "reader": "go" },
+      "task_args": { "reader": "go", "output_keys": { "main.go": {}, "go.mod": {} } },
       "maxRetryCount": 6
     },
     {

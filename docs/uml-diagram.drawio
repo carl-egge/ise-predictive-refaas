@@ -122,10 +122,10 @@
           <mxGeometry height="42" width="260" y="46" as="geometry" />
         </mxCell>
         <mxCell id="trans3" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=0;resizeParentMax=0;collapsible=0;swimlaneFillColor=#ffffff;dashed=1;fillColor=#f5f5f5;strokeColor=#666666;html=1;" value="readers.go" vertex="1">
-          <mxGeometry height="88" width="240" x="50" y="1430" as="geometry" />
+          <mxGeometry height="72" width="240" x="50" y="1430" as="geometry" />
         </mxCell>
-        <mxCell id="trans3b" parent="trans3" style="text;align=left;verticalAlign=top;spacingLeft=6;spacingRight=4;spacingTop=2;overflow=hidden;html=0;fontSize=11;" value="BasicLLMDeploymentReader&#xa;GoJsonOllamaReader&#xa;GoDeepSeekOllamaReader" vertex="1">
-          <mxGeometry height="58" width="240" y="30" as="geometry" />
+        <mxCell id="trans3b" parent="trans3" style="text;align=left;verticalAlign=top;spacingLeft=6;spacingRight=4;spacingTop=2;overflow=hidden;html=0;fontSize=11;" value="BasicLLMDeploymentReader&#xa;GoJsonOllamaReader" vertex="1">
+          <mxGeometry height="42" width="240" y="30" as="geometry" />
         </mxCell>
         <mxCell id="build1" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=0;resizeParentMax=0;collapsible=0;swimlaneFillColor=#ffffff;fillColor=#dae8fc;strokeColor=#6c8ebf;html=1;" value="GolangBuilder" vertex="1">
           <mxGeometry height="56" width="200" x="370" y="1250" as="geometry" />

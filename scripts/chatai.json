@@ -35,7 +35,7 @@
       "id": "gollmRecovery",
       "task": "fixer",
       "canApply": "canCompile",
-      "task_args": { "reader": "go" },
+      "task_args": { "reader": "go", "output_keys": { "main.go": {}, "go.mod": {} } },
       "maxRetryCount": 2
     },
     {
@@ -49,7 +49,7 @@
       "id": "testRecovery",
       "task": "realign",
       "canApply": "canCompile",
-      "task_args": { "reader": "go" },
+      "task_args": { "reader": "go", "output_keys": { "main.go": {}, "go.mod": {} } },
       "maxRetryCount": 2,
       "next": ["testRecoveryBuild"]
     },

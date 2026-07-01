@@ -96,11 +96,15 @@ var flociStarter func(FlociConfig) error
 // calls this from an init() so that merely importing it enables the feature.
 func RegisterFlociStarter(fn func(FlociConfig) error) { flociStarter = fn }
 
-// startFloci invokes the registered Floci starter when enabled. A startup
-// failure (e.g. emulator unreachable) is logged as a warning rather than
-// aborting Runner construction: the optional stage will surface a hard error at
-// execution time, and we never want an unreachable emulator to take down the
-// whole service.
+// startFloci invokes the registered Floci starter when enabled. The starter is
+// expected to return quickly (recording config is local, no network I/O) and
+// perform any slow reachability checks in the background - startFloci runs
+// synchronously from MakeCodeConverter/Reconfigure, the latter while the
+// service holds its global lock (see ConverterService.reconfigure), so a slow
+// starter would otherwise stall unrelated requests. A startup failure is
+// logged as a warning rather than aborting Runner construction: the optional
+// stage will surface a hard error at execution time, and we never want an
+// unreachable emulator to take down the whole service.
 func (co *ConverterOptions) startFloci() {
 	if !co.Floci.Enabled || flociStarter == nil {
 		return

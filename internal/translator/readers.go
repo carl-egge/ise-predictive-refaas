@@ -139,7 +139,9 @@ func (gr GoJsonOllamaReader) removeGoMainMethod(content string) string {
 	var output strings.Builder
 	// node.Decls excludes the package clause (it lives on node.Name), so it
 	// must be re-emitted explicitly or the rebuilt file loses "package X".
-	output.WriteString("package " + node.Name.Name + "\n\n")
+	output.WriteString("package ")
+	output.WriteString(node.Name.Name)
+	output.WriteString("\n\n")
 	for _, decl := range node.Decls {
 		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
 			if funcDecl.Name.Name == "main" {
@@ -164,31 +166,4 @@ func (gr GoJsonOllamaReader) removeGoMainMethod(content string) string {
 func (gr GoJsonOllamaReader) containsGoMainMethod(content string) bool {
 	mainMethodRegex := regexp.MustCompile(`func main\(\)`)
 	return mainMethodRegex.MatchString(content)
-}
-
-// GoDeepSeekOllamaReader adapts DeepSeek responses into a DeploymentPackage
-// using the internal GoJsonOllamaReader.
-type GoDeepSeekOllamaReader struct {
-	internal GoJsonOllamaReader
-}
-
-// MakeDeploymentFile extracts JSON blocks and delegates to the internal reader.
-func (gr GoDeepSeekOllamaReader) MakeDeploymentFile(response string, original *domain.DeploymentPackage) (*domain.DeploymentPackage, error) {
-	if response == "" {
-		return nil, fmt.Errorf("response is empty")
-	}
-	content := response
-	if strings.Contains(content, "</think>") {
-		_, content, _ = strings.Cut(content, "</think>")
-	}
-
-	start := strings.Index(content, "{")
-	end := strings.LastIndex(content, "}")
-
-	if start == -1 || end == -1 {
-		return nil, fmt.Errorf("response is missing json - %s", content)
-	}
-	jsonContent := content[start : end+1]
-	jsonContent = strings.Replace(jsonContent, "\n", "", -1)
-	return gr.internal.MakeDeploymentFile(jsonContent, original)
 }

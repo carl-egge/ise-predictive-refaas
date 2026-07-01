@@ -32,30 +32,54 @@ func init() {
 	pipeline.RegisterConverterFactory("flociTester", NewFlociTester)
 }
 
-// Start records the resolved configuration and verifies the emulator is
-// reachable. It is the backend "runner" referenced by the task brief: it only
-// runs when floci.enabled is set. A reachability failure is returned so the
-// caller can log it, but it does not prevent the stage from retrying later.
+// Start records the resolved configuration and kicks off a background
+// reachability check of the emulator. It is the backend "runner" referenced by
+// the task brief: it only runs when floci.enabled is set.
+//
+// Recording the config is synchronous (it is local, no network I/O) so that
+// callers observe the new endpoint/region immediately. The reachability ping
+// itself is a network round-trip against Floci and is deliberately run in the
+// background: Start is invoked from pipeline.ConverterOptions.startFloci while
+// the service holds its global request-handling lock (see
+// ConverterService.reconfigure), so blocking here on an unreachable emulator
+// (up to several seconds) would stall every other in-flight request. Ping
+// failures are only diagnostic - the flociTester stage does its own reachable
+// check (and returns a hard error) at execution time.
 func Start(cfg pipeline.FlociConfig) error {
-	configMu.Lock()
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = DefaultEndpoint
 	}
 	if cfg.Region == "" {
 		cfg.Region = DefaultRegion
 	}
+
+	configMu.Lock()
 	activeCfg = cfg
 	configMu.Unlock()
 
 	log.Infof("floci: backend enabled (endpoint=%s region=%s)", cfg.Endpoint, cfg.Region)
 
+	go checkReachable(cfg)
+	return nil
+}
+
+// checkReachable pings the configured Floci endpoint and logs the result. It
+// runs asynchronously from Start so an unreachable emulator never blocks
+// pipeline construction/reconfiguration.
+func checkReachable(cfg pipeline.FlociConfig) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
 	clients, err := NewClients(ctx, cfg.Endpoint, cfg.Region)
 	if err != nil {
-		return err
+		log.Warnf("floci: could not build AWS clients for %s: %v", cfg.Endpoint, err)
+		return
 	}
-	return clients.Ping(ctx)
+	if err := clients.Ping(ctx); err != nil {
+		log.Warnf("floci backend not reachable yet: %v", err)
+		return
+	}
+	log.Infof("floci: emulator reachable at %s", cfg.Endpoint)
 }
 
 // activeConfig returns a snapshot of the current Floci configuration.

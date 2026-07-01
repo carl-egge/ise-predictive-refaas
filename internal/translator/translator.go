@@ -49,8 +49,6 @@ func ReaderFactory(name string) PackageReader {
 	switch name {
 	case "go":
 		return GoJsonOllamaReader{}
-	case "deepseek":
-		return GoDeepSeekOllamaReader{}
 	}
 	return BasicLLMDeploymentReader{}
 }
