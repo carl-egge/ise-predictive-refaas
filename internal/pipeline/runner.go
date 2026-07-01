@@ -65,7 +65,49 @@ type ConverterOptions struct {
 	// representation of ConverterOptions.
 	PipelineFile `yaml:",inline"`
 
+	// Floci configures the optional Floci-backed integration testing backend.
+	// When Floci.Enabled is true (and a Floci starter has been registered via
+	// RegisterFlociStarter, i.e. the internal/floci package is linked in), the
+	// backend is started/verified when the Runner is built or reconfigured.
+	// When false, the "flociTester" stage — if present in the pipeline — is a
+	// no-op, so the feature is fully opt-in.
+	Floci FlociConfig `json:"floci,omitempty" yaml:"floci,omitempty"`
+
 	CompiledPipeline *Pipeline `json:"compiledPipeline,omitempty"`
+}
+
+// FlociConfig holds the configuration for the optional Floci integration. It
+// lives in the pipeline package (kept free of any AWS/Floci imports) so it can
+// be carried on ConverterOptions and handed to a registered starter without
+// creating an import cycle with internal/floci.
+type FlociConfig struct {
+	Enabled  bool   `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	Region   string `json:"region,omitempty" yaml:"region,omitempty"`
+}
+
+// flociStarter, if registered, is invoked with the resolved FlociConfig
+// whenever a Runner is created or reconfigured with Floci.Enabled set. It is a
+// package-level hook (mirroring converterFactories) so internal/floci can wire
+// in its AWS-backed startup without the pipeline package importing it.
+var flociStarter func(FlociConfig) error
+
+// RegisterFlociStarter registers the Floci backend starter. internal/floci
+// calls this from an init() so that merely importing it enables the feature.
+func RegisterFlociStarter(fn func(FlociConfig) error) { flociStarter = fn }
+
+// startFloci invokes the registered Floci starter when enabled. A startup
+// failure (e.g. emulator unreachable) is logged as a warning rather than
+// aborting Runner construction: the optional stage will surface a hard error at
+// execution time, and we never want an unreachable emulator to take down the
+// whole service.
+func (co *ConverterOptions) startFloci() {
+	if !co.Floci.Enabled || flociStarter == nil {
+		return
+	}
+	if err := flociStarter(co.Floci); err != nil {
+		log.Warnf("floci backend not started: %v", err)
+	}
 }
 
 // setDefaults fills in a missing LLMClient and merges environment-derived
@@ -82,6 +124,25 @@ func (co *ConverterOptions) setDefaults() {
 		if _, ok := co.Args[k]; !ok {
 			co.Args[k] = v
 		}
+	}
+	co.Floci.applyEnvDefaults()
+}
+
+// applyEnvDefaults fills the Floci config from environment variables when the
+// caller did not set values explicitly: FLOCI_ENABLED (true/1 enables it),
+// FLOCI_ENDPOINT, and FLOCI_REGION. This lets docker-compose flip the feature
+// on without a /reconfigure call.
+func (fc *FlociConfig) applyEnvDefaults() {
+	if !fc.Enabled {
+		if v := os.Getenv("FLOCI_ENABLED"); v == "true" || v == "1" {
+			fc.Enabled = true
+		}
+	}
+	if fc.Endpoint == "" {
+		fc.Endpoint = setOrDefault("FLOCI_ENDPOINT", "http://localhost:4566")
+	}
+	if fc.Region == "" {
+		fc.Region = setOrDefault("FLOCI_REGION", "us-east-1")
 	}
 }
 
@@ -120,6 +181,8 @@ func MakeCodeConverter(ops *ConverterOptions) (*Runner, error) {
 			return nil, err
 		}
 	}
+
+	ops.startFloci()
 
 	return &Runner{
 		Context:  context.Background(),
@@ -164,6 +227,8 @@ func (cc *Runner) Reconfigure(ops *ConverterOptions) error {
 	if err != nil {
 		return err
 	}
+
+	ops.startFloci()
 
 	if len(ops.Tasks) == 0 && ops.CompiledPipeline == nil {
 		return fmt.Errorf("no pipeline specified")

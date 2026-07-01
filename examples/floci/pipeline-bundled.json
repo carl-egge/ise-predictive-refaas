@@ -1,0 +1,52 @@
+{
+  "LLMClient": "chatai",
+  "floci": {
+    "enabled": true,
+    "endpoint": "http://floci:4566",
+    "region": "us-east-1"
+  },
+  "options": {
+    "model_name": "qwen3-coder-30b-a3b-instruct",
+    "strategy": "json",
+    "temperature": 0.1
+  },
+  "tasks": [
+    {
+      "id": "root",
+      "task": "cleaner",
+      "maxRetryCount": 2,
+      "validation": "canCompile",
+      "next": ["convert"]
+    },
+    {
+      "id": "convert",
+      "task": "coder",
+      "task_args": { "reader": "go" },
+      "maxRetryCount": 2,
+      "validation": "canCompile",
+      "next": ["builder"]
+    },
+    {
+      "id": "builder",
+      "task": "goBuilder",
+      "canApply": "canCompile",
+      "recovery": "gollmRecovery",
+      "maxRetryCount": 4,
+      "next": ["flociIntegration"]
+    },
+    {
+      "id": "gollmRecovery",
+      "task": "fixer",
+      "canApply": "canCompile",
+      "task_args": { "reader": "go" },
+      "maxRetryCount": 6
+    },
+    {
+      "id": "flociIntegration",
+      "task": "flociTester",
+      "canApply": "canCompile",
+      "task_args": { "function_name": "translated-fn" },
+      "maxRetryCount": 1
+    }
+  ]
+}

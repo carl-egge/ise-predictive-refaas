@@ -194,6 +194,26 @@ The compose file exposes port `8080` on the host. Replace `OLLAMA_API_URL` in `.
 
 If you need a local Ollama server, enable the optional `ollama` service in `docker-compose.yml` and adjust `OLLAMA_API_URL` accordingly.
 
+### Optional: Floci integration testing
+
+An optional pipeline stage (`flociTester`) can deploy a translated function as a
+real Lambda inside a local [Floci](https://floci.io) AWS emulator and validate
+both its response **and** AWS side effects (S3 objects, DynamoDB items, …). It is
+fully opt-in — disabled by default, the existing build/test behavior is
+unchanged.
+
+```sh
+# Start refaas + ollama + the Floci emulator (profile-gated):
+docker compose --profile floci up --build
+# Switch to a pipeline that enables Floci and includes the stage:
+./scripts/reconfigure.sh examples/floci/pipeline.json
+```
+
+Enable it with `floci.enabled=true` (in a `/reconfigure` body) or
+`FLOCI_ENABLED=true`. See [docs/floci-integration.md](docs/floci-integration.md)
+for test-case format, the built-in S3/DynamoDB checkers, and how to add new
+assertion types.
+
 
 This will start the service running on port 8080. However, for isolation, it is recommended to run the service in a Docker container, see [Docker](#docker) for more details.
 

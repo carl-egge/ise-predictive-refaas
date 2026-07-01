@@ -8,9 +8,7 @@ ReFaaS converts serverless functions from one language to another (currently Pyt
 
 This is a research codebase (thesis project). The two open problems it's built around: (1) end-to-end validation that translated code is correct for non-trivial, side-effecting workloads, and (2) prediction mechanisms to avoid infeasible or energy-ineffective translation attempts before spending LLM/build time on them. Prediction is not yet implemented anywhere in this repo — don't assume a predictor, scoring model, or related API exists unless you find it in code.
 
-**Verify before claiming.** Some things referenced in docs/config are not implemented in code: `internal/floci` (Floci/AWS-emulator integration) does not exist as a package — `docs/floci.md` is just third-party reference documentation, not a description of code in this repo. Always grep for a symbol/converter/endpoint before describing it as existing.
-
-There are currently no `*_test.go` files in the repository — no automated Go test suite exists yet.
+**Verify before claiming.** Always grep for a symbol/converter/endpoint before describing it as existing — `docs/floci.md` in particular is third-party Floci reference documentation, not a description of this repo's own code. Note that `internal/floci` *does* now exist: it is the optional, opt-in Floci-backed Lambda integration testing stage (`flociTester` converter), gated by `ConverterOptions.Floci.Enabled` / `FLOCI_ENABLED`; see `docs/floci-integration.md`. It is a no-op unless explicitly enabled, so it never affects default translation/build/test runs.
 
 ## Commands
 
