@@ -20,7 +20,9 @@ information: `goTester` reduces all failure detail to `"N tests failed"`, and th
 stage is asked to fix behavior it has never seen fail. Third, the embedded default pipeline
 (`default.yaml`) structurally cannot recover from test failures — validation failure retries
 the same `goBuilder` task on unchanged code, so `realign` is unreachable and retries are pure
-waste. Fourth, the recorded metrics (`examples/metrics/`) show that the dominant real failure
+waste (per maintainer this file is a deliberately short dev pipeline, which softens but does
+not remove the issue — see the reframed [C2]; the canonical evaluation pipeline is
+`default.json`). Fourth, the recorded metrics (`examples/metrics/`) show that the dominant real failure
 classes — missing `package` clauses, malformed `go.mod` files repeated identically across four
 fix attempts — are exactly the ones a deterministic pre/post-processing step would eliminate
 without any LLM call, which is also the cheapest way to help a ~30B model. Finally, the wired
@@ -34,9 +36,10 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 
 ## A. Open bugs
 
-> **Status 2026-07-04 (branch `validator-2`):** all A items are fixed except the parts that
-> depend on other categories — [A15] (dropping non-file chatter keys, behavior question) and
-> [A17] (multi-source-file policy, deferred to [C9]). Regression tests were added in
+> **Status 2026-07-04 (branch `validator-2`):** all A items are now resolved. Second pass:
+> [A15]'s remaining leftover-key pruning was folded into [C3] by maintainer decision, and
+> [A17]'s multi-source policy was decided (reject at upload) and implemented, with tests in
+> `internal/inputhandler/reader_test.go`. Regression tests for the first pass were added in
 > `internal/builder/validator_test.go`, `internal/domain/types_test.go`,
 > `internal/pipeline/pipeline_io_test.go`, and `internal/pipeline/pipeline_default_test.go`.
 > Verified with `go build ./...`, `go vet ./...`, `gofmt`, `go test ./...`, and
@@ -154,12 +157,12 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Converts a job-killing panic into a retryable stage failure.
 - Architecture impact: Local | Effort: S | Priority: P2
 
-### [~] [A15] `BasicLLMDeploymentReader` picks a nondeterministic "main" file and accepts empty content
+### [x] [A15] `BasicLLMDeploymentReader` picks a nondeterministic "main" file and accepts empty content
 - Category: Bug
 - Affected component(s): `internal/translator/readers.go`
 - Problem / current state: It selects the first map key with prefix `main` in randomized map order. With Gemini's fallback schema (which allows `main.go`, `go.mod`, *and* `main.py`, all nullable), the `cleaner` stage can pick an empty `main.go` over the populated `main.py`, silently replacing the Python source with an empty root file; there is no check that `RootFile` is non-empty. Leftover chatter keys become `BuildFiles` and ship in the output zip.
 - Proposed change: Deterministic selection (sorted keys; prefer exact `main.<original suffix>`; only non-empty content); reject responses with no usable main file. (Dropping non-file-looking keys from `BuildFiles` deferred — behavior question.)
-- Status: **Partially fixed** — deterministic, non-empty selection implemented (`selectMainFile` in `readers.go`); pruning of non-file chatter keys from `BuildFiles` still open.
+- Status: **Resolved** — deterministic, non-empty selection implemented (`selectMainFile` in `readers.go`). The remaining leftover-key pruning was deliberately folded into [C3] (maintainer decision, 2026-07-04): once the response schema is a single `main.go`, separate pruning is obsolete and the reader drops unexpected keys as part of that change.
 - Why: An empty/garbage working package poisons every later stage while the pipeline still reports stage success.
 - Architecture impact: Local | Effort: S | Priority: P2
 
@@ -171,12 +174,12 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Trustworthy timing is required for the thesis's energy/cost evaluation.
 - Architecture impact: Local | Effort: S | Priority: P2
 
-### [~] [A17] Zip ingestion: last-`.py`-wins, macOS junk entries, CRLF `.env` parsing
+### [x] [A17] Zip ingestion: last-`.py`-wins, macOS junk entries, CRLF `.env` parsing
 - Category: Bug
 - Affected component(s): `internal/inputhandler/reader.go`
 - Problem / current state: Every `.py`/`.go` entry overwrites `RootFile`, so a multi-file Python package silently keeps only the last file; `__MACOSX/._main.py` AppleDouble entries match the suffix check and can clobber the real source; `.env` is split on `"\n"` leaving `\r` on Windows-authored files, producing malformed env entries passed to `exec`.
 - Proposed change: Skip `__MACOSX/` and `._*` AppleDouble entries; trim `\r`/blank/comment lines from `.env`. The multi-source-file policy (error vs. support) is deferred to [C9].
-- Status: **Partially fixed** — junk-entry skipping and `.env` line hygiene implemented in `reader.go`; last-`.py`-wins behavior intentionally unchanged pending [C9].
+- Status: **Resolved** — junk-entry skipping and `.env` line hygiene implemented in `reader.go` (first pass). Multi-source policy decided by maintainer (2026-07-04): **reject at upload** — `ReadFromReader` now errors on more than one `.py`/`.go` root file, naming the conflicting entries, and `uploadHandler` surfaces it as a 400 with the reason instead of a generic 500. Regression tests in `internal/inputhandler/reader_test.go`. Actual multi-file *support* remains [C9].
 - Why: These are silent input corruptions that no downstream stage can recover from.
 - Architecture impact: Local | Effort: S | Priority: P2
 
@@ -188,8 +191,8 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Category: Code Quality
 - Affected component(s): `internal/builder/validator.go` vs. `internal/floci/output.go`
 - Problem / current state: `internal/floci`'s `matchOutput`/`jsonSubset` is deterministic, recursion-safe, reports a dotted path to the first divergence, and has tests; `JsonAwareSimilarityValidation` is buggy (A1–A3), untested, and reports nothing. Two subtly different definitions of "equivalent output" make experimental results incomparable between `goTester` and `flociTester`.
-- Proposed change: Extract `jsonSubset` into a shared package and make `GoPackageTester` use it (after unwrapping the harness's `"response"`/`"error"` envelope), keeping similarity as an explicit opt-in fallback.
-- Why: One tested, deterministic equivalence definition eliminates a class of nondeterministic verdicts and gives repair stages a mismatch *path* to report ([C1]).
+- Proposed change: Extract `jsonSubset` into a shared package and make `GoPackageTester` use it (after unwrapping the harness's `"response"`/`"error"` envelope), keeping similarity as an explicit opt-in fallback. For fixtures flagged non-deterministic (e.g. `f9`/`f10`, live external APIs — maintainer-confirmed as in-scope now and on larger scraped test sets later), the comparison must degrade to **type-shape only**: same JSON structure and value *types*, scalar values ignored. The current `valueValidation=false` mode approximates this but is undocumented and only skips scalar leaves — make shape-only comparison a first-class, documented mode of the unified comparator.
+- Why: One tested, deterministic equivalence definition eliminates a class of nondeterministic verdicts and gives repair stages a mismatch *path* to report ([C1]); the shape-only mode is what makes network-dependent fixtures validatable at all (maintainer decision, 2026-07-04).
 - Architecture impact: Local | Effort: M | Priority: P1
 
 ### [ ] [B2] No tests for orchestration or validation semantics
@@ -222,7 +225,8 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Problem / current state: Chatlogs cannot be mapped to jobs/stages; `Metrics` aggregates all LLM calls into single counters — "tokens per stage" and "which stage's retries exhaust" are unanswerable. Metrics are wiped on `/reconfigure`.
 - Proposed change: Thread request UUID + task ID into chatlog filenames; add `PerTask map[string]TaskMetrics` (attempts, tokens, duration, outcome) populated in `executeTask`/`LLMConverter.Apply`.
 - Why: Instrumentation prerequisite for nearly every prioritization decision here and for the thesis's prediction goal.
-- Architecture impact: Local | Effort: M | Priority: P1
+- Implementation notes (verified 2026-07-04): the GWDG ChatAI proxy reliably reports token usage via the standard OpenAI-compatible `usage` object in both non-streaming and streaming modes, and the totals match across modes. If streaming is ever added, `stream_options: {include_usage: true}` must be set explicitly (usage then arrives only in the final SSE chunk before `[DONE]`). `prompt_tokens_details` is always `null` on this backend — no cached/uncached breakdown — so cost tracking must rely on `prompt_tokens`/`completion_tokens`/`total_tokens` only.
+- Architecture impact: Local | Effort: M | Priority: **P0** (raised 2026-07-04 by maintainer — open question 1, the failure-mode distribution, stays unanswerable until this lands; also a prerequisite for the [G5] experiment)
 
 ### [ ] [B6] Documentation drift on prompt wiring and Floci examples
 - Category: Code Quality
@@ -251,21 +255,22 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Execution feedback (failing input, expected vs. actual) is the single strongest known signal for LLM self-repair — Chen et al., *Teaching Large Language Models to Self-Debug* (arXiv:2304.05128) show unit-test feedback substantially outperforms blind resampling — and the current pipeline structurally withholds it.
 - Architecture impact: Local | Effort: M | Priority: **P0**
 
-### [ ] [C2] The embedded default pipeline cannot recover from test failures — align it with the known-good chain
+### [ ] [C2] The embedded default (dev) pipeline wastes its test-failure retries — fix the dead-end without losing its brevity
 - Category: Feature
 - Affected component(s): `internal/pipeline/default.yaml`, `internal/pipeline/pipeline.go`
-- Problem / current state: In `default.yaml`, `goTester` is the *validation* of the `builder` task. A validation failure re-executes the *same* task — i.e. rebuilds identical code and re-runs the same tests, up to 3 times, with no LLM stage ever invoked (recovery only fires on `Execute` failure). `realign` isn't registered in this pipeline. The fuller chain in `default.json`/README does not have this problem.
-- Proposed change: Replace `default.yaml`'s content with the `default.json` task graph. Optionally: on validation failure, route through `OnFailure` before the retry (flag as slightly behavior-changing).
-- Why: Test-failure→repair is the pipeline's core success-rate mechanism and it is unreachable in the shipped default; retrying identical code cannot change the outcome.
-- Architecture impact: Local | Effort: S | Priority: **P0**
+- Problem / current state: In `default.yaml`, `goTester` is the *validation* of the `builder` task. A validation failure re-executes the *same* task — i.e. rebuilds identical code and re-runs the same tests, up to 3 times, with no LLM stage ever invoked (recovery only fires on `Execute` failure). `realign` isn't registered in this pipeline.
+- Context (maintainer, 2026-07-04): the three pipeline configs are *all* intentional and relevant. `default.json` is the canonical, extensive paper pipeline; `default.yaml` is a **deliberately short dev pipeline** to save resources during quick functional tests (it may be aligned with `default.json` later); `scripts/summary-pipeline.json` is an experimental variant (summary → `coder2`) to be evaluated against `default.json`. So do **not** simply replace `default.yaml` with the full chain.
+- Proposed change: Keep `default.yaml` short and cheap, but remove the guaranteed-waste loop: either (a) set the builder task's retry budget so a test-validation failure fails fast instead of rebuilding identical code twice more, or (b) add one compact repair hop for validation failures (a single `fixer`/`realign` recovery) if quick dev runs should exercise the repair path at all. Full alignment with `default.json` remains a later option.
+- Why: Retrying identical code cannot change the outcome; in a dev pipeline the dead-end wastes build/test cycles and makes quick functional tests report misleadingly slow/void failures.
+- Architecture impact: Local | Effort: S | Priority: P1 (downgraded from P0 — the canonical evaluation pipeline `default.json` does not have this dead-end)
 
 ### [ ] [C3] Always regenerate `go.mod` deterministically; never trust the LLM's
 - Category: Feature
 - Affected component(s): `internal/translator/readers.go` (`GoJsonOllamaReader`), `internal/builder/builder.go`, prompts showing `go.mod` examples
 - Problem / current state: The LLM-authored `go.mod` is a persistent, observed failure class: `unknown directive` (metrics 2026-07-01, four identical failures); the wired prompt's example teaches `go 1.x` / `v1.x` placeholders plus `v1.24` — an invalid version (Go modules require full semver). `internal/floci/packager.go` already proves the deterministic alternative: discard `go.mod`/`go.sum`, run `go mod init` + `go mod tidy` unconditionally.
-- Proposed change: In `GoJsonOllamaReader.MakeDeploymentFile`, drop `go.mod`/`go.sum` keys and always set `BuildCmd = ["go mod init example.com", "go mod tidy", "go build -o fn ."]`; remove `go.mod` from prompt output examples. Supersedes [A4]'s fallback.
-- Why: Eliminates an entire observed failure class with zero LLM involvement — `go mod tidy` derives requirements from imports authoritatively per the Go modules reference (go.dev/ref/mod).
-- Architecture impact: Local | Effort: S | Priority: **P0**
+- Proposed change (maintainer-confirmed direction, 2026-07-04 — implement all three parts together): (1) **programmatic `go.mod` generation**: in `GoJsonOllamaReader.MakeDeploymentFile` drop any `go.mod`/`go.sum` keys from the LLM response and always set `BuildCmd = ["go mod init example.com", "go mod tidy", "go build -o fn ."]` — dependencies are handled by the pipeline, never by the model; (2) **response schema**: change the translate (and fix/realign) stages' `output_keys` so the LLM ideally returns exactly *one* Go file (`main.go`) — this also enables the fixed, closed schema shape that [E1] needs, and the reader should then drop/ignore any unexpected extra response keys (absorbs the leftover-key pruning deferred from [A15], maintainer decision 2026-07-04); (3) **prompts**: update the translate/repair prompts ([D1]/[D3]) to remove all `go.mod` examples and state explicitly that only the Go source is expected and dependency resolution is automatic. Supersedes [A4]'s fallback.
+- Why: Eliminates an entire observed failure class with zero LLM involvement — `go mod tidy` derives requirements from imports authoritatively per the Go modules reference (go.dev/ref/mod) — and shrinks the model's job to the one artifact it is actually good at producing.
+- Architecture impact: Local | Effort: S–M | Priority: **P0** (explicitly re-confirmed as highly desirable by maintainer, 2026-07-04)
 
 ### [ ] [C4] Deterministic Go post-processing gate between `coder` and `goBuilder`
 - Category: Feature
@@ -287,7 +292,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Category: Feature
 - Affected component(s): `internal/service/service.go` (`uploadHandler`), `internal/inputhandler/reader.go`
 - Problem / current state: An upload with no `.py` file, no `test/` fixtures, or unparseable fixture JSON is accepted; the failure surfaces stages later (or worse, with zero tests `goTester` passes vacuously and the job "succeeds" with no behavioral validation). Fixture-format problems are only discoverable at comparison time.
-- Proposed change: At upload: require exactly one root source file and ≥1 test fixture; parse every fixture as `domain.TestFile`; when strategy is `json`, verify `Output` parses as JSON and does **not** contain a top-level `"response"` wrapper (document the canonical format: expected = the Python handler's return object, as in `examples/paper/*`). Return 400 with a per-file error list. *(Open question: confirm the canonical fixture format first.)*
+- Proposed change: At upload: require exactly one root source file and ≥1 test fixture; parse every fixture against the unified fixture schema from [C10] (which covers both the black-box and the Floci dialect); when strategy is `json`, verify `Output` parses as JSON and does **not** contain a top-level `"response"` wrapper. Canonical format confirmed by maintainer (2026-07-04): expected output = the Python handler's return object, as in the current `examples/paper/f1–f14` fixtures; the inconsistent files under `examples/output/2026-*` stem from an outdated test runner and can be ignored. Return 400 with a per-file error list. This is also where [C10]'s "floci required but disabled" rejection belongs.
 - Why: Fail-fast saves the full LLM/build budget of a doomed run and prevents vacuous "successes" from polluting success-rate numbers.
 - Architecture impact: Local | Effort: M | Priority: P1
 
@@ -307,13 +312,33 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Injecting explicit API-mapping hints removes the hardest reasoning step (library equivalence) from the model's job — the "more structure, less reliance on large-model reasoning" tradeoff this pipeline needs at 30B scale.
 - Architecture impact: Local (fits the registry architecture by design) | Effort: M | Priority: P1
 
-### [ ] [C9] Handle multi-file Python inputs explicitly
+### [ ] [C9] Support multi-file Python inputs (currently rejected at upload)
 - Category: Feature
 - Affected component(s): `internal/inputhandler/reader.go`, prompts, `codeBlockGenerator`
-- Problem / current state: Only one source file survives ingestion (last wins, silently); a Python function with a helper module is mistranslated from a fragment without any error.
-- Proposed change: Minimal: collect additional `.py` files into `BuildFiles` (they already flow into `{{ .code }}`), detect the handler-containing file as root; or at least reject multi-source zips with a clear 400 ([C6]).
-- Why: Expands the input domain the pipeline can be *correct* on and eliminates a silent-wrong-answer mode.
+- Problem / current state: Uploads with more than one `.py`/`.go` root file are now **rejected with a clear error** ([A17], maintainer decision 2026-07-04) — the silent last-wins mistranslation mode is gone. What remains is actual *support*: scraped AWS function sets will contain multi-module functions that currently cannot be translated at all.
+- Proposed change: When needed (triggered by the scraped test sets), replace the rejection with minimal support: pick the root deterministically (the handler-containing file — `def lambda_handler`/`def handler` — else `main.py`, else lexically first), collect the remaining `.py` files into `BuildFiles` so they flow into `{{ .code }}`, and fix `codeBlockGenerator`'s fence language for non-Go build files (it currently hardcodes ```go).
+- Why: Expands the input domain the pipeline can be *correct* on; the fail-fast rejection already protects correctness, so this item is purely about coverage.
 - Architecture impact: Local | Effort: M | Priority: P2
+
+### [ ] [C10] Unified test-fixture schema and per-job validation routing (goTester vs. flociTester)
+- Category: Feature
+- Affected component(s): `internal/domain/types.go` (`TestFile`, incl. the declared-but-unused `Services` field), `internal/floci/testcase.go` (`parsePackageTestCase` already shape-detects both dialects — reuse it), `internal/builder/validator.go`, `internal/service/service.go` (job admission), pipeline configs
+- Problem / current state: Two validation paths exist (black-box `goTester` and the Floci integration stage) with two fixture dialects, but nothing routes a job to the right one. Today a side-effecting function can be "validated" by `goTester` alone (meaningless — side effects unchecked), and a Floci-dependent job can run with Floci disabled and silently skip its only real validation (`flociTester` is a no-op when disabled).
+- Proposed change (maintainer-specified decision matrix, 2026-07-04): (1) Document **one** fixture schema covering both kinds: plain `input`/`output` for pure functions; `payload`/`expectedOutput`/`setup`/`sideEffects` for side-effecting ones (formalize the shape detection that `floci.parsePackageTestCase` already implements; decide whether `TestFile.Services` is consumed by it or removed). (2) At job start, classify the upload: *floci-required* iff any fixture declares `setup`/`sideEffects`. (3) Route per job: Floci enabled + required → `flociTester` validates; Floci enabled + not required → standard `goTester`; **Floci disabled + required → block the translation with a clear error before any LLM call**; Floci disabled + not required → standard `goTester`. `FLOCI_ENABLED` remains the single switch for whether the Floci service runs at all.
+- Why: Ensures every translation is validated by the strongest harness its fixtures demand and turns the current silent no-op into an explicit contract — a prerequisite for the thesis goal of validating side-effecting workloads. Maintainer requirement; no external source needed.
+- Architecture impact: Local (a routing decision in job admission + existing converters; no pipeline redesign — both testers already exist as registered stages)
+- Estimated effort: M
+- Priority: P1
+
+### [ ] [C11] Prevent AWS leakage: generated code must always resolve to the Floci harness, never real AWS
+- Category: Feature / Fault Tolerance
+- Affected component(s): `internal/builder/validator.go` (goTester exec env), `internal/floci` (deploy env), `internal/translator/prompts/1-stage-translate-*.md`, optionally a small deterministic post-generation check
+- Problem / current state: Input functions scraped from AWS examples call real AWS services. During `goTester` runs (`go run .` with full host network) or Floci-deployed runs, generated Go code that does not honor an endpoint override can silently contact production AWS endpoints — real side effects, cost, and non-reproducible test outcomes. Nothing currently guards against this.
+- Proposed change (maintainer requirement, 2026-07-04): (1) Always inject the harness environment into every test execution (`AWS_ENDPOINT_URL` pointing at Floci, dummy `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/region) — for goTester *and* the Floci Lambda env — regardless of what the upload's `.env` contains; (2) instruct the translate prompt ([D1]) that AWS SDK clients must be constructed with the `AWS_ENDPOINT_URL` override (the pattern the existing `examples/output/2026-06-27` translation already shows); (3) add a cheap deterministic post-generation check that flags AWS SDK client construction without an endpoint override before the code is ever executed. Fixture-declared external HTTP APIs (e.g. `f9`/`f10`) remain allowed per maintainer — this item is specifically about AWS service calls.
+- Why: Prevents irreversible external side effects and cost during batch evaluation and keeps AWS-backed validation hermetic and reproducible; a single leaked `PutObject` against real AWS would also invalidate the experiment's isolation assumptions. Maintainer requirement; no external source needed.
+- Architecture impact: Local
+- Estimated effort: M
+- Priority: P1
 
 ---
 
@@ -321,7 +346,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 
 ### [ ] [D1] Convert prompt: fix the few-shot that teaches broken response bodies; state the harness contract
 - Category: Prompt-Convert
-- Affected component(s): `internal/translator/prompts/1-stage-translate-1.md` (the wired `coder` prompt)
+- Affected component(s): `internal/translator/prompts/1-stage-translate-1.md` (the wired `coder` prompt) **and** `1-stage-translate-2.md` (same few-shot content; used by `coder2` in `scripts/summary-pipeline.json`, which will be evaluated against `default.json` — both prompts must get identical fixes or the comparison measures prompt drift instead of the summary stage)
 - Problem / current state: (1) The "Input Handling" few-shot returns `Body: fmt.Sprintf("%v", map[string]interface{}{...})`, which prints Go map syntax (`map[result:3]`), not JSON — but the fixtures (e.g. `f2`: `"body": "{\"result\": 3}"`) expect a JSON string body, so the example *teaches the model to fail the tests*. (2) The prompt never explains how the code is executed (stdin event → `handle` → response wrapped as `{"response": ...}`). (3) The output example shows `go 1.x`/`v1.x` placeholders a literal-minded small model will copy into an invalid `go.mod`. (4) `{{ .output }}` is shown without the `{{ .input }}` that produces it (variable exists but is unused). (5) No Python→Go semantic gotchas.
 - Proposed change: Replace the body few-shot with `json.Marshal` + `string(b)`; add an "Execution contract" section; pair input *and* expected output (use [C7]); drop the `go.mod` example per [C3]; add a compact gotcha list (`dict.get(k, default)` → explicit zero-value handling; `raise X` → non-2xx statusCode branch; f-strings → `fmt.Sprintf`; Python `True/None` casing vs JSON `true/null`; integer vs float division).
 - Why: Few-shot examples dominate output form — a demonstrably wrong exemplar is actively harmful (in-context learning imitates demonstrations; Brown et al., arXiv:2005.14165); stating the I/O contract turns "semantic equivalence" into a checkable output format.
@@ -367,8 +392,9 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Category: Small-Model Robustness
 - Affected component(s): `internal/translator/prompts.go` (factories), `internal/llmconnector/schema.go`, `outputschema.go`
 - Problem / current state: Only `summary` sets `output_keys`. `coder`/`fixer`/`realign` fall back to the generic any-object schema on Ollama (an empty `{}` satisfies it), a `main.go/go.mod/main.py` triple on Gemini (invites a stray `main.py`), and schema-less `json_object` on ChatAI.
-- Proposed change: Default `output_keys` to `{"main.go": {nullable:false}}` in the code-task factories (mirroring `NewSummaryConverter`); emit `required: ["main.go"]` in the Ollama/ChatAI schema payloads.
-- Why: Constrained decoding moves format compliance from the model's competence to the sampler — the highest-value trade for a ~30B model; both Ollama's and OpenAI's structured-output docs report large reductions in format errors vs. prompt-only instructions.
+- Proposed change: Default `output_keys` to `{"main.go": {nullable:false}}` in the code-task factories (mirroring `NewSummaryConverter`); emit `required: ["main.go"]` in the Ollama/ChatAI schema payloads. Prefer **fixed, closed schema shapes** (explicit keys, no unbounded `additionalProperties`) — which [C3]'s single-`main.go` output makes possible.
+- API findings (verified 2026-07-04 via experiments, see `scripts/chatai-check-json-schema.sh`): the GWDG proxy passes `response_format: json_schema` straight through to the model's backend (vLLM guided decoding). Enforcement is real when it works but is a **per-model capability**: weaker models (Llama-3.1-8B) fail to compile a grammar for unbounded `additionalProperties` and **silently fall back to unconstrained text** — the proxy never rejects an unsupported schema with an error. Fixed-shape schemas worked on all models tested. Consequences: (a) use closed schemas, (b) run the check script against each evaluation model before an experiment, (c) never trust enforcement alone — Go-layer validation ([E2]) is mandatory.
+- Why: Constrained decoding moves format compliance from the model's competence to the sampler — the highest-value trade for a ~30B model; both Ollama's and OpenAI's structured-output docs report large reductions in format errors vs. prompt-only instructions, and the 2026-07-04 experiments confirm closed shapes are the reliable subset on this backend.
 - Architecture impact: Local | Effort: S | Priority: P1
 
 ### [ ] [E2] Deterministic JSON extraction fallback before failing a parse
@@ -377,7 +403,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Problem / current state: Any leading prose, a ```` ```json ```` fence, or trailing commentary makes `json.Unmarshal` fail; the reader logs and returns nil, surfacing as the misleading "could not find main". ChatAI's `json_object` mode makes this a live path.
 - Proposed change: On unmarshal failure, deterministically retry: strip markdown fences, extract the first balanced `{…}` region, re-parse; only then fail — with an error saying "response was not a JSON object".
 - Why: Recovers, at zero token cost, the most common small-model formatting slip instead of burning a full LLM retry.
-- Architecture impact: Local | Effort: S | Priority: P1
+- Architecture impact: Local | Effort: S | Priority: **P0** (raised 2026-07-04: API experiments confirmed the ChatAI backend **silently** drops schema enforcement on models that can't compile the grammar — see [E1] — so the Go layer is the only reliable line of defense against unconstrained text responses)
 
 ### [ ] [E3] Vary sampling on resample-style retries
 - Category: Small-Model Robustness
@@ -398,7 +424,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 ### [ ] [E5] Stop sending junk/foreign parameters to Ollama; set an explicit output budget
 - Category: Small-Model Robustness / Code Quality
 - Affected component(s): `internal/llmconnector/ollama.go` (`Prepare`)
-- Problem / current state: `Prepare` injects OpenAI-style `max_tokens` and `response_format` defaults into Ollama's `Options`, and leaves the pipeline-level `strategy` key in (ChatAI deletes it; Ollama doesn't) — none are valid Ollama options, and crucially **no `num_predict` limit is actually set**, leaving truncation behavior to model defaults.
+- Problem / current state: `Prepare` injects OpenAI-style `max_tokens` and `response_format` defaults into Ollama's `Options`, and leaves the pipeline-level `strategy` key in (ChatAI deletes it; Ollama doesn't) — none are valid Ollama options, and crucially **no `num_predict` limit is actually set**, leaving truncation behavior to model defaults. Confirmed 2026-07-04: Ollama only *warns* about unknown options and ignores them, so the junk keys are harmless noise — the actionable part of this item is solely the missing output budget.
 - Proposed change: Mirror ChatAI's deletions (`strategy`, `output_keys`); map a `max_tokens` task param to Ollama's `num_predict`; drop the `response_format` default (the `Format` field already handles structure).
 - Why: An explicit, sufficient `num_predict` prevents silent mid-JSON truncation — per Ollama's API documentation, `num_predict` is the generation-length control, not `max_tokens`.
 - Architecture impact: Local | Effort: S | Priority: P2
@@ -439,6 +465,16 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Keeps the service responsive under batch load so evaluation scripts fail visibly instead of hanging.
 - Architecture impact: Local | Effort: S | Priority: P2
 
+### [ ] [F5] Configurable minimum delay between LLM calls (global rate-limit throttle)
+- Category: Fault Tolerance / Efficiency
+- Affected component(s): `internal/llmconnector` (a shared throttle around every `InvokeLLM`), configured via `ConverterOptions.Args` / an env default (e.g. `LLM_CALL_INTERVAL`)
+- Problem / current state: Experiment pipelines multiply retries × recovery hops × complex input functions into rapid back-to-back LLM calls; provider rate limits (429s) then surface as ordinary task failures that burn retry budget and skew evaluation results. There is no pacing mechanism anywhere. ([F2] handles *reacting* to such failures; this item *prevents* most of them.)
+- Proposed change (maintainer requirement, 2026-07-04): a single shared limiter that all connectors wait on before each call, **across all running jobs** — since the service has exactly one worker goroutine, a "sleep until `lastCall + interval`" guard (guarded by a mutex for future-proofing) is sufficient; no scheduler needed. Interval configurable, default 0 (disabled) so local Ollama runs are unaffected.
+- Why: Proactively staying under provider rate limits is cheaper and cleaner than reactive retry/backoff alone, and keeps batch-experiment timing comparable across runs. Maintainer requirement; no external source needed.
+- Architecture impact: Local
+- Estimated effort: S
+- Priority: P1
+
 ---
 
 ## G. Efficiency & token economy
@@ -475,14 +511,29 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Removes both latency and a spurious network-dependent failure mode from every build/retry cycle; based on the Go modules cache design (go.dev/ref/mod#module-cache).
 - Architecture impact: Local (infra config) | Effort: S | Priority: P2
 
+### [ ] [G5] Experiment: continued LLM conversation across pipeline stages (translate → fix → align)
+- Category: Efficiency / Small-Model Robustness (evaluation experiment — do not commit as default behavior before measuring)
+- Affected component(s): `internal/llmconnector` (per-conversion message-history cache on the `Client`), `internal/translator` (opt-in via task param)
+- Problem / idea (maintainer, 2026-07-04): today every stage and every retry sends a fresh single-turn prompt, resending the full code context each time. Chat APIs support multi-turn conversations by resending prior prompts/responses; keeping translate → fix → align (and their retries) in *one* continued conversation could improve repair quality — the model sees its own previous attempt plus the resulting error instead of a reconstructed snapshot — at the cost of a context that grows with every turn.
+- Proposed change: Prototype an **opt-in** conversation mode (e.g. `task_args.conversation: true`): the connector caches the message history keyed by conversion-request id and appends new turns instead of replacing them; cap the number of retained turns so retries can't blow the context window. Then evaluate against `default.json` on f1–f14 for the two target metrics: translation success rate and tokens-per-successful-translation. [B5] (per-stage token/attempt metrics) is a hard prerequisite for the measurement; ChatAI's token accounting is confirmed reliable (see [B5] notes), so cost tracking is feasible.
+- Why: Visible-history self-repair is the setting of Chen et al.'s self-debugging (arXiv:2304.05128) and Reflexion (Shinn et al., arXiv:2303.11366) — but whether it beats fresh-context repair *for a ~30B model under this token budget* is an open empirical question, since history growth directly fights the tokens-per-success metric; hence an experiment, not a committed change.
+- Architecture impact: Local (state on the LLM client, keyed per request; the `Client` interface and four-stage pipeline design stay unchanged)
+- Estimated effort: M
+- Priority: P2 (blocked on [B5])
+
 ---
 
 ## Open questions
 
-1. **Failure-mode distribution is unmeasured.** `Metrics` records only aggregate `build_error`/`test_error` counts; no per-stage attempt/outcome breakdown exists, so it is unverified whether build failures actually outnumber semantic test failures across f1–f14. Implement [B5] and run the paper set once before re-prioritizing C-items against each other.
-2. **Which pipeline config is canonical for the thesis evaluation?** Three materially different chains exist (`default.yaml`, `default.json`, `scripts/summary-pipeline.json` with `summary`+`coder2`). If `summary-pipeline.json` is the target, D-items should prioritize `1-stage-translate-2.md` (same defects as `-1`) and [G2] rises in priority.
-3. **Expected-output fixture format is undocumented and inconsistent.** The paper fixtures put the bare Python return object in `output`; `examples/output/2026-07-01_12-56-12/test/f1.json` includes the harness's `{"response": ...}` wrapper *and* is invalidly escaped. Which format is authoritative? [C6] assumes the paper format.
-4. **Does the GWDG ChatAI proxy honor `json_schema` response_format?** `chatai.go`'s own comment says enforcement depends on the proxy. If not enforced, [E2] becomes near-P0 for that backend.
-5. **Ollama's behavior on unknown `Options` keys across versions** (warn vs. reject) — affects urgency of [E5]; recorded successful runs suggest warn-only for the deployed version.
-6. **Branch intent:** current branch is `validator-2` with sibling `validator` — if a validator rework is underway, A1–A3/[B1] should be reconciled with it rather than patched independently.
-7. **Network-dependent fixtures** (`f9` t2 fetches jsonplaceholder.typicode.com live): is external network access an accepted part of the test contract, or should those be mocked/marked non-deterministic? Determines whether [A6] alone suffices or those fixtures need rewriting.
+1. **Failure-mode distribution is unmeasured.** Still open (2026-07-04) — blocked on [B5], which the maintainer raised to **P0** for exactly this reason. `Metrics` records only aggregate `build_error`/`test_error` counts; implement [B5] and run f1–f14 once before re-prioritizing C-items against each other.
+2. **Does a continued conversation across stages beat fresh-context repair?** (new, maintainer 2026-07-04) — keeping translate → fix → align in one multi-turn conversation might improve repair quality but grows the context every turn. To be evaluated empirically for translation success rate *and* tokens-per-success; see [G5]. Blocked on [B5] for measurement.
+
+## Resolved questions (answered by maintainer, 2026-07-04)
+
+- **Canonical pipeline config** → all three are intentional and stay. `default.json` is the canonical, extensive paper pipeline (main evaluation target); `default.yaml` is a deliberately short dev pipeline for cheap functional tests (may later be aligned with `default.json`); `scripts/summary-pipeline.json` is the summary→`coder2` experiment to be evaluated *against* `default.json`. Folded into the reframed [C2] and [D1] (both translate prompt variants must receive identical fixes).
+- **Fixture format inconsistency** → the odd `examples/output/2026-*` files stem from an outdated test runner and can be ignored; the current f1–f14 fixtures already use the corrected format (bare Python handler return object). [C6] proceeds on that basis.
+- **ChatAI `json_schema` enforcement** → verified: the proxy passes it through to vLLM guided decoding; enforcement is per-model, weak models silently fall back to unconstrained text, the proxy never errors on unsupported schemas; fixed-shape (closed) schemas worked on every model tested; `scripts/chatai-check-json-schema.sh` verifies a given model. Folded into [E1] (closed schemas + per-model check) and [E2] (raised to P0 — Go-layer validation is mandatory).
+- **ChatAI token accounting** → verified reliable in both modes via the OpenAI-compatible `usage` object; streaming needs `stream_options: {include_usage: true}`; `prompt_tokens_details` is always null (no cache breakdown). Folded into [B5].
+- **Ollama unknown options** → confirmed warn-and-ignore; [E5]'s scope reduces to setting an explicit `num_predict`.
+- **Branch intent** → `validator` is a stale old implementation; `validator-2` is the only relevant branch and is ahead of `main`. No reconciliation needed for the A1–A3/[B1] fixes (A-fixes are committed on `validator-2`).
+- **Network-dependent fixtures** → external network access is accepted and will matter on larger scraped test sets; for non-deterministic return values the app must compare **type shape only** (structure + value types, not values). Folded into [B1]. Note this is distinct from AWS service calls, which must never leave the Floci harness — see [C11].

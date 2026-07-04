@@ -220,7 +220,13 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	dp, err := inputhandler.ReadFromBytes(fileData)
-	if err != nil || dp == nil {
+	if err != nil {
+		// malformed archives (bad zip, multiple root source files) are client
+		// errors and should say why instead of a generic 500.
+		http.Error(w, fmt.Sprintf("Error reading file: %v", err), http.StatusBadRequest)
+		return
+	}
+	if dp == nil {
 		http.Error(w, "Error reading file", http.StatusInternalServerError)
 		return
 	}

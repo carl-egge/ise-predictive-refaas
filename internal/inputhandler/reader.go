@@ -3,6 +3,7 @@ package inputhandler
 import (
 	"archive/zip"
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -62,6 +63,7 @@ func ReadFromReader(reader io.ReaderAt, size int64) (*domain.DeploymentPackage, 
 	if err != nil {
 		return nil, err
 	}
+	rootNames := make([]string, 0, 1)
 	for _, file := range zipfs.File {
 		// macOS zips add AppleDouble resource-fork copies of every entry;
 		// "__MACOSX/._main.py" would otherwise pass the suffix check below
@@ -70,6 +72,7 @@ func ReadFromReader(reader io.ReaderAt, size int64) (*domain.DeploymentPackage, 
 			continue
 		}
 		if strings.HasSuffix(file.Name, ".py") || strings.HasSuffix(file.Name, ".go") {
+			rootNames = append(rootNames, file.Name)
 			fileReader, err := file.Open()
 			if err != nil {
 				return nil, err
@@ -119,6 +122,13 @@ func ReadFromReader(reader io.ReaderAt, size int64) (*domain.DeploymentPackage, 
 				dp.Env = append(dp.Env, line)
 			}
 		}
+	}
+	// Multi-file packages are not supported yet (translation assumes one
+	// root function file); previously the last entry silently won, which
+	// mistranslated multi-module uploads from a fragment. Reject explicitly
+	// until multi-file support lands.
+	if len(rootNames) > 1 {
+		return nil, fmt.Errorf("multiple source files found (%s): a package must contain exactly one .py/.go root file", strings.Join(rootNames, ", "))
 	}
 	return &dp, nil
 }
