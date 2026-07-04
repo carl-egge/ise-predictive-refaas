@@ -111,7 +111,8 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 	if task.Execute != nil {
 
 		// Loop for retry attempts, executing the task and handling errors as needed.
-		log.Debugf("running task (%s) with (%d / %d) executions", task.ID, task.RetryCount+1, task.MaxRetryCount+1)
+		// MaxRetryCount is the max number of executions (not extra retries).
+		log.Debugf("running task (%s) with (%d / %d) executions", task.ID, task.RetryCount+1, task.MaxRetryCount)
 		for ; task.RetryCount < task.MaxRetryCount; task.RetryCount++ {
 			if req.WorkingPackage != nil {
 				workingPackage = req.WorkingPackage.Copy()

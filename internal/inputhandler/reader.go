@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
@@ -62,6 +63,12 @@ func ReadFromReader(reader io.ReaderAt, size int64) (*domain.DeploymentPackage, 
 		return nil, err
 	}
 	for _, file := range zipfs.File {
+		// macOS zips add AppleDouble resource-fork copies of every entry;
+		// "__MACOSX/._main.py" would otherwise pass the suffix check below
+		// and clobber the real source with resource-fork bytes.
+		if strings.HasPrefix(file.Name, "__MACOSX/") || strings.HasPrefix(path.Base(file.Name), "._") {
+			continue
+		}
 		if strings.HasSuffix(file.Name, ".py") || strings.HasSuffix(file.Name, ".go") {
 			fileReader, err := file.Open()
 			if err != nil {
@@ -102,7 +109,15 @@ func ReadFromReader(reader io.ReaderAt, size int64) (*domain.DeploymentPackage, 
 			if err != nil {
 				return nil, err
 			}
-			dp.Env = append(dp.Env, strings.Split(string(envFile), "\n")...)
+			// Trim CR (Windows-authored files) and skip blank/comment lines,
+			// which would otherwise end up as malformed exec env entries.
+			for _, line := range strings.Split(string(envFile), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				dp.Env = append(dp.Env, line)
+			}
 		}
 	}
 	return &dp, nil

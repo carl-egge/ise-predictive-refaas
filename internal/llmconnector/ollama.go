@@ -12,7 +12,6 @@ import (
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
 	"github.com/ollama/ollama/api"
-	log "github.com/sirupsen/logrus"
 )
 
 // OllamaInvocationClient calls the Ollama API and adapts responses to the
@@ -65,10 +64,11 @@ func (llm *OllamaInvocationClient) Configure(connectorArgs map[string]interface{
 // Prepare sets model-specific runtime options from the merged per-task
 // params (called fresh before every InvokeLLM, including retries).
 func (llm *OllamaInvocationClient) Prepare(taskParams map[string]interface{}) error {
-	model, ok := taskParams["model_name"]
+	// Return an error instead of log.Fatal: a missing model_name in one task
+	// config must fail that task, not os.Exit the whole service.
+	model, ok := taskParams["model_name"].(string)
 	if !ok {
-		log.Fatal("model_name must be a string")
-		return nil
+		return fmt.Errorf("model_name must be a string")
 	}
 
 	nargs := make(map[string]interface{})
@@ -85,7 +85,7 @@ func (llm *OllamaInvocationClient) Prepare(taskParams map[string]interface{}) er
 	}
 	maps.Insert(nargs, maps.All(defaultParams))
 
-	llm.ModelName = model.(string)
+	llm.ModelName = model
 	llm.RequestParams = nargs
 	llm.OutputSchema = ParseOutputSchema(taskParams["output_keys"])
 
@@ -119,7 +119,11 @@ func (llm *OllamaInvocationClient) InvokeLLM(runner context.Context, buf bytes.B
 		Format:  format,
 	}
 
-	callback := make(chan api.GenerateResponse)
+	// Buffered: Generate may deliver a response via the callback and then
+	// still return an error (e.g. a mid-stream network failure); with an
+	// unbuffered channel the goroutine's second send would block forever
+	// after the single receive below, leaking the goroutine.
+	callback := make(chan api.GenerateResponse, 2)
 	deadline, cancel := context.WithDeadline(runner, time.Now().Add(time.Minute*5))
 	defer cancel()
 	go func() {

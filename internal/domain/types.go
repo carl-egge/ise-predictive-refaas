@@ -67,7 +67,10 @@ func (dp *DeploymentPackage) GetTestFiles() iter.Seq2[*TestFile, error] {
 			file := &TestFile{}
 			err := json.Unmarshal([]byte(v), file)
 			file.Name = name
-			file.Env = dp.Env
+			// Package-level env first, the fixture's own "env" entries last:
+			// exec.Cmd keeps the last value for duplicate keys, so per-test
+			// overrides win over package defaults instead of being clobbered.
+			file.Env = append(append([]string{}, dp.Env...), file.Env...)
 			if !yield(file, err) {
 				return
 			}
@@ -134,11 +137,14 @@ func (m *Metrics) AddMetric(mm Metrics) {
 	m.BuildError += mm.BuildError
 	m.Tasks += mm.Tasks
 
-	if m.StartTime.After(mm.StartTime) {
+	// Ignore zero-valued times: connector-returned metrics carry only
+	// durations/token counts, and a zero StartTime would otherwise always win
+	// the After comparison and reset the request's start to the year 1.
+	if !mm.StartTime.IsZero() && (m.StartTime.IsZero() || m.StartTime.After(mm.StartTime)) {
 		m.StartTime = mm.StartTime
 	}
 
-	if m.EndTime.Before(mm.EndTime) {
+	if !mm.EndTime.IsZero() && m.EndTime.Before(mm.EndTime) {
 		m.EndTime = mm.EndTime
 	}
 }
@@ -154,5 +160,25 @@ type TestFile struct {
 	// Services to mock/deploy for the test.
 	Services map[string]string `json:"services"`
 	// UndeterministicResults indicates the test output is non-deterministic.
-	UndeterministicResults bool `json:"deterministic"`
+	UndeterministicResults bool `json:"undeterministic"`
+}
+
+// UnmarshalJSON accepts the correctly-named "undeterministic" key and, for
+// backwards compatibility with existing fixtures that used the historically
+// misnamed tag (e.g. examples/paper/f10 and f14 set "deterministic": true to
+// mean "results are non-deterministic"), the legacy "deterministic" key with
+// its historical meaning: a true value relaxes output validation.
+func (tf *TestFile) UnmarshalJSON(data []byte) error {
+	type testFileAlias TestFile
+	aux := struct {
+		*testFileAlias
+		LegacyDeterministic *bool `json:"deterministic"`
+	}{testFileAlias: (*testFileAlias)(tf)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if !tf.UndeterministicResults && aux.LegacyDeterministic != nil {
+		tf.UndeterministicResults = *aux.LegacyDeterministic
+	}
+	return nil
 }

@@ -30,6 +30,14 @@ type ConverterService struct {
 	// (success, failure, or cancellation), at which point it is removed.
 	cancels map[uuid.UUID]context.CancelFunc
 	mutex   sync.RWMutex
+	// runnerMu serializes use of the shared Runner between the background
+	// worker (Convert) and /reconfigure (Reconfigure), which swaps the
+	// runner's pipeline/LLM client and removes its working directory - doing
+	// that mid-conversion would be a data race and could delete the build dir
+	// out from under a running job. It is never held together with mutex, so
+	// the two locks cannot deadlock; a /reconfigure request simply waits for
+	// the in-flight conversion to finish.
+	runnerMu sync.Mutex
 }
 
 // queuedConversion pairs a conversion request with the context that controls
@@ -78,7 +86,9 @@ func (service *ConverterService) Start(ctx context.Context) {
 		request := job.request
 		log.Infof("starting request for %s", request.Id)
 		startTime := time.Now()
+		service.runnerMu.Lock()
 		err := service.converter.Convert(job.ctx, request)
+		service.runnerMu.Unlock()
 		endTime := time.Now()
 
 		service.mutex.Lock()
@@ -154,9 +164,11 @@ func (service *ConverterService) pollHandler(w http.ResponseWriter, r *http.Requ
 
 	if ok {
 		defer func() {
-			service.mutex.RLock()
+			// deleting is a map write and needs the write lock; doing it
+			// under RLock can crash the process on concurrent requests.
+			service.mutex.Lock()
 			delete(service.results, jobUUID)
-			service.mutex.RUnlock()
+			service.mutex.Unlock()
 		}()
 		if resp == nil || resp.WorkingPackage == nil {
 			outputhandler.WriteHTTPError(w, fmt.Errorf("no working package for job uuid %s", jobUUID.String()))
@@ -261,8 +273,15 @@ func (service *ConverterService) reconfigure(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	service.mutex.Lock()
+	// Reconfigure swaps the runner's pipeline/client and cleans its working
+	// dir; runnerMu keeps that from racing an in-flight Convert. The state
+	// maps are wiped under the separate state mutex afterwards - the two
+	// locks are intentionally never nested.
+	service.runnerMu.Lock()
 	err := service.converter.Reconfigure(&options)
+	service.runnerMu.Unlock()
+
+	service.mutex.Lock()
 	service.metrics = make(map[uuid.UUID]domain.Metrics)
 	service.results = make(map[uuid.UUID]*domain.ConversionRequest)
 	service.mutex.Unlock()

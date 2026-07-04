@@ -103,20 +103,23 @@ func (g *GeminiInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer
 	metrics.ConversionTime = time.Since(start)
 	metrics.ConversionPromptTime = time.Since(start)
 	metrics.ConversionEvalTime = time.Since(start)
-	if resp != nil {
+	if resp != nil && resp.UsageMetadata != nil {
 		metrics.ConversionPromptTokenCount += int(resp.UsageMetadata.PromptTokenCount)
-		metrics.ConversionEvalTokenCount += int(resp.UsageMetadata.TotalTokenCount)
+		metrics.ConversionEvalTokenCount += int(resp.UsageMetadata.CandidatesTokenCount)
 	}
 	if err != nil {
 		return "", metrics, err
 	}
+	// A safety-blocked or otherwise empty response has no candidates (or a
+	// nil content); indexing it unchecked panics and aborts the whole job.
+	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
+		return "", metrics, fmt.Errorf("gemini response contained no candidates (possibly blocked or empty)")
+	}
 
 	var outBuf bytes.Buffer
-	if resp != nil {
-		for _, part := range resp.Candidates[0].Content.Parts {
-			if txt, ok := part.(genai.Text); ok {
-				outBuf.WriteString(string(txt))
-			}
+	for _, part := range resp.Candidates[0].Content.Parts {
+		if txt, ok := part.(genai.Text); ok {
+			outBuf.WriteString(string(txt))
 		}
 	}
 

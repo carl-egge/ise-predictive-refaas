@@ -145,14 +145,16 @@ type ValidationStrategy interface {
 
 type SimilarityValidation struct{}
 
+// validate passes when the output is sufficiently similar to the expected
+// value (overlap coefficient: 1.0 = identical, 0.0 = disjoint).
 func (SimilarityValidation) validate(in, expected string) bool {
 	sim := strutil.Similarity(in, expected, metrics.NewOverlapCoefficient())
-	return sim < 0.9
+	return sim >= 0.9
 }
 
 func (SimilarityValidation) validateUndeterministic(in, expected string) bool {
 	sim := strutil.Similarity(in, expected, metrics.NewOverlapCoefficient())
-	return sim < 0.6
+	return sim >= 0.6
 }
 
 // MakeAwareSimilarityValidation returns a JSON-aware validation strategy.
@@ -193,7 +195,13 @@ func (vs *JsonAwareSimilarityValidation) validate(in, expected string) bool {
 	}
 
 	if val, ok := actualJSON["response"]; ok {
-		return vs.compareMap(expectedJSON, val.(map[string]interface{}))
+		respMap, ok := val.(map[string]interface{})
+		if !ok {
+			// the handler returned a non-object response while an object was
+			// expected: treat it as a mismatch instead of panicking the run.
+			return false
+		}
+		return vs.compareMap(expectedJSON, respMap)
 	}
 	return vs.compareMap(expectedJSON, actualJSON)
 }
@@ -207,44 +215,39 @@ func (vs *JsonAwareSimilarityValidation) validateUndeterministic(in, expected st
 }
 
 func (vs *JsonAwareSimilarityValidation) compareSimple(v, vv any) bool {
-	switch v.(type) {
+	switch expected := v.(type) {
 	case string:
-		if strings.HasPrefix(v.(string), "{") && strings.HasSuffix(v.(string), "}") && strings.HasPrefix(vv.(string), "{") && strings.HasSuffix(vv.(string), "}") {
+		actual, ok := vv.(string)
+		if !ok {
+			// expected/actual leaf types differ (e.g. "200" vs 200): a
+			// mismatch when values are validated, ignored otherwise -
+			// never a panic that aborts the whole conversion.
+			return !vs.valueValidation
+		}
+		if strings.HasPrefix(expected, "{") && strings.HasSuffix(expected, "}") && strings.HasPrefix(actual, "{") && strings.HasSuffix(actual, "}") {
 			var expectedValue map[string]interface{}
 			var actualValue map[string]interface{}
-
-			var err error
-			err = json.Unmarshal([]byte(v.(string)), &expectedValue)
-			if err != nil {
-				if !vs.fallback(v.(string), vv.(string)) {
-					return false
-				}
+			if json.Unmarshal([]byte(expected), &expectedValue) == nil &&
+				json.Unmarshal([]byte(actual), &actualValue) == nil {
+				log.Debugf("found two json strings, comparing as structs")
+				return vs.compareMap(expectedValue, actualValue)
 			}
-			err = json.Unmarshal([]byte(vv.(string)), &actualValue)
-			if err != nil {
-				if !vs.fallback(v.(string), vv.(string)) {
-					return false
-				}
-			}
-			log.Debugf("found two json strings, comparing as structs")
-			return vs.compareMap(expectedValue, actualValue)
+			return vs.fallback(expected, actual)
 		}
 		log.Debugf("found two strings, comparing as strings")
-		if !vs.fallback(v.(string), vv.(string)) {
-			return false
-		}
-	case int:
-		if !vs.valueValidation {
-			break
-		}
-		if v.(int) != vv.(int) {
+		if !vs.fallback(expected, actual) {
 			return false
 		}
 	case float64:
+		// JSON numbers always decode to float64, so this covers ints too.
 		if !vs.valueValidation {
 			break
 		}
-		if v.(float64) != vv.(float64) {
+		actual, ok := vv.(float64)
+		if !ok {
+			return false
+		}
+		if expected != actual {
 			return false
 		}
 	}
@@ -264,51 +267,56 @@ func (vs *JsonAwareSimilarityValidation) fallback(exp, act string) bool {
 
 func (vs *JsonAwareSimilarityValidation) compareMap(expected, actual map[string]interface{}) bool {
 	for k, v := range expected {
-		if vv, ok := actual[k]; ok {
-			switch v.(type) {
+		vv, ok := actual[k]
+		if !ok {
+			return false
+		}
+		switch ev := v.(type) {
+		case map[string]interface{}:
+			switch av := vv.(type) {
 			case map[string]interface{}:
-				switch vv.(type) {
-				case map[string]interface{}:
-					log.Debugf("found two json objects, comparing as structs")
-					return vs.compareMap(v.(map[string]interface{}), vv.(map[string]interface{}))
-				case string:
-					log.Debugf("comparing an object to a string, by assuming the string is json.")
-					if strings.HasPrefix(vv.(string), "{") && strings.HasSuffix(vv.(string), "}") {
-						var actualData map[string]interface{}
-						if err := json.Unmarshal([]byte(vv.(string)), &actualData); err != nil {
-							return false
-						}
-						return vs.compareMap(v.(map[string]interface{}), actualData)
-					}
-					data, _ := json.Marshal(v.(map[string]interface{}))
-					if !vs.fallback(string(data), vv.(string)) {
-						return false
-					}
-				default:
+				log.Debugf("found two json objects, comparing as structs")
+				// keep iterating the remaining keys after a nested match -
+				// returning here would silently accept all sibling keys.
+				if !vs.compareMap(ev, av) {
 					return false
 				}
-			case []interface{}:
-				switch vv.(type) {
-				case []interface{}:
-					if len(v.([]interface{})) != len(vv.([]interface{})) {
+			case string:
+				log.Debugf("comparing an object to a string, by assuming the string is json.")
+				if strings.HasPrefix(av, "{") && strings.HasSuffix(av, "}") {
+					var actualData map[string]interface{}
+					if err := json.Unmarshal([]byte(av), &actualData); err != nil {
 						return false
 					}
-					for i, vEl := range v.([]interface{}) {
-						vvEl := vv.([]interface{})[i]
-						if !vs.compareSimple(vEl, vvEl) {
-							return false
-						}
+					if !vs.compareMap(ev, actualData) {
+						return false
 					}
-				default:
-					return false
+				} else {
+					data, _ := json.Marshal(ev)
+					if !vs.fallback(string(data), av) {
+						return false
+					}
 				}
 			default:
-				if !vs.compareSimple(v, vv) {
+				return false
+			}
+		case []interface{}:
+			av, ok := vv.([]interface{})
+			if !ok {
+				return false
+			}
+			if len(ev) != len(av) {
+				return false
+			}
+			for i, vEl := range ev {
+				if !vs.compareSimple(vEl, av[i]) {
 					return false
 				}
 			}
-		} else {
-			return false
+		default:
+			if !vs.compareSimple(v, vv) {
+				return false
+			}
 		}
 	}
 	return true

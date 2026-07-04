@@ -94,16 +94,50 @@ func (cc *GolangBuilder) doBuild(code *domain.DeploymentPackage, dir string, ctx
 		out, err := cc.runBuildCommands(ctx, dir, cmd)
 		if err != nil {
 			log.Debugf("failed to run build commands: %+v", err)
-			if strings.Contains(err.Error(), " unknown revision") {
-				delete(code.BuildFiles, "go.mod")
-				code.BuildCmd = []string{
-					"go mod init example.com",
-					"go mod tidy",
-					"go build -o fn .",
-				}
-				out, err := cc.runBuildCommands(ctx, dir, cmd)
-				return out, err
+			if isGoModFailure(err) {
+				return cc.rebuildWithFreshGoMod(code, dir, ctx)
 			}
+			return out, err
+		}
+	}
+	return "", nil
+}
+
+// isGoModFailure reports whether a build error points at a broken or
+// unresolvable go.mod (typically LLM-generated), covering the failure texts
+// observed in real runs (see examples/metrics), not just "unknown revision".
+func isGoModFailure(err error) bool {
+	msg := err.Error()
+	for _, marker := range []string{
+		"unknown revision",
+		"errors parsing go.mod",
+		"invalid version",
+		"unknown directive",
+		"missing go.sum entry",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// rebuildWithFreshGoMod discards the broken go.mod/go.sum both from the
+// package and from the build dir on disk (deleting only the BuildFiles entry
+// would leave the bad file in place), then runs the full regenerate-and-build
+// command list instead of re-running the command that just failed.
+func (cc *GolangBuilder) rebuildWithFreshGoMod(code *domain.DeploymentPackage, dir string, ctx context.Context) (string, error) {
+	delete(code.BuildFiles, "go.mod")
+	delete(code.BuildFiles, "go.sum")
+	_ = os.Remove(filepath.Join(dir, "go.mod"))
+	_ = os.Remove(filepath.Join(dir, "go.sum"))
+	code.BuildCmd = []string{
+		"go mod init example.com",
+		"go mod tidy",
+		"go build -o fn .",
+	}
+	for _, cmd := range code.BuildCmd {
+		if out, err := cc.runBuildCommands(ctx, dir, cmd); err != nil {
 			return out, err
 		}
 	}

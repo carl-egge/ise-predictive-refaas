@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -105,6 +106,13 @@ func compilePipeline(fileContent PipelineFile) (*Pipeline, error) {
 	pipelineMapping := make(map[string]ConversionTask)
 	uncompletedTasks := make([]ConversionTaskStub, 0)
 	for _, task := range fileContent.Tasks {
+		// MaxRetryCount is effectively the task's max number of *executions*;
+		// a zero value (field omitted in the config) would make the execute
+		// loop in executeTask skip the task entirely and silently run only
+		// its validation, so default it to a single execution.
+		if task.MaxRetryCount < 1 {
+			task.MaxRetryCount = 1
+		}
 		// taskParams is this task's Execute converter's config: pipeline-wide
 		// Options first, then this task's own TaskArgs override on top.
 		taskParams := make(map[string]interface{})
@@ -163,6 +171,18 @@ func compilePipeline(fileContent PipelineFile) (*Pipeline, error) {
 			} else {
 				remainingUncompletedTasks = append(remainingUncompletedTasks, task)
 			}
+		}
+		if len(remainingUncompletedTasks) == len(uncompletedTasks) {
+			// No task resolved in this pass, so none ever will: the remaining
+			// stubs reference unknown ids or form a cycle. Without this check
+			// the loop spins forever - and /reconfigure calls compilePipeline
+			// while holding the service's global lock, deadlocking the whole
+			// service on a single bad config body.
+			ids := make([]string, 0, len(remainingUncompletedTasks))
+			for _, t := range remainingUncompletedTasks {
+				ids = append(ids, t.ID)
+			}
+			return nil, fmt.Errorf("pipeline contains unresolvable task references (unknown or cyclic ids) in tasks: %s", strings.Join(ids, ", "))
 		}
 		uncompletedTasks = remainingUncompletedTasks
 	}

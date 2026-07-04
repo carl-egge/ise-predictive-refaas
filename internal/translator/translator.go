@@ -53,19 +53,31 @@ func ReaderFactory(name string) PackageReader {
 	return BasicLLMDeploymentReader{}
 }
 
+// failingConverter is returned by NewLLMConverter when the task configuration
+// is invalid. Converter factories cannot return errors, and killing the whole
+// process (log.Fatal) for one bad task config would take the service down
+// during /reconfigure - so the error surfaces when the task runs instead.
+type failingConverter struct{ err error }
+
+func (fc *failingConverter) Apply(*pipeline.Runner, *domain.ConversionRequest) error {
+	return fc.err
+}
+
 // NewLLMConverter builds an LLM-backed Converter from a task's merged params
 // (pipeline-wide options plus that task's own task_args).
 func NewLLMConverter(taskParams map[string]interface{}) pipeline.Converter {
 	prompt, ok := taskParams["prompt"].(string)
 	if !ok {
-		log.Fatal("prompt must be a string")
-		return nil
+		err := fmt.Errorf("invalid LLM task configuration: prompt must be a string")
+		log.Error(err)
+		return &failingConverter{err: err}
 	}
 
 	promptTmpl, err := template.New("prompt").Parse(prompt)
 	if err != nil {
-		log.Fatalf("Failed to parse prompt template: %s", err)
-		return nil
+		err = fmt.Errorf("invalid LLM task configuration: failed to parse prompt template: %w", err)
+		log.Error(err)
+		return &failingConverter{err: err}
 	}
 
 	var reader PackageReader
@@ -145,7 +157,13 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 	}
 
 	// client.LogResponse(srcFile, response, codePrompt.String())
-	llmconnector.LogResponse(cc.taskParams["model_name"].(string), codePrompt.String(), response)
+	// model_name is not set for every backend (Gemini uses GEMINI_MODEL), so
+	// don't panic the task over a missing chatlog label.
+	modelName, _ := cc.taskParams["model_name"].(string)
+	if modelName == "" {
+		modelName = "unknown-model"
+	}
+	llmconnector.LogResponse(modelName, codePrompt.String(), response)
 
 	if cc.mode == "metadata" {
 		return cc.applyMetadata(response, code)

@@ -30,25 +30,43 @@ func (gr BasicLLMDeploymentReader) MakeDeploymentFile(response string, original 
 	log.Debugf("found %d files", len(files))
 	dp := domain.DeploymentPackage{}
 
-	keys := slices.Collect(maps.Keys(files))
-	index := slices.IndexFunc(keys, func(x string) bool {
-		return strings.HasPrefix(x, "main")
-	})
-
-	if index == -1 {
-		return nil, fmt.Errorf("could not find main")
+	key, err := selectMainFile(files, original)
+	if err != nil {
+		return nil, err
 	}
-	key := keys[index]
-	if rootFile, ok := files[key]; ok {
-		dp.RootFile = rootFile
-		delete(files, key)
-	}
+	dp.RootFile = files[key]
+	delete(files, key)
 	if original != nil {
 		dp.TestFiles = original.TestFiles
 		dp.Suffix = original.Suffix
+		dp.Env = original.Env
 	}
 	dp.BuildFiles = files
 	return &dp, nil
+}
+
+// selectMainFile deterministically picks the response key holding the main
+// source file: an exact "main.<original suffix>" match wins, otherwise the
+// lexically first "main*" key with non-empty content. Go map iteration order
+// is randomized, so without sorting the picked file could differ between runs
+// - and a nullable/empty schema field (e.g. Gemini's fallback schema emits
+// main.go, go.mod and main.py) could silently replace the working source with
+// an empty string.
+func selectMainFile(files map[string]string, original *domain.DeploymentPackage) (string, error) {
+	if original != nil && original.Suffix != "" {
+		exact := "main." + original.Suffix
+		if content, ok := files[exact]; ok && content != "" {
+			return exact, nil
+		}
+	}
+	keys := slices.Collect(maps.Keys(files))
+	slices.Sort(keys)
+	for _, key := range keys {
+		if strings.HasPrefix(key, "main") && files[key] != "" {
+			return key, nil
+		}
+	}
+	return "", fmt.Errorf("could not find a non-empty main file in response (keys: %v)", keys)
 }
 
 // JsonCodeBlockReader unmarshals a JSON object mapping filenames to file
@@ -95,6 +113,9 @@ func (gr GoJsonOllamaReader) MakeDeploymentFile(response string, original *domai
 	}
 	dp.Suffix = "go"
 	dp.TestFiles = original.TestFiles
+	// carry the uploaded package's env vars forward - dropping them here
+	// silently detached test env config (e.g. AWS endpoints) from goTester.
+	dp.Env = original.Env
 
 	return &dp, nil
 }
