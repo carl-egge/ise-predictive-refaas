@@ -153,7 +153,10 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 		code.Metrics.AddMetric(metrics)
 	}
 	if err != nil {
-		return err
+		// Wrap as LLMError so executeTask can tell infrastructure failures
+		// (API outage, rate limit, truncation) from code defects and skip
+		// recovery prompts that cannot fix them.
+		return domain.NewLLMError(fmt.Errorf("LLM invocation failed: %w", err))
 	}
 
 	// client.LogResponse(srcFile, response, codePrompt.String())

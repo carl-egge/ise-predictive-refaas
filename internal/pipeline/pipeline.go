@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"time"
@@ -133,7 +134,14 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 			if task.RetryCount+1 < task.MaxRetryCount {
 				log.Errorf("task (%s) retrying...", task.ID)
 
-				if task.OnFailure != nil {
+				var llmErr domain.LLMError
+				if task.OnFailure != nil && errors.As(err, &llmErr) {
+					// An LLM/infrastructure failure (API outage, rate limit,
+					// truncation) has no code defect a recovery prompt could
+					// fix - don't spend recovery tokens on it, just retry.
+					log.Debugf("skipping recovery for task (%s): %v", task.ID, err)
+					time.Sleep(task.RetryDelay)
+				} else if task.OnFailure != nil {
 					req.AddError(err)
 					log.Debugf("attempting to recover task (%s) before retrying", task.ID)
 					err = p.executeTask(runner, req, task.OnFailure)
@@ -143,8 +151,9 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 					}
 					log.Debugf("Recovery failed.")
 					break
+				} else {
+					time.Sleep(task.RetryDelay)
 				}
-				time.Sleep(task.RetryDelay)
 			}
 			if req.WorkingPackage != nil && task.CanApply != nil {
 				if err := task.CanApply.Apply(runner, req); err != nil {

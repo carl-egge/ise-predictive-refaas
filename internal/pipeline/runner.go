@@ -170,6 +170,7 @@ func MakeCodeConverter(ops *ConverterOptions) (*Runner, error) {
 	if err != nil {
 		return nil, err
 	}
+	llmconnector.ConfigureThrottle(ops.Args)
 	var pipeline *Pipeline
 	if ops.CompiledPipeline != nil {
 		pipeline = ops.CompiledPipeline
@@ -231,6 +232,7 @@ func (cc *Runner) Reconfigure(ops *ConverterOptions) error {
 	if err != nil {
 		return err
 	}
+	llmconnector.ConfigureThrottle(ops.Args)
 
 	ops.startFloci()
 

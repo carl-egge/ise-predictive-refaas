@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -171,26 +172,43 @@ func (llm *OllamaInvocationClient) InvokeLLM(runner context.Context, buf bytes.B
 		Format:  format,
 	}
 
-	// Buffered: Generate may deliver a response via the callback and then
-	// still return an error (e.g. a mid-stream network failure); with an
-	// unbuffered channel the goroutine's second send would block forever
-	// after the single receive below, leaking the goroutine.
-	callback := make(chan api.GenerateResponse, 2)
-	deadline, cancel := context.WithDeadline(runner, time.Now().Add(time.Minute*5))
-	defer cancel()
-	go func() {
-		err := llm.client.Generate(deadline, &req, func(gr api.GenerateResponse) error {
-			callback <- gr
-			return nil
-		})
-		if err != nil {
-			callback <- api.GenerateResponse{
-				DoneReason: err.Error(),
+	// Generate honors the passed context, so it can be called synchronously;
+	// transient failures (connection errors, 429/5xx) are retried here with
+	// backoff instead of consuming a task-level retry or triggering an LLM
+	// recovery prompt.
+	var response api.GenerateResponse
+	var lastErr error
+	for attempt := 0; attempt < maxLLMAttempts; attempt++ {
+		if attempt > 0 {
+			log.Debugf("ollama: transient failure, retrying (%d/%d): %v", attempt+1, maxLLMAttempts, lastErr)
+			if err := sleepBackoff(runner, attempt-1); err != nil {
+				return "", metrics, err
 			}
 		}
-	}()
+		if err := waitForCallSlot(runner); err != nil {
+			return "", metrics, err
+		}
 
-	response := <-callback
+		deadline, cancel := context.WithDeadline(runner, time.Now().Add(time.Minute*5))
+		response = api.GenerateResponse{}
+		err := llm.client.Generate(deadline, &req, func(gr api.GenerateResponse) error {
+			response = gr
+			return nil
+		})
+		cancel()
+		if err != nil {
+			if transientOllamaError(err) {
+				lastErr = err
+				continue
+			}
+			return "", metrics, err
+		}
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
+		return "", metrics, fmt.Errorf("ollama request failed after %d attempts: %w", maxLLMAttempts, lastErr)
+	}
 
 	metrics.ConversionTime += response.TotalDuration
 	metrics.ConversionPromptTime += response.PromptEvalDuration
@@ -210,4 +228,20 @@ func (llm *OllamaInvocationClient) InvokeLLM(runner context.Context, buf bytes.B
 	}
 
 	return response.Response, metrics, nil
+}
+
+// transientOllamaError reports whether an Ollama SDK error is worth
+// retrying: rate limits / server errors, and connection-level failures.
+// Cancellations and per-attempt deadline hits are never retried (a second
+// five-minute timeout would just burn more wall clock).
+func transientOllamaError(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var statusErr api.StatusError
+	if errors.As(err, &statusErr) {
+		return transientHTTPStatus(statusErr.StatusCode)
+	}
+	// not an HTTP-level error from the API -> connection problem
+	return true
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
+	log "github.com/sirupsen/logrus"
 )
 
 // ChatAIInvocationClient calls the GWDG/AcademicCloud Chat AI service, which
@@ -173,12 +175,47 @@ func (cc *ChatAIInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffe
 		return "", metrics, fmt.Errorf("failed to encode chatai request: %w", err)
 	}
 
+	// Transient failures (connection errors, 429/5xx) are retried here with
+	// backoff instead of consuming a task-level retry or triggering an LLM
+	// recovery prompt.
+	var lastErr error
+	for attempt := 0; attempt < maxLLMAttempts; attempt++ {
+		if attempt > 0 {
+			log.Debugf("chatai: transient failure, retrying (%d/%d): %v", attempt+1, maxLLMAttempts, lastErr)
+			if err := sleepBackoff(ctx, attempt-1); err != nil {
+				return "", metrics, err
+			}
+		}
+		if err := waitForCallSlot(ctx); err != nil {
+			return "", metrics, err
+		}
+
+		content, m, retryable, err := cc.invokeOnce(ctx, payload)
+		metrics = m
+		if err == nil {
+			return content, metrics, nil
+		}
+		if !retryable {
+			return "", metrics, err
+		}
+		lastErr = err
+	}
+	return "", metrics, fmt.Errorf("chatai request failed after %d attempts: %w", maxLLMAttempts, lastErr)
+}
+
+// invokeOnce performs a single /chat/completions round trip. The returned
+// bool reports whether a failure is transient (worth retrying): connection
+// errors, rate limits and 5xx are; client errors, malformed bodies and
+// truncated/empty generations are not.
+func (cc *ChatAIInvocationClient) invokeOnce(ctx context.Context, payload []byte) (string, domain.Metrics, bool, error) {
+	var metrics domain.Metrics
+
 	deadline, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(deadline, http.MethodPost, cc.endpoint+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
-		return "", metrics, err
+		return "", metrics, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -187,13 +224,14 @@ func (cc *ChatAIInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffe
 	start := time.Now()
 	resp, err := cc.client.Do(req)
 	if err != nil {
-		return "", metrics, fmt.Errorf("failed to call chatai: %w", err)
+		retryable := !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+		return "", metrics, retryable, fmt.Errorf("failed to call chatai: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", metrics, fmt.Errorf("failed to read chatai response: %w", err)
+		return "", metrics, true, fmt.Errorf("failed to read chatai response: %w", err)
 	}
 
 	elapsed := time.Since(start)
@@ -201,31 +239,37 @@ func (cc *ChatAIInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffe
 	metrics.ConversionPromptTime = elapsed
 	metrics.ConversionEvalTime = elapsed
 
+	// Rate limits and server-side errors often carry non-JSON bodies, so
+	// classify them before attempting to decode.
+	if transientHTTPStatus(resp.StatusCode) {
+		return "", metrics, true, fmt.Errorf("chatai request failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
 	var parsed chatCompletionResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", metrics, fmt.Errorf("failed to decode chatai response (status %d): %s", resp.StatusCode, string(respBody))
+		return "", metrics, false, fmt.Errorf("failed to decode chatai response (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
 	if parsed.Error != nil {
-		return "", metrics, fmt.Errorf("chatai error (status %d): %s", resp.StatusCode, parsed.Error.Message)
+		return "", metrics, false, fmt.Errorf("chatai error (status %d): %s", resp.StatusCode, parsed.Error.Message)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", metrics, fmt.Errorf("chatai request failed with status %d: %s", resp.StatusCode, string(respBody))
+		return "", metrics, false, fmt.Errorf("chatai request failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	metrics.ConversionPromptTokenCount = parsed.Usage.PromptTokens
 	metrics.ConversionEvalTokenCount = parsed.Usage.CompletionTokens
 
 	if len(parsed.Choices) == 0 {
-		return "", metrics, fmt.Errorf("chatai response contained no choices")
+		return "", metrics, false, fmt.Errorf("chatai response contained no choices")
 	}
 	choice := parsed.Choices[0]
 	if choice.FinishReason == "length" {
-		return "", metrics, fmt.Errorf("chatai response truncated at max_tokens after %d completion tokens (finish_reason=length) - increase max_tokens for this task", parsed.Usage.CompletionTokens)
+		return "", metrics, false, fmt.Errorf("chatai response truncated at max_tokens after %d completion tokens (finish_reason=length) - increase max_tokens for this task", parsed.Usage.CompletionTokens)
 	}
 	if choice.Message.Content == "" {
-		return "", metrics, fmt.Errorf("chatai response contained no content (finish_reason=%s)", choice.FinishReason)
+		return "", metrics, false, fmt.Errorf("chatai response contained no content (finish_reason=%s)", choice.FinishReason)
 	}
 
-	return choice.Message.Content, metrics, nil
+	return choice.Message.Content, metrics, false, nil
 }

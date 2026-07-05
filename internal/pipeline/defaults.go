@@ -37,5 +37,8 @@ func envDefaults() map[string]any {
 		"ACADEMIC_CLOUD_ENDPOINT": setOrDefault("ACADEMIC_CLOUD_ENDPOINT", "https://chat-ai.academiccloud.de/v1"),
 		"ACADEMIC_CLOUD_API_KEY":  setOrDefault("ACADEMIC_CLOUD_API_KEY", "NOT+SET"),
 		"APP_PORT":                setOrDefault("APP_PORT", "8080"),
+		// Minimum delay between LLM calls across all jobs ("2s", "500ms", ...);
+		// "0s" disables the throttle. See llmconnector.ConfigureThrottle.
+		"LLM_CALL_INTERVAL": setOrDefault("LLM_CALL_INTERVAL", "0s"),
 	}
 }

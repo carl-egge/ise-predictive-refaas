@@ -59,10 +59,10 @@
 
 **F. Fault tolerance**
 - [ ] [F1] Per-test and per-build-command timeouts **(P0)**
-- [ ] [F2] Retry transient LLM API failures at the connector
+- [x] [F2] Retry transient LLM API failures at the connector
 - [x] [F3] Detect truncated LLM responses via finish/done reason
 - [ ] [F4] Upload handler must not block on a full queue
-- [ ] [F5] Configurable minimum delay between LLM calls (rate-limit throttle)
+- [x] [F5] Configurable minimum delay between LLM calls (rate-limit throttle)
 
 **G. Efficiency & token economy**
 - [ ] [G1] Build once, run the binary per test
@@ -520,13 +520,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Converts a pipeline-wide outage into a single failed test with actionable feedback and protects batch throughput.
 - Architecture impact: Local | Effort: S | Priority: **P0**
 
-### [ ] [F2] Retry transient LLM API failures at the connector, not the task level
+### [x] [F2] Retry transient LLM API failures at the connector, not the task level
 - Category: Fault Tolerance
 - Affected component(s): `internal/llmconnector/chatai.go`, `ollama.go`, `gemini.go`
 - Problem / current state: A 429/5xx/network blip is an ordinary task failure: it consumes a task retry, triggers the recovery LLM task (spending tokens on a "fix" for code with no new defect), and pollutes `LastError()` — the next prompt's `{{ .issue }}` becomes an HTTP error message.
 - Proposed change: Retry idempotent transient failures 2–3 times with exponential backoff inside `InvokeLLM`; classify the final error as `domain.LLMError` and have `executeTask` skip `OnFailure` for `LLMError`s.
 - Why: Separates infrastructure noise from code defects so retry/recovery budgets are only spent on actual translation problems.
 - Architecture impact: Local | Effort: M | Priority: P1
+- Status: **Implemented 2026-07-04.** All three connectors retry transient failures (connection errors, 429, 5xx — `transientHTTPStatus`) up to 3 attempts with exponential backoff (`sleepBackoff` in `resilience.go`, context-aware so `/stop` interrupts it); cancellations and deadline hits are never retried; 4xx/decode/truncation errors fail immediately. `LLMConverter.Apply` wraps any remaining `InvokeLLM` error as `domain.LLMError`, and `executeTask` now skips `OnFailure` for `LLMError`s — a recovery prompt cannot fix an outage. Side effect: Ollama's `InvokeLLM` now calls `Generate` synchronously (it honors the context), removing the goroutine/channel from [A13] entirely. Tests: retry/no-retry paths for ChatAI and Ollama via fake HTTP backends (`connector_local_test.go`), recovery-skip vs. recovery-run in `pipeline_test.go`.
 
 ### [x] [F3] Detect truncated LLM responses via finish/done reason
 - Category: Fault Tolerance
@@ -545,7 +546,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Keeps the service responsive under batch load so evaluation scripts fail visibly instead of hanging.
 - Architecture impact: Local | Effort: S | Priority: P2
 
-### [ ] [F5] Configurable minimum delay between LLM calls (global rate-limit throttle)
+### [x] [F5] Configurable minimum delay between LLM calls (global rate-limit throttle)
 - Category: Fault Tolerance / Efficiency
 - Affected component(s): `internal/llmconnector` (a shared throttle around every `InvokeLLM`), configured via `ConverterOptions.Args` / an env default (e.g. `LLM_CALL_INTERVAL`)
 - Problem / current state: Experiment pipelines multiply retries × recovery hops × complex input functions into rapid back-to-back LLM calls; provider rate limits (429s) then surface as ordinary task failures that burn retry budget and skew evaluation results. There is no pacing mechanism anywhere. ([F2] handles *reacting* to such failures; this item *prevents* most of them.)
@@ -554,6 +555,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local
 - Estimated effort: S
 - Priority: P1
+- Status: **Implemented 2026-07-04.** `llmconnector.ConfigureThrottle` reads `LLM_CALL_INTERVAL` (duration string like "2s"/"500ms", or a bare JSON number = seconds; "0s"/empty disables) from `ConverterOptions.Args`; the env default is registered in `defaults.go` and re-read on every Runner build / `/reconfigure` like all other Args. `waitForCallSlot` reserves slots under a mutex (correct even with future concurrent callers) and is called before **every** attempt in all three connectors — retries count as calls too — with context-aware waiting so `/stop` isn't blocked by the throttle. Tests in `connector_local_test.go` (interval spacing, cancellation, disable, numeric form).
 
 ---
 

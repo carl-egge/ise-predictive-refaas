@@ -3,12 +3,15 @@ package llmconnector
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
 	"github.com/google/generative-ai-go/genai"
+	log "github.com/sirupsen/logrus"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
@@ -100,7 +103,26 @@ func (g *GeminiInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer
 
 	var metrics domain.Metrics
 
-	resp, err := model.GenerateContent(ctx, genai.Text(buf.String()))
+	// Transient failures (connection errors, 429/5xx) are retried here with
+	// backoff instead of consuming a task-level retry or triggering an LLM
+	// recovery prompt.
+	var resp *genai.GenerateContentResponse
+	var err error
+	for attempt := 0; attempt < maxLLMAttempts; attempt++ {
+		if attempt > 0 {
+			log.Debugf("gemini: transient failure, retrying (%d/%d): %v", attempt+1, maxLLMAttempts, err)
+			if serr := sleepBackoff(ctx, attempt-1); serr != nil {
+				return "", metrics, serr
+			}
+		}
+		if werr := waitForCallSlot(ctx); werr != nil {
+			return "", metrics, werr
+		}
+		resp, err = model.GenerateContent(ctx, genai.Text(buf.String()))
+		if err == nil || !transientGeminiError(err) {
+			break
+		}
+	}
 	metrics.ConversionTime = time.Since(start)
 	metrics.ConversionPromptTime = time.Since(start)
 	metrics.ConversionEvalTime = time.Since(start)
@@ -148,6 +170,21 @@ func (g *GeminiInvocationClient) responseProperties() map[string]*genai.Schema {
 		props[key] = &genai.Schema{Type: genaiType(field.Type), Nullable: field.Nullable}
 	}
 	return props
+}
+
+// transientGeminiError reports whether a Gemini SDK error is worth
+// retrying: rate limits / server errors, and connection-level failures.
+// Cancellations and deadline hits are never retried.
+func transientGeminiError(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var gerr *googleapi.Error
+	if errors.As(err, &gerr) {
+		return transientHTTPStatus(gerr.Code)
+	}
+	// not an HTTP-level error from the API -> connection problem
+	return true
 }
 
 // requiredKeys returns the non-nullable field names of the task schema, or
