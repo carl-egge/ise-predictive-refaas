@@ -245,6 +245,69 @@ func TestAlignPromptRendersFailureEvidence(t *testing.T) {
 	}
 }
 
+// TestSortedTestFilesAndRenderExamples guards the C7 behavior: fixtures are
+// selected in deterministic lexical order (map iteration is randomized),
+// unparseable ones are skipped, and rendering respects the example limit.
+func TestSortedTestFilesAndRenderExamples(t *testing.T) {
+	req := &domain.ConversionRequest{SourcePackage: &domain.DeploymentPackage{
+		TestFiles: map[string]string{
+			"test/t3.json":  `{"input":"{\"n\":3}","output":"{\"r\":3}"}`,
+			"test/t1.json":  `{"input":"{\"n\":1}","output":"{\"r\":1}"}`,
+			"test/bad.json": `not json`,
+			"test/t2.json":  `{"input":"{\"n\":2}","output":"{\"r\":2}"}`,
+		},
+	}}
+
+	tests := sortedTestFiles(req)
+	if len(tests) != 3 {
+		t.Fatalf("sortedTestFiles = %d entries, want 3 (bad fixture skipped)", len(tests))
+	}
+	if tests[0].Name != "test/t1.json" || tests[2].Name != "test/t3.json" {
+		t.Errorf("fixtures not in lexical order: %s ... %s", tests[0].Name, tests[2].Name)
+	}
+
+	rendered := renderTestExamples(tests, 2)
+	if !strings.Contains(rendered, `{"n":1}`) || !strings.Contains(rendered, `{"n":2}`) {
+		t.Errorf("rendered examples missing cases:\n%s", rendered)
+	}
+	if strings.Contains(rendered, `{"n":3}`) {
+		t.Errorf("rendered examples should respect the limit of 2:\n%s", rendered)
+	}
+}
+
+// TestTranslatePromptRendersTests verifies the D1 template: with fixtures
+// present the prompt embeds the test cases, otherwise it falls back to the
+// single expected-output block.
+func TestTranslatePromptRendersTests(t *testing.T) {
+	conv, ok := NewCodeConverter(map[string]interface{}{"reader": "go"}).(*LLMConverter)
+	if !ok {
+		t.Fatal("NewCodeConverter did not return an LLMConverter (invalid template?)")
+	}
+
+	vars := map[string]interface{}{
+		"code":   "def handler(event, context): ...",
+		"tests":  "Test case 1:\n  Input: {\"n\":1}\n  Expected output: {\"r\":1}",
+		"output": "",
+	}
+	var buf bytes.Buffer
+	if err := conv.template.Execute(&buf, vars); err != nil {
+		t.Fatalf("template execute: %v", err)
+	}
+	if !strings.Contains(buf.String(), "must satisfy these test cases") || !strings.Contains(buf.String(), `{"n":1}`) {
+		t.Errorf("prompt should embed the test cases:\n%s", buf.String())
+	}
+
+	vars["tests"] = ""
+	vars["output"] = `{"statusCode": 200}`
+	buf.Reset()
+	if err := conv.template.Execute(&buf, vars); err != nil {
+		t.Fatalf("template execute (no tests): %v", err)
+	}
+	if !strings.Contains(buf.String(), "Expected output for one input") {
+		t.Errorf("prompt should fall back to the single-output block:\n%s", buf.String())
+	}
+}
+
 // TestCodeConverterDefaultsSingleFileSchema verifies the code-producing
 // factories request the closed single-main.go response schema unless the
 // pipeline config overrides output_keys.

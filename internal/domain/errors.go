@@ -10,6 +10,9 @@ const (
 	TestFailureError = "execution error"
 	// TestFailureFixture: the test fixture itself could not be parsed.
 	TestFailureFixture = "invalid test fixture"
+	// TestFailureTimeout: the program exceeded the per-test time limit
+	// (typically an infinite loop or a blocking call without a timeout).
+	TestFailureTimeout = "test timeout"
 )
 
 // TestFailure captures the evidence of one failing test case in the form a

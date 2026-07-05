@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,10 +20,17 @@ import (
 //go:embed test_handler.txt
 var goTestHandler string
 
+// defaultBuildTimeout bounds a single build command; `go mod tidy` may
+// download modules, so it is generous but no longer unbounded.
+const defaultBuildTimeout = 2 * time.Minute
+
 // GolangBuilder writes a test harness and attempts to build the working
 // package to ensure the converted code compiles.
 type GolangBuilder struct {
 	TestHandler string
+	// buildTimeout bounds each individual build command (task_args
+	// "build_timeout", default defaultBuildTimeout).
+	buildTimeout time.Duration
 }
 
 func init() {
@@ -30,12 +38,37 @@ func init() {
 }
 
 // NewGolangBuilder creates a GolangBuilder instance using an optional test
-// handler override from args.
+// handler override and build timeout from args.
 func NewGolangBuilder(args map[string]interface{}) pipeline.Converter {
-	if handler, ok := args["handler"].(string); ok {
-		return &GolangBuilder{TestHandler: handler}
+	builder := &GolangBuilder{
+		TestHandler:  goTestHandler,
+		buildTimeout: parseTimeout(args, "build_timeout", defaultBuildTimeout),
 	}
-	return &GolangBuilder{TestHandler: goTestHandler}
+	if handler, ok := args["handler"].(string); ok {
+		builder.TestHandler = handler
+	}
+	return builder
+}
+
+// parseTimeout reads a duration task param (a string like "30s"/"2m", or a
+// bare number of seconds from a JSON config), falling back to def.
+func parseTimeout(args map[string]interface{}, key string, def time.Duration) time.Duration {
+	switch v := args[key].(type) {
+	case string:
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+		log.Warnf("ignoring invalid %s %q", key, v)
+	case float64:
+		if v > 0 {
+			return time.Duration(v * float64(time.Second))
+		}
+	case int:
+		if v > 0 {
+			return time.Duration(v) * time.Second
+		}
+	}
+	return def
 }
 
 // Apply attempts to compile the request.WorkingPackage in a temporary directory
@@ -176,14 +209,30 @@ func (cc *GolangBuilder) prepareBuildFolder(dir string, code *domain.DeploymentP
 }
 
 func (cc *GolangBuilder) runBuildCommands(ctx context.Context, dir, buildCmd string) (string, error) {
+	timeout := cc.buildTimeout
+	if timeout <= 0 {
+		timeout = defaultBuildTimeout
+	}
+	// A per-command timeout: without it a hanging build (e.g. a module
+	// download against an unreachable proxy) stalls the single worker until
+	// someone manually stops the job.
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	cmds := strings.Split(buildCmd, " ")
 
-	cmd := exec.CommandContext(ctx, cmds[0], cmds[1:]...)
+	cmd := exec.CommandContext(cmdCtx, cmds[0], cmds[1:]...)
+	// force Run to return shortly after the timeout even if a child process
+	// keeps the output pipes open (see the equivalent note in validator.go)
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = dir
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stdout
 	if err := cmd.Run(); err != nil {
+		if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
+			return stdout.String(), fmt.Errorf("build command %q timed out after %s. %s", buildCmd, timeout, stdout.String())
+		}
 		return stdout.String(), fmt.Errorf("failed to build. %s \n\n %+v", stdout.String(), err)
 	}
 	return stdout.String(), nil

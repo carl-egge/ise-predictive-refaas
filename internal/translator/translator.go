@@ -2,16 +2,18 @@ package translator
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"iter"
 	"maps"
+	"slices"
 	"strings"
 	"text/template"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
 	"github.com/carl-egge/ise-predictive-refaas/internal/llmconnector"
 	"github.com/carl-egge/ise-predictive-refaas/internal/pipeline"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -30,6 +32,9 @@ type LLMConverter struct {
 	// response) or "metadata" (store the response in ConversionRequest.
 	// Metadata instead, leaving WorkingPackage untouched).
 	mode string
+	// maxExamples caps how many test cases {{ .tests }} renders
+	// (task_args "max_test_examples", default defaultTestExamples).
+	maxExamples int
 	// taskParams is this task's merged params (pipeline-wide options plus
 	// this task's own task_args, minus "prompt"/"reader"/"mode"). It is
 	// handed to the LLM client's Prepare on every Apply call — distinct
@@ -93,16 +98,32 @@ func NewLLMConverter(taskParams map[string]interface{}) pipeline.Converter {
 		mode = "package"
 	}
 
+	maxExamples := defaultTestExamples
+	switch v := taskParams["max_test_examples"].(type) {
+	case int:
+		if v > 0 {
+			maxExamples = v
+		}
+	case float64:
+		if v > 0 {
+			maxExamples = int(v)
+		}
+	}
+
+	// converter-level config keys must not leak into the connectors' API
+	// params (see Client.Prepare)
 	delete(taskParams, "prompt")
 	delete(taskParams, "reader")
 	delete(taskParams, "mode")
+	delete(taskParams, "max_test_examples")
 
 	log.Debugf("creating LLM converter with params: %v", taskParams)
 	return &LLMConverter{
-		template:   promptTmpl,
-		reader:     reader,
-		mode:       mode,
-		taskParams: taskParams,
+		template:    promptTmpl,
+		reader:      reader,
+		mode:        mode,
+		maxExamples: maxExamples,
+		taskParams:  taskParams,
 	}
 }
 
@@ -112,7 +133,11 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 	var codePrompt bytes.Buffer
 
 	codeBlock := codeBlockGenerator(code.WorkingPackage)
-	result := getFirstTestFile(code)
+	tests := sortedTestFiles(code)
+	first := &domain.TestFile{}
+	if len(tests) > 0 {
+		first = tests[0]
+	}
 
 	srcFile := ""
 	if code.SourcePackage != nil {
@@ -141,8 +166,9 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 	templateVars["issue"] = errStr
 	templateVars["failures"] = failuresBlock
 	templateVars["original"] = srcFile
-	templateVars["input"] = result.Input
-	templateVars["output"] = result.Output
+	templateVars["tests"] = renderTestExamples(tests, cc.maxExamples)
+	templateVars["input"] = first.Input
+	templateVars["output"] = first.Output
 
 	err := cc.template.Execute(&codePrompt, templateVars)
 	if err != nil {
@@ -158,6 +184,9 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 	response, metrics, err := client.InvokeLLM(runner, codePrompt)
 	if code.Metrics != nil {
 		code.Metrics.AddMetric(metrics)
+		// attribute the call's token spend to the currently running task,
+		// including failed calls (they cost tokens too)
+		code.Metrics.RecordLLMCall(code.CurrentTask, metrics)
 	}
 	if err != nil {
 		// Wrap as LLMError so executeTask can tell infrastructure failures
@@ -166,14 +195,22 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 		return domain.NewLLMError(fmt.Errorf("LLM invocation failed: %w", err))
 	}
 
-	// client.LogResponse(srcFile, response, codePrompt.String())
 	// model_name is not set for every backend (Gemini uses GEMINI_MODEL), so
 	// don't panic the task over a missing chatlog label.
 	modelName, _ := cc.taskParams["model_name"].(string)
 	if modelName == "" {
 		modelName = "unknown-model"
 	}
-	llmconnector.LogResponse(modelName, codePrompt.String(), response)
+	// Label chatlogs with request id and task id so a log file can be
+	// mapped back to its job and pipeline stage.
+	label := modelName
+	if code.CurrentTask != "" {
+		label = code.CurrentTask + "_" + label
+	}
+	if code.Id != uuid.Nil {
+		label = code.Id.String()[:8] + "_" + label
+	}
+	llmconnector.LogResponse(label, codePrompt.String(), response)
 
 	if cc.mode == "metadata" {
 		return cc.applyMetadata(response, code)
@@ -261,14 +298,60 @@ func renderTestFailures(failures []domain.TestFailure) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func getFirstTestFile(code *domain.ConversionRequest) *domain.TestFile {
-	next, stop := iter.Pull2(code.SourcePackage.GetTestFiles())
-	result, err, valid := next()
-	stop()
-	if err != nil || !valid {
-		result = &domain.TestFile{}
+// defaultTestExamples is how many test cases {{ .tests }} shows a prompt
+// unless the task sets max_test_examples.
+const defaultTestExamples = 3
+
+// sortedTestFiles returns the source package's parseable test fixtures in
+// lexical name order. Map iteration order is randomized in Go, so without
+// sorting the "first" test shown to a prompt could differ between runs and
+// retries, making experiments non-reproducible.
+func sortedTestFiles(code *domain.ConversionRequest) []*domain.TestFile {
+	if code.SourcePackage == nil {
+		return nil
 	}
-	return result
+	names := slices.Sorted(maps.Keys(code.SourcePackage.TestFiles))
+	out := make([]*domain.TestFile, 0, len(names))
+	for _, name := range names {
+		file := &domain.TestFile{}
+		if err := json.Unmarshal([]byte(code.SourcePackage.TestFiles[name]), file); err != nil {
+			log.Debugf("skipping unparseable test fixture %s for prompt context: %v", name, err)
+			continue
+		}
+		file.Name = name
+		out = append(out, file)
+	}
+	return out
+}
+
+// renderTestExamples formats up to limit test fixtures as input/expected
+// pairs for {{ .tests }}. Multiple cases matter: the error-path fixture is
+// often the only specification of the non-happy-path statusCode mapping.
+func renderTestExamples(tests []*domain.TestFile, limit int) string {
+	if limit <= 0 {
+		limit = defaultTestExamples
+	}
+	if len(tests) > limit {
+		tests = tests[:limit]
+	}
+	var b strings.Builder
+	for i, tf := range tests {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "Test case %d:\n  Input: %s\n  Expected output: %s\n", i+1, capForPrompt(tf.Input), capForPrompt(tf.Output))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// capForPrompt bounds a fixture field so a large payload fixture cannot
+// blow up the prompt.
+func capForPrompt(s string) string {
+	const maxLen = 2000
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "... [truncated]"
 }
 
 // testHandlerFilename is the build-file name internal/builder.GolangBuilder

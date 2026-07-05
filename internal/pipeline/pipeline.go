@@ -96,6 +96,9 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 		return err
 	}
 	log.Debugf("starting task (%s)", task.ID)
+	// Track which task is running so LLM calls and chatlogs can be
+	// attributed to their stage (see Metrics.PerTask).
+	req.CurrentTask = task.ID
 	if req.Metrics != nil {
 		req.Metrics.Tasks += 1
 	}
@@ -118,7 +121,11 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 			if req.WorkingPackage != nil {
 				workingPackage = req.WorkingPackage.Copy()
 			}
+			attemptStart := time.Now()
 			err = task.Execute.Apply(runner, req)
+			if req.Metrics != nil {
+				req.Metrics.RecordTaskAttempt(task.ID, time.Since(attemptStart), err == nil)
+			}
 			if err == nil {
 				log.Debugf("task (%s) executed successfully", task.ID)
 				break
@@ -145,6 +152,9 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 					req.AddError(err)
 					log.Debugf("attempting to recover task (%s) before retrying", task.ID)
 					err = p.executeTask(runner, req, task.OnFailure)
+					// the recovery task overwrote CurrentTask; restore it for
+					// this task's remaining attempts/validation
+					req.CurrentTask = task.ID
 					if err == nil {
 						log.Debugf("Retrying failed task (%s) after recovery", task.ID)
 						continue

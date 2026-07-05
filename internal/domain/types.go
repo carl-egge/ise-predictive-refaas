@@ -24,6 +24,11 @@ type ConversionRequest struct {
 	Metrics   *Metrics          `json:"metrics,omitempty"`
 	errs      []error
 	Completed bool `json:"completed,omitempty"`
+	// CurrentTask is the id of the pipeline task currently executing for
+	// this request; maintained by the pipeline and used to attribute LLM
+	// calls and chatlogs to their stage. Transient bookkeeping, not part of
+	// the JSON shape.
+	CurrentTask string `json:"-"`
 }
 
 // AddError appends err to the request error list when non-nil.
@@ -123,6 +128,55 @@ type Metrics struct {
 
 	TestCases map[string]bool `json:"test_cases"`
 	Issues    []string        `json:"issues"`
+
+	// PerTask breaks the run down by pipeline task id: attempts, failures,
+	// wall-clock time and LLM token spend per stage. This is what makes
+	// "which stage exhausts its retries" and "tokens per stage" answerable.
+	PerTask map[string]*TaskMetrics `json:"per_task,omitempty"`
+}
+
+// TaskMetrics aggregates one pipeline task's activity across a request.
+type TaskMetrics struct {
+	Executions   int           `json:"executions"`
+	Failures     int           `json:"failures"`
+	Duration     time.Duration `json:"duration"`
+	LLMCalls     int           `json:"llm_calls"`
+	PromptTokens int           `json:"prompt_tokens"`
+	EvalTokens   int           `json:"eval_tokens"`
+}
+
+// taskMetrics returns (creating if needed) the per-task entry for id.
+func (m *Metrics) taskMetrics(id string) *TaskMetrics {
+	if id == "" {
+		id = "untracked"
+	}
+	if m.PerTask == nil {
+		m.PerTask = make(map[string]*TaskMetrics)
+	}
+	tm, ok := m.PerTask[id]
+	if !ok {
+		tm = &TaskMetrics{}
+		m.PerTask[id] = tm
+	}
+	return tm
+}
+
+// RecordTaskAttempt counts one execution attempt of a pipeline task.
+func (m *Metrics) RecordTaskAttempt(id string, d time.Duration, success bool) {
+	tm := m.taskMetrics(id)
+	tm.Executions++
+	tm.Duration += d
+	if !success {
+		tm.Failures++
+	}
+}
+
+// RecordLLMCall attributes one LLM invocation's token usage to a task.
+func (m *Metrics) RecordLLMCall(id string, mm Metrics) {
+	tm := m.taskMetrics(id)
+	tm.LLMCalls++
+	tm.PromptTokens += mm.ConversionPromptTokenCount
+	tm.EvalTokens += mm.ConversionEvalTokenCount
 }
 
 // AddMetric aggregates another Metrics instance into this one.

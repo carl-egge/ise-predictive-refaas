@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -19,10 +20,18 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// defaultTestTimeout bounds a single test-case run of the translated
+// program. Generous enough for `go run`'s cached rebuild plus a network
+// call, but a translated infinite loop no longer hangs the single worker.
+const defaultTestTimeout = 30 * time.Second
+
 // GoPackageTester runs the package in the working directory and validates its
 // stdout against expected test outputs.
 type GoPackageTester struct {
 	validator ValidationStrategy
+	// testTimeout bounds each individual test-case run (task_args
+	// "test_timeout", default defaultTestTimeout).
+	testTimeout time.Duration
 }
 
 func init() {
@@ -30,7 +39,7 @@ func init() {
 }
 
 // NewGoPackageTester constructs a tester with an optional validation strategy
-// from args.
+// and per-test timeout from args.
 func NewGoPackageTester(args map[string]interface{}) pipeline.Converter {
 	var validator ValidationStrategy
 	if kind, ok := args["strategy"].(string); ok {
@@ -42,7 +51,8 @@ func NewGoPackageTester(args map[string]interface{}) pipeline.Converter {
 		}
 	}
 	return &GoPackageTester{
-		validator: validator,
+		validator:   validator,
+		testTimeout: parseTimeout(args, "test_timeout", defaultTestTimeout),
 	}
 }
 
@@ -115,7 +125,23 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 // failure evidence (input, expected vs. actual output, stderr) so repair
 // stages can see what actually went wrong instead of just a count.
 func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.TestFile) *domain.TestFailure {
-	cmd := exec.CommandContext(ctx, "go", "run", ".")
+	timeout := cc.testTimeout
+	if timeout <= 0 {
+		timeout = defaultTestTimeout
+	}
+	// Per-test timeout: a translated infinite loop (or a blocking call
+	// without its own timeout) must fail this one test with actionable
+	// evidence instead of hanging the single worker goroutine.
+	testCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(testCtx, "go", "run", ".")
+	// `go run` spawns the compiled binary as a child that inherits the
+	// stdout/stderr pipes; killing `go run` alone leaves those pipes open
+	// and cmd.Run() would keep blocking on them (i.e. a looping child would
+	// still hang the worker). WaitDelay forces Run to return shortly after
+	// the timeout even if the child never exits.
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), t.Env...)
 	in := strings.NewReader(t.Input)
@@ -126,13 +152,19 @@ func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.Tes
 	cmd.Stdout = out
 	cmd.Stderr = errBuf
 	if err := cmd.Run(); err != nil {
+		kind := domain.TestFailureError
+		stderrText := strings.TrimSpace(errBuf.String() + "\n" + err.Error())
+		if errors.Is(testCtx.Err(), context.DeadlineExceeded) {
+			kind = domain.TestFailureTimeout
+			stderrText = fmt.Sprintf("test run exceeded the %s time limit (likely an infinite loop or a blocking call without a timeout)", timeout)
+		}
 		return &domain.TestFailure{
 			Name:     t.Name,
-			Kind:     domain.TestFailureError,
+			Kind:     kind,
 			Input:    truncateForFeedback(t.Input),
 			Expected: truncateForFeedback(t.Output),
 			Actual:   truncateForFeedback(out.String()),
-			Stderr:   truncateForFeedback(strings.TrimSpace(errBuf.String() + "\n" + err.Error())),
+			Stderr:   truncateForFeedback(stderrText),
 		}
 	}
 	cleanOut := domain.MinimizeString(out.String())

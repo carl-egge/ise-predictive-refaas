@@ -26,7 +26,7 @@
 - [ ] [B2] Tests for orchestration and validation semantics
 - [ ] [B3] Error taxonomy unused; raw error strings muddle diagnostics
 - [ ] [B4] Job status conflates "in progress" and "unknown"
-- [ ] [B5] Observability: chatlog correlation + per-stage metrics **(P0)**
+- [x] [B5] Observability: chatlog correlation + per-stage metrics **(P0)**
 - [ ] [B6] Documentation drift on prompt wiring and Floci examples
 - [ ] [B7] `goTester` runs `go run .` in the service CWD when `WorkingDir` unset
 
@@ -37,14 +37,14 @@
 - [ ] [C4] Deterministic Go post-processing gate (package clause, parse, goimports)
 - [ ] [C5] Detect repair-loop stagnation and change strategy
 - [ ] [C6] Validate uploads and fixtures before spending LLM tokens
-- [ ] [C7] Deterministic and complete test context for prompts
+- [x] [C7] Deterministic and complete test context for prompts
 - [ ] [C8] Python feature pre-scan feeding the translate prompt
 - [ ] [C9] Support multi-file Python inputs (currently rejected at upload)
 - [ ] [C10] Unified fixture schema + per-job validation routing (goTester vs. flociTester)
 - [ ] [C11] Prevent AWS leakage: always resolve to the Floci harness
 
 **D. Prompts**
-- [ ] [D1] Convert prompt: fix broken few-shot; state the harness contract **(P0)**
+- [x] [D1] Convert prompt: fix broken few-shot; state the harness contract **(P0)**
 - [x] [D2] Align prompt: failure evidence + checkable equivalence **(P0)**
 - [ ] [D3] Fix-errors prompt: structured compiler errors, minimal-change directive
 - [ ] [D4] All prompts: remove "step by step" vs. "JSON only" contradiction
@@ -58,7 +58,7 @@
 - [x] [E5] Stop sending junk params to Ollama; set explicit `num_predict`
 
 **F. Fault tolerance**
-- [ ] [F1] Per-test and per-build-command timeouts **(P0)**
+- [x] [F1] Per-test and per-build-command timeouts **(P0)**
 - [x] [F2] Retry transient LLM API failures at the connector
 - [x] [F3] Detect truncated LLM responses via finish/done reason
 - [ ] [F4] Upload handler must not block on a full queue
@@ -292,7 +292,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Reliable polling avoids evaluation scripts abandoning or double-submitting long jobs.
 - Architecture impact: Local | Effort: S | Priority: P2
 
-### [ ] [B5] Observability gaps: chatlogs lack job/stage correlation; no per-stage metrics
+### [x] [B5] Observability gaps: chatlogs lack job/stage correlation; no per-stage metrics
 - Category: Code Quality
 - Affected component(s): `internal/llmconnector/client.go` (`LogResponse`), `internal/domain/types.go` (`Metrics`)
 - Problem / current state: Chatlogs cannot be mapped to jobs/stages; `Metrics` aggregates all LLM calls into single counters — "tokens per stage" and "which stage's retries exhaust" are unanswerable. Metrics are wiped on `/reconfigure`.
@@ -300,6 +300,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Instrumentation prerequisite for nearly every prioritization decision here and for the thesis's prediction goal.
 - Implementation notes (verified 2026-07-04): the GWDG ChatAI proxy reliably reports token usage via the standard OpenAI-compatible `usage` object in both non-streaming and streaming modes, and the totals match across modes. If streaming is ever added, `stream_options: {include_usage: true}` must be set explicitly (usage then arrives only in the final SSE chunk before `[DONE]`). `prompt_tokens_details` is always `null` on this backend — no cached/uncached breakdown — so cost tracking must rely on `prompt_tokens`/`completion_tokens`/`total_tokens` only.
 - Architecture impact: Local | Effort: M | Priority: **P0** (raised 2026-07-04 by maintainer — open question 1, the failure-mode distribution, stays unanswerable until this lands; also a prerequisite for the [G5] experiment)
+- Status: **Implemented 2026-07-04.** `Metrics.PerTask` (`map[taskID]*TaskMetrics`: executions, failures, duration, LLM calls, prompt/eval tokens) is populated by `executeTask` (`RecordTaskAttempt` per execution attempt) and `LLMConverter.Apply` (`RecordLLMCall`, including failed calls — they cost tokens too); `ConversionRequest.CurrentTask` carries the running task id (restored after recovery recursion). Chatlog filenames now embed `<8-char request id>_<task id>_<model>`. Appears in `GET /metrics` as `per_task`. **This unblocks open question 1** — run f1–f14 and read the per-task failure/token distribution. Not addressed (unchanged scope): metrics still wiped on `/reconfigure` (use `store-metrics.sh`), `TestTime`/`TestCases` still not merged in `AddMetric`. Tests: `TestExecuteTaskRecordsPerTaskMetrics`.
 
 ### [ ] [B6] Documentation drift on prompt wiring and Floci examples
 - Category: Code Quality
@@ -371,13 +372,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Fail-fast saves the full LLM/build budget of a doomed run and prevents vacuous "successes" from polluting success-rate numbers.
 - Architecture impact: Local | Effort: M | Priority: P1
 
-### [ ] [C7] Deterministic and complete test context for prompts
+### [x] [C7] Deterministic and complete test context for prompts
 - Category: Feature
 - Affected component(s): `internal/translator/translator.go` (`getFirstTestFile`)
 - Problem / current state: Prompts receive the input/output of *one* test file chosen by randomized map iteration — retries can see different examples (non-reproducible), and multi-case behavior (error branches) is invisible to the translator.
 - Proposed change: Sort test file names and expose up to k (configurable) input/output pairs as `{{ .tests }}`; keep `{{ .input }}`/`{{ .output }}` as the first sorted pair.
 - Why: Test cases in the prompt act as few-shot behavioral specs — showing the error-path fixture is the only way the model can learn the expected non-happy-path statusCode mapping (mechanism per Chen et al., arXiv:2304.05128); determinism makes experiments reproducible.
 - Architecture impact: Local | Effort: S | Priority: P1
+- Status: **Implemented 2026-07-04.** `getFirstTestFile` (random map order) replaced by `sortedTestFiles` (lexical order, unparseable fixtures skipped); `{{ .tests }}` renders up to `max_test_examples` (default 3, converter-level task param — stripped before connector `Prepare`) input/expected pairs, each field capped at 2000 chars; `{{ .input }}`/`{{ .output }}` remain as the first *sorted* pair for backward compatibility. Both translate prompts consume `{{ .tests }}` ([D1]). Tests: `TestSortedTestFilesAndRenderExamples`.
 
 ### [ ] [C8] Python feature pre-scan: deterministic source analysis feeding the translate prompt
 - Category: Feature
@@ -419,13 +421,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 
 ## D. Per-stage prompt improvements
 
-### [ ] [D1] Convert prompt: fix the few-shot that teaches broken response bodies; state the harness contract
+### [x] [D1] Convert prompt: fix the few-shot that teaches broken response bodies; state the harness contract
 - Category: Prompt-Convert
 - Affected component(s): `internal/translator/prompts/1-stage-translate-1.md` (the wired `coder` prompt) **and** `1-stage-translate-2.md` (same few-shot content; used by `coder2` in `scripts/summary-pipeline.json`, which will be evaluated against `default.json` — both prompts must get identical fixes or the comparison measures prompt drift instead of the summary stage)
 - Problem / current state: (1) The "Input Handling" few-shot returns `Body: fmt.Sprintf("%v", map[string]interface{}{...})`, which prints Go map syntax (`map[result:3]`), not JSON — but the fixtures (e.g. `f2`: `"body": "{\"result\": 3}"`) expect a JSON string body, so the example *teaches the model to fail the tests*. (2) The prompt never explains how the code is executed (stdin event → `handle` → response wrapped as `{"response": ...}`). (3) The output example shows `go 1.x`/`v1.x` placeholders a literal-minded small model will copy into an invalid `go.mod`. (4) `{{ .output }}` is shown without the `{{ .input }}` that produces it (variable exists but is unused). (5) No Python→Go semantic gotchas.
 - Proposed change: Replace the body few-shot with `json.Marshal` + `string(b)`; add an "Execution contract" section; pair input *and* expected output (use [C7]); drop the `go.mod` example per [C3]; add a compact gotcha list (`dict.get(k, default)` → explicit zero-value handling; `raise X` → non-2xx statusCode branch; f-strings → `fmt.Sprintf`; Python `True/None` casing vs JSON `true/null`; integer vs float division).
 - Why: Few-shot examples dominate output form — a demonstrably wrong exemplar is actively harmful (in-context learning imitates demonstrations; Brown et al., arXiv:2005.14165); stating the I/O contract turns "semantic equivalence" into a checkable output format.
 - Note: point (3) (`go.mod` placeholders) is already done by [C3] — both translate prompts now request a single `main.go` and state that dependencies are automatic. Remaining scope: the body few-shot fix, the execution contract, input/output pairing, and the gotcha list.
+- Status: **Implemented 2026-07-04** (together with [C7], both prompts identically). The body few-shot now uses `json.Marshal` + `string(body)` with an explicit "never `fmt.Sprintf(\"%v\", ...)`" warning; a new "Execution Contract" section states how the harness invokes and compares the code (raw event in, `StatusCode`/JSON-string `Body` compared against the Python return, mirror error branches as statusCodes); a "Python → Go pitfalls" list covers `dict.get` defaults, `True/None` vs `true/null`, f-string formatting, `/` vs `//` division, and `json.Marshal` bodies; and the input section embeds `{{ .tests }}` (input→expected pairs) with a fallback to the old single `{{ .output }}` block. Template rendering covered by `TestTranslatePromptRendersTests`.
 - Architecture impact: Local | Effort: S | Priority: **P0**
 
 ### [x] [D2] Align prompt: give it the failure evidence and a checkable definition of "equivalent"
@@ -514,13 +517,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 
 ## F. Fault tolerance
 
-### [ ] [F1] Per-test and per-build-command timeouts
+### [x] [F1] Per-test and per-build-command timeouts
 - Category: Fault Tolerance
 - Affected component(s): `internal/builder/validator.go` (`doTest`), `internal/builder/builder.go`
 - Problem / current state: Test/build subprocesses inherit only the job's cancellation context. A translated function with an infinite loop (or `f9`-style code blocking on a dead URL without an HTTP timeout) hangs the **single** worker goroutine indefinitely — every queued job stalls until someone manually calls `/stop`.
 - Proposed change: Wrap each `doTest` run in `context.WithTimeout` (default 30s, override via `task_args.test_timeout`) and each build command similarly (e.g. 120s). Report a timeout as a distinct failure kind so [C1] can feed it to repair.
 - Why: Converts a pipeline-wide outage into a single failed test with actionable feedback and protects batch throughput.
 - Architecture impact: Local | Effort: S | Priority: **P0**
+- Status: **Implemented 2026-07-04.** Per-test timeout (`task_args.test_timeout`, default 30s) and per-build-command timeout (`task_args.build_timeout`, default 2m), parsed via a shared `parseTimeout` (duration string or bare seconds). A timeout surfaces as the new `domain.TestFailureTimeout` kind with an explanatory Stderr, flowing into `{{ .failures }}` ([C1]). Crucial detail found during testing: killing `go run` doesn't close the pipes its compiled *child* holds, so `cmd.Run()` would keep blocking — `cmd.WaitDelay = 2s` forces Run to return anyway (both in `doTest` and `runBuildCommands`). Caveat: the orphaned child may keep running until it exits on its own (process-group kill would be Unix-specific; revisit if orphan CPU burn becomes a real problem). Tests: hanging-program timeout and hanging-build-command tests in `validator_test.go`.
 
 ### [x] [F2] Retry transient LLM API failures at the connector, not the task level
 - Category: Fault Tolerance

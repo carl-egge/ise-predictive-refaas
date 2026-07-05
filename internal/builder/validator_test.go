@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
 	"github.com/carl-egge/ise-predictive-refaas/internal/pipeline"
@@ -158,6 +159,54 @@ func main() {
 	}
 	if !strings.Contains(f.Stderr, "boom") {
 		t.Errorf("Stderr should carry the crash output, got: %q", f.Stderr)
+	}
+}
+
+// TestGoPackageTesterTimesOutHangingPrograms guards the F1 behavior: a
+// translated infinite loop must fail its test with a timeout kind instead
+// of hanging the single worker goroutine indefinitely.
+func TestGoPackageTesterTimesOutHangingPrograms(t *testing.T) {
+	dir := writeRunnablePackage(t, `package main
+
+import "time"
+
+func main() { time.Sleep(30 * time.Second) }
+`)
+	runner := pipeline.NewRunner(context.Background(), nil, nil)
+	runner.SetWorkingDir(dir)
+	tester := NewGoPackageTester(map[string]interface{}{"strategy": "json", "test_timeout": "3s"})
+
+	req := &domain.ConversionRequest{WorkingPackage: &domain.DeploymentPackage{
+		RootFile: "package main",
+		TestFiles: map[string]string{
+			"test/t1.json": `{"input":"{}","output":"{\"ok\":true}"}`,
+		},
+	}}
+
+	err := tester.Apply(runner, req)
+	var te domain.TestingError
+	if !errors.As(err, &te) || len(te.Failures()) != 1 {
+		t.Fatalf("expected a TestingError with one failure, got %v", err)
+	}
+	f := te.Failures()[0]
+	if f.Kind != domain.TestFailureTimeout {
+		t.Errorf("Kind = %q, want %q", f.Kind, domain.TestFailureTimeout)
+	}
+	if !strings.Contains(f.Stderr, "time limit") {
+		t.Errorf("Stderr should explain the timeout, got: %q", f.Stderr)
+	}
+}
+
+// TestRunBuildCommandsTimeout verifies a hanging build command is killed
+// with a descriptive error instead of blocking the worker.
+func TestRunBuildCommandsTimeout(t *testing.T) {
+	b := &GolangBuilder{buildTimeout: 300 * time.Millisecond}
+	_, err := b.runBuildCommands(context.Background(), t.TempDir(), "sleep 5")
+	if err == nil {
+		t.Fatal("expected a timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error should mention the timeout, got: %v", err)
 	}
 }
 
