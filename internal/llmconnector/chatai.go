@@ -148,14 +148,18 @@ func (cc *ChatAIInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffe
 	}
 	maps.Copy(body, cc.RequestParams)
 	if len(cc.OutputSchema) > 0 {
+		schemaObj := map[string]interface{}{
+			"type":       "object",
+			"properties": cc.OutputSchema.JSONSchemaProperties(),
+		}
+		if required := cc.OutputSchema.RequiredKeys(); len(required) > 0 {
+			schemaObj["required"] = required
+		}
 		body["response_format"] = map[string]interface{}{
 			"type": "json_schema",
 			"json_schema": map[string]interface{}{
-				"name": "task_output",
-				"schema": map[string]interface{}{
-					"type":       "object",
-					"properties": cc.OutputSchema.JSONSchemaProperties(),
-				},
+				"name":   "task_output",
+				"schema": schemaObj,
 			},
 		}
 	}

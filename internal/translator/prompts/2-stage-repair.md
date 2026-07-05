@@ -24,7 +24,7 @@ Remember the original function that we wanted to build came from the following p
 # Format Rules
 *Critical*:
 1. Let's work this out in a step by step way to be sure we have the right answer.
-2. Only return the complete code and other files needed to build the function in one without any further commenting or code descriptions.
+2. Only return the complete corrected Go code as a single `main.go` without any further commenting or code descriptions. Do not include `go.mod` or `go.sum` — dependencies are resolved automatically from your imports.
 3. Make absolutely sure that the handler function matches this interface `func handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyResponse, error)`.
 4. Important! Do not include a main function in the output.
 5. CRITICAL! Do not output anything else, no explanation or justification. Please provide a response in a structured JSON to make it easier to use return the code and other required files in the following format:
@@ -32,7 +32,6 @@ Remember the original function that we wanted to build came from the following p
 ### EXAMPLE JSON OUTPUT:
 ```json
 {
-  "main.go": "package main\n\nimport (\n\"github.com/aws/aws-lambda-go/events\"\n\"context\"\n\"encoding/json\"\n\"net/http\"\n)\n\nfunc handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyResponse, error) {\n\t//The code implementing the logic from the Python functions\n}",
-  "go.mod": "module github.com\/lambda\/function\r\n\r\ngo 1.23.5\r\n\r\nrequire github.com\/aws\/aws-lambda-go v1.24"
+  "main.go": "package main\n\nimport (\n\"github.com/aws/aws-lambda-go/events\"\n\"context\"\n\"encoding/json\"\n\"net/http\"\n)\n\nfunc handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyResponse, error) {\n\t//The code implementing the logic from the Python functions\n}"
 }
 ```

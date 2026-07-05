@@ -189,9 +189,14 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 // output (e.g. a summary's "intent") isn't a code artifact and shouldn't
 // replace the package being translated.
 func (cc *LLMConverter) applyMetadata(response string, code *domain.ConversionRequest) error {
-	values := JsonCodeBlockReader(response)
+	values, err := JsonCodeBlockReader(response)
+	if err != nil {
+		err = fmt.Errorf("metadata response could not be parsed as a flat JSON object: %w", err)
+		code.AddError(domain.NewLLMError(err))
+		return err
+	}
 	if len(values) == 0 {
-		err := fmt.Errorf("metadata response could not be parsed as a flat JSON object: %s", response)
+		err := fmt.Errorf("metadata response contained no usable string fields: %.200s", response)
 		code.AddError(domain.NewLLMError(err))
 		return err
 	}

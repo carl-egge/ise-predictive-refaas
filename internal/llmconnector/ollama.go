@@ -102,10 +102,14 @@ func (llm *OllamaInvocationClient) InvokeLLM(runner context.Context, buf bytes.B
 
 	format := llmOutputSchema
 	if len(llm.OutputSchema) > 0 {
-		if schema, err := json.Marshal(map[string]interface{}{
+		schemaObj := map[string]interface{}{
 			"type":       "object",
 			"properties": llm.OutputSchema.JSONSchemaProperties(),
-		}); err == nil {
+		}
+		if required := llm.OutputSchema.RequiredKeys(); len(required) > 0 {
+			schemaObj["required"] = required
+		}
+		if schema, err := json.Marshal(schemaObj); err == nil {
 			format = schema
 		}
 	}

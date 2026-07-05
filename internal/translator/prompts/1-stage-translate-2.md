@@ -8,7 +8,7 @@ Translate the following Python AWS Lambda function to Go. Preserve functionality
    - Do not include a `main` function.
    - Include all required imports (e.g., `"context"`, `"encoding/json"`, `"github.com/aws/aws-lambda-go/events"`).
 3. **Error Handling**: Explicitly handle errors (e.g., JSON parsing) and return appropriate HTTP status codes.
-4. **Output Format**: Return the code and required files (e.g., `go.mod`) as a JSON object with filenames as keys.
+4. **Output Format**: Return a JSON object with exactly one key, `main.go`, containing the complete Go source. Do not include `go.mod`, `go.sum`, or any other files — dependency resolution is handled automatically from your imports.
 
 ## Examples
 ### JSON Marshaling
@@ -57,10 +57,9 @@ Expected output:
 ```
 
 ## Output
-Return only the code and files in this JSON format:
+Return only the code in this JSON format:
 ```json
 {
-  "main.go": "package main\n\nimport (...)\n\nfunc handle(...) { ... }",
-  "go.mod": "module github.com/lambda/function\n\ngo 1.x\n\nrequire github.com/aws/aws-lambda-go v1.x"
+  "main.go": "package main\n\nimport (...)\n\nfunc handle(...) { ... }"
 }
 ```

@@ -93,6 +93,7 @@ func (g *GeminiInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer
 	model.ResponseSchema = &genai.Schema{
 		Type:       genai.TypeObject,
 		Properties: g.responseProperties(),
+		Required:   g.requiredKeys(),
 	}
 	temp := float32(0.1)
 	model.Temperature = &temp
@@ -144,6 +145,16 @@ func (g *GeminiInvocationClient) responseProperties() map[string]*genai.Schema {
 		props[key] = &genai.Schema{Type: genaiType(field.Type), Nullable: field.Nullable}
 	}
 	return props
+}
+
+// requiredKeys returns the non-nullable field names of the task schema, or
+// nil for the legacy fallback shape (whose fields are all nullable by
+// design, since a response carries either main.go or main.py, not both).
+func (g *GeminiInvocationClient) requiredKeys() []string {
+	if len(g.OutputSchema) == 0 {
+		return nil
+	}
+	return g.OutputSchema.RequiredKeys()
 }
 
 // genaiType maps an OutputField's JSON-schema-style type name to Gemini's

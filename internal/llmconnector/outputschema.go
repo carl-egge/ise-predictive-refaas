@@ -1,5 +1,7 @@
 package llmconnector
 
+import "sort"
+
 // OutputField describes one expected key in an LLM task's JSON response.
 // Unless overridden, a field defaults to a nullable string - the shape every
 // existing prompt/reader in this project already produces and expects.
@@ -43,6 +45,22 @@ func ParseOutputSchema(raw interface{}) OutputSchema {
 		schema[key] = field
 	}
 	return schema
+}
+
+// RequiredKeys returns the names of all non-nullable fields, sorted for
+// deterministic request payloads. Connectors emit these as the JSON Schema
+// "required" list so a model cannot satisfy the schema with an empty object
+// - important for the single-main.go code schemas, where "{}" would
+// otherwise be a valid (and observed) degenerate response.
+func (s OutputSchema) RequiredKeys() []string {
+	keys := make([]string, 0, len(s))
+	for key, field := range s {
+		if !field.Nullable {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // JSONSchemaProperties renders the schema as a JSON Schema "properties"

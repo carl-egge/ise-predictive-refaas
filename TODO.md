@@ -1,5 +1,78 @@
 # Audit & TODO List — Python→Go Serverless Translation Pipeline (ReFaaS)
 
+## Progress overview
+
+**A. Open bugs**
+- [x] [A1] Inverted pass/fail logic in `SimilarityValidation`
+- [x] [A2] `compareMap` returns early, skipping sibling keys
+- [x] [A3] Unchecked type assertions in the validator panic and abort the conversion
+- [x] [A4] Broken `go.mod` recovery in `GolangBuilder.doBuild`
+- [x] [A5] Uploaded/per-test environment variables never reach test execution
+- [x] [A6] `UndeterministicResults` JSON tag is semantically inverted
+- [x] [A7] `compilePipeline` loops forever on unknown or cyclic task references
+- [x] [A8] `/reconfigure` races against an in-flight conversion
+- [x] [A9] `pollHandler` mutates the results map under a read lock
+- [x] [A10] `log.Fatal` in library code kills the whole service on config mistakes
+- [x] [A11] Tasks with omitted `maxRetryCount` silently never execute
+- [x] [A12] `LogResponse` panics when `model_name` is absent
+- [x] [A13] Ollama connector goroutine leak on mid-stream errors
+- [x] [A14] Gemini connector panics on safety-blocked/empty responses
+- [x] [A15] `BasicLLMDeploymentReader` nondeterministic "main" pick / empty content
+- [x] [A16] `Metrics.AddMetric` clobbers `StartTime` to the zero value
+- [x] [A17] Zip ingestion: last-`.py`-wins, macOS junk entries, CRLF `.env` parsing
+
+**B. Software quality**
+- [ ] [B1] Unify the two output-comparison implementations (+ type-shape-only mode)
+- [ ] [B2] Tests for orchestration and validation semantics
+- [ ] [B3] Error taxonomy unused; raw error strings muddle diagnostics
+- [ ] [B4] Job status conflates "in progress" and "unknown"
+- [ ] [B5] Observability: chatlog correlation + per-stage metrics **(P0)**
+- [ ] [B6] Documentation drift on prompt wiring and Floci examples
+- [ ] [B7] `goTester` runs `go run .` in the service CWD when `WorkingDir` unset
+
+**C. Pipeline features**
+- [ ] [C1] Structured per-test failure evidence into the repair/align loop **(P0)**
+- [ ] [C2] Fix the dev pipeline's test-failure dead-end (keep it short)
+- [x] [C3] Deterministic `go.mod`; LLM returns only `main.go`
+- [ ] [C4] Deterministic Go post-processing gate (package clause, parse, goimports)
+- [ ] [C5] Detect repair-loop stagnation and change strategy
+- [ ] [C6] Validate uploads and fixtures before spending LLM tokens
+- [ ] [C7] Deterministic and complete test context for prompts
+- [ ] [C8] Python feature pre-scan feeding the translate prompt
+- [ ] [C9] Support multi-file Python inputs (currently rejected at upload)
+- [ ] [C10] Unified fixture schema + per-job validation routing (goTester vs. flociTester)
+- [ ] [C11] Prevent AWS leakage: always resolve to the Floci harness
+
+**D. Prompts**
+- [ ] [D1] Convert prompt: fix broken few-shot; state the harness contract **(P0)**
+- [ ] [D2] Align prompt: failure evidence + checkable equivalence **(P0)**
+- [ ] [D3] Fix-errors prompt: structured compiler errors, minimal-change directive
+- [ ] [D4] All prompts: remove "step by step" vs. "JSON only" contradiction
+- [ ] [D5] Document stage: scope to translation-relevant facts (or merge with summarize)
+
+**E. Small-model robustness**
+- [x] [E1] Per-task output schemas for code-producing stages
+- [x] [E2] Deterministic JSON extraction fallback before failing a parse
+- [ ] [E3] Vary sampling on resample-style retries
+- [ ] [E4] Truncate feedback to the first compiler errors
+- [ ] [E5] Stop sending junk params to Ollama; set explicit `num_predict`
+
+**F. Fault tolerance**
+- [ ] [F1] Per-test and per-build-command timeouts **(P0)**
+- [ ] [F2] Retry transient LLM API failures at the connector
+- [ ] [F3] Detect truncated LLM responses via finish/done reason
+- [ ] [F4] Upload handler must not block on a full queue
+- [ ] [F5] Configurable minimum delay between LLM calls (rate-limit throttle)
+
+**G. Efficiency & token economy**
+- [ ] [G1] Build once, run the binary per test
+- [ ] [G2] Right-size the repair/align prompt payloads
+- [ ] [G3] Make the cleaner stage skippable and measure its contribution
+- [ ] [G4] Reuse the Go module cache across builds and jobs
+- [ ] [G5] Experiment: continued LLM conversation across stages
+
+---
+
 > Produced by a full read of the orchestration (`internal/pipeline`), all prompt templates and
 > their embed wiring, the build/test harness (`internal/builder`), the LLM connectors, the
 > service layer, the Floci stage, the paper fixture set (`examples/paper/f1–f14`), and the
@@ -162,7 +235,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Affected component(s): `internal/translator/readers.go`
 - Problem / current state: It selects the first map key with prefix `main` in randomized map order. With Gemini's fallback schema (which allows `main.go`, `go.mod`, *and* `main.py`, all nullable), the `cleaner` stage can pick an empty `main.go` over the populated `main.py`, silently replacing the Python source with an empty root file; there is no check that `RootFile` is non-empty. Leftover chatter keys become `BuildFiles` and ship in the output zip.
 - Proposed change: Deterministic selection (sorted keys; prefer exact `main.<original suffix>`; only non-empty content); reject responses with no usable main file. (Dropping non-file-looking keys from `BuildFiles` deferred — behavior question.)
-- Status: **Resolved** — deterministic, non-empty selection implemented (`selectMainFile` in `readers.go`). The remaining leftover-key pruning was deliberately folded into [C3] (maintainer decision, 2026-07-04): once the response schema is a single `main.go`, separate pruning is obsolete and the reader drops unexpected keys as part of that change.
+- Status: **Resolved** — deterministic, non-empty selection implemented (`selectMainFile` in `readers.go`). The remaining leftover-key pruning was deliberately folded into [C3] (maintainer decision, 2026-07-04): once the response schema is a single `main.go`, separate pruning is obsolete and the reader drops unexpected keys as part of that change. **Update:** [C3] is implemented — the pruning is now in place.
 - Why: An empty/garbage working package poisons every later stage while the pipeline still reports stage success.
 - Architecture impact: Local | Effort: S | Priority: P2
 
@@ -264,13 +337,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Retrying identical code cannot change the outcome; in a dev pipeline the dead-end wastes build/test cycles and makes quick functional tests report misleadingly slow/void failures.
 - Architecture impact: Local | Effort: S | Priority: P1 (downgraded from P0 — the canonical evaluation pipeline `default.json` does not have this dead-end)
 
-### [ ] [C3] Always regenerate `go.mod` deterministically; never trust the LLM's
+### [x] [C3] Always regenerate `go.mod` deterministically; never trust the LLM's
 - Category: Feature
 - Affected component(s): `internal/translator/readers.go` (`GoJsonOllamaReader`), `internal/builder/builder.go`, prompts showing `go.mod` examples
 - Problem / current state: The LLM-authored `go.mod` is a persistent, observed failure class: `unknown directive` (metrics 2026-07-01, four identical failures); the wired prompt's example teaches `go 1.x` / `v1.x` placeholders plus `v1.24` — an invalid version (Go modules require full semver). `internal/floci/packager.go` already proves the deterministic alternative: discard `go.mod`/`go.sum`, run `go mod init` + `go mod tidy` unconditionally.
 - Proposed change (maintainer-confirmed direction, 2026-07-04 — implement all three parts together): (1) **programmatic `go.mod` generation**: in `GoJsonOllamaReader.MakeDeploymentFile` drop any `go.mod`/`go.sum` keys from the LLM response and always set `BuildCmd = ["go mod init example.com", "go mod tidy", "go build -o fn ."]` — dependencies are handled by the pipeline, never by the model; (2) **response schema**: change the translate (and fix/realign) stages' `output_keys` so the LLM ideally returns exactly *one* Go file (`main.go`) — this also enables the fixed, closed schema shape that [E1] needs, and the reader should then drop/ignore any unexpected extra response keys (absorbs the leftover-key pruning deferred from [A15], maintainer decision 2026-07-04); (3) **prompts**: update the translate/repair prompts ([D1]/[D3]) to remove all `go.mod` examples and state explicitly that only the Go source is expected and dependency resolution is automatic. Supersedes [A4]'s fallback.
 - Why: Eliminates an entire observed failure class with zero LLM involvement — `go mod tidy` derives requirements from imports authoritatively per the Go modules reference (go.dev/ref/mod) — and shrinks the model's job to the one artifact it is actually good at producing.
 - Architecture impact: Local | Effort: S–M | Priority: **P0** (explicitly re-confirmed as highly desirable by maintainer, 2026-07-04)
+- Status: **Implemented 2026-07-04.** (1) `GoJsonOllamaReader` now discards `go.mod`/`go.sum` and every non-`.go` response key (absorbing [A15]'s pruning) and always sets `BuildCmd = ["go mod init example.com", "go mod tidy", "go build -o fn ."]`; additional non-empty `.go` sources are kept. (2) All LLM stage factories default to closed single-file `output_keys` (`main.go` for coder/coder2/fixer/realign, `main.py` for cleaner; still overridable per task), and all three connectors now emit the JSON Schema `required` list for non-nullable fields (`OutputSchema.RequiredKeys`) — so an empty `{}` no longer satisfies the schema. (3) All four active prompts (`1-stage-translate-1/-2.md`, `2-stage-repair.md`, `3-stage-align.md`) no longer show `go.mod` examples and state that dependencies are resolved automatically from imports. [A4]'s `isGoModFailure` build fallback is retained as defense-in-depth. Regression tests: `readers_test.go` (reader pruning + BuildCmd + factory schema defaults), `outputschema_test.go` (required keys). Note: `builder.go`'s injected `test_handler.go` still overwrites any same-named LLM key, unchanged.
 
 ### [ ] [C4] Deterministic Go post-processing gate between `coder` and `goBuilder`
 - Category: Feature
@@ -350,6 +424,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Problem / current state: (1) The "Input Handling" few-shot returns `Body: fmt.Sprintf("%v", map[string]interface{}{...})`, which prints Go map syntax (`map[result:3]`), not JSON — but the fixtures (e.g. `f2`: `"body": "{\"result\": 3}"`) expect a JSON string body, so the example *teaches the model to fail the tests*. (2) The prompt never explains how the code is executed (stdin event → `handle` → response wrapped as `{"response": ...}`). (3) The output example shows `go 1.x`/`v1.x` placeholders a literal-minded small model will copy into an invalid `go.mod`. (4) `{{ .output }}` is shown without the `{{ .input }}` that produces it (variable exists but is unused). (5) No Python→Go semantic gotchas.
 - Proposed change: Replace the body few-shot with `json.Marshal` + `string(b)`; add an "Execution contract" section; pair input *and* expected output (use [C7]); drop the `go.mod` example per [C3]; add a compact gotcha list (`dict.get(k, default)` → explicit zero-value handling; `raise X` → non-2xx statusCode branch; f-strings → `fmt.Sprintf`; Python `True/None` casing vs JSON `true/null`; integer vs float division).
 - Why: Few-shot examples dominate output form — a demonstrably wrong exemplar is actively harmful (in-context learning imitates demonstrations; Brown et al., arXiv:2005.14165); stating the I/O contract turns "semantic equivalence" into a checkable output format.
+- Note: point (3) (`go.mod` placeholders) is already done by [C3] — both translate prompts now request a single `main.go` and state that dependencies are automatic. Remaining scope: the body few-shot fix, the execution contract, input/output pairing, and the gotcha list.
 - Architecture impact: Local | Effort: S | Priority: **P0**
 
 ### [ ] [D2] Align prompt: give it the failure evidence and a checkable definition of "equivalent"
@@ -366,6 +441,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Problem / current state: `{{ .issue }}` is the raw combined stdout/stderr wrapped in `failed to build. … exit status 1`. The prompt says both "you only return the code for the handler function" and "return the complete code and other files" — a contradiction a small model resolves unpredictably. Its example output embeds a `go.mod` with literal `\r\n` escapes and the invalid `v1.24` version. Nothing tells the model to preserve working parts.
 - Proposed change: Pre-parse Go compiler output (`file:line:col: message`) into a numbered list; delete the "only the handler function" sentence; add "change only what is necessary to fix the listed errors"; remove the `go.mod` example per [C3].
 - Why: Precise, localized error context is the input format compiler-repair works best with — the Go toolchain already emits machine-parseable positions; removing the format contradiction eliminates a coin-flip in every fixer call.
+- Note: the broken `go.mod` example and the "other files" wording are already fixed by [C3] (single-`main.go` output stated in the prompt). Remaining scope: structured compiler errors and the minimal-change directive.
 - Architecture impact: Local | Effort: S–M | Priority: P1
 
 ### [ ] [D4] All prompts: remove the "step by step" vs. "output nothing but JSON" contradiction
@@ -388,7 +464,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 
 ## E. Small-model robustness
 
-### [ ] [E1] Enforce per-task output schemas for the code-producing stages
+### [x] [E1] Enforce per-task output schemas for the code-producing stages
 - Category: Small-Model Robustness
 - Affected component(s): `internal/translator/prompts.go` (factories), `internal/llmconnector/schema.go`, `outputschema.go`
 - Problem / current state: Only `summary` sets `output_keys`. `coder`/`fixer`/`realign` fall back to the generic any-object schema on Ollama (an empty `{}` satisfies it), a `main.go/go.mod/main.py` triple on Gemini (invites a stray `main.py`), and schema-less `json_object` on ChatAI.
@@ -396,14 +472,16 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - API findings (verified 2026-07-04 via experiments, see `scripts/chatai-check-json-schema.sh`): the GWDG proxy passes `response_format: json_schema` straight through to the model's backend (vLLM guided decoding). Enforcement is real when it works but is a **per-model capability**: weaker models (Llama-3.1-8B) fail to compile a grammar for unbounded `additionalProperties` and **silently fall back to unconstrained text** — the proxy never rejects an unsupported schema with an error. Fixed-shape schemas worked on all models tested. Consequences: (a) use closed schemas, (b) run the check script against each evaluation model before an experiment, (c) never trust enforcement alone — Go-layer validation ([E2]) is mandatory.
 - Why: Constrained decoding moves format compliance from the model's competence to the sampler — the highest-value trade for a ~30B model; both Ollama's and OpenAI's structured-output docs report large reductions in format errors vs. prompt-only instructions, and the 2026-07-04 experiments confirm closed shapes are the reliable subset on this backend.
 - Architecture impact: Local | Effort: S | Priority: P1
+- Status: **Implemented as part of [C3]** (2026-07-04): closed single-file `output_keys` defaults on every LLM stage factory; `required` emitted by Ollama/ChatAI/Gemini for non-nullable fields; Gemini's `main.go/go.mod/main.py` fallback triple is now only reachable via the raw `llmTask` factory. What remains is **operational**: run `scripts/chatai-check-json-schema.sh` against each evaluation model before an experiment, since enforcement stays per-model ([E2] is the code-side safety net).
 
-### [ ] [E2] Deterministic JSON extraction fallback before failing a parse
+### [x] [E2] Deterministic JSON extraction fallback before failing a parse
 - Category: Small-Model Robustness
 - Affected component(s): `internal/translator/readers.go` (`JsonCodeBlockReader` — despite the name, it does *not* strip code fences)
 - Problem / current state: Any leading prose, a ```` ```json ```` fence, or trailing commentary makes `json.Unmarshal` fail; the reader logs and returns nil, surfacing as the misleading "could not find main". ChatAI's `json_object` mode makes this a live path.
 - Proposed change: On unmarshal failure, deterministically retry: strip markdown fences, extract the first balanced `{…}` region, re-parse; only then fail — with an error saying "response was not a JSON object".
 - Why: Recovers, at zero token cost, the most common small-model formatting slip instead of burning a full LLM retry.
 - Architecture impact: Local | Effort: S | Priority: **P0** (raised 2026-07-04: API experiments confirmed the ChatAI backend **silently** drops schema enforcement on models that can't compile the grammar — see [E1] — so the Go layer is the only reliable line of defense against unconstrained text responses)
+- Status: **Implemented 2026-07-04.** `JsonCodeBlockReader` now returns `(map[string]string, error)` and tries three extractions in order: the trimmed raw response, the contents of the first markdown code fence (language tag stripped), and the first balanced top-level `{...}` region (string/escape-aware, so braces inside embedded code don't break matching). Non-string fields in an otherwise valid object are skipped instead of failing the response. On total failure the error now says "LLM response is not a JSON object …" (truncated echo) instead of the old nil map that surfaced downstream as the misleading "could not find main". All three call sites (both package readers + metadata mode) propagate the new error. Regression tests in `readers_test.go` cover fenced/prose-wrapped/escaped-brace responses, non-string skipping, truncated JSON, and plain garbage. Note: a *truncated* response still fails (no balanced object) — detecting that specifically via finish/done reason remains [F3].
 
 ### [ ] [E3] Vary sampling on resample-style retries
 - Category: Small-Model Robustness
