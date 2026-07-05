@@ -14,6 +14,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// defaultMaxOutputTokens caps generation length when a task doesn't set its
+// own max_tokens (ChatAI) / num_predict (Ollama). An explicit cap matters:
+// it bounds runaway generations, and hitting it surfaces as a detectable
+// "length" finish/done reason instead of a silently truncated response.
+const defaultMaxOutputTokens = 2 << 14
+
 // Client abstracts calls to an LLM provider.
 type Client interface {
 	ClientName() string

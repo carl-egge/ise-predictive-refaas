@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
 	"github.com/ollama/ollama/api"
+	log "github.com/sirupsen/logrus"
 )
 
 // OllamaInvocationClient calls the Ollama API and adapts responses to the
@@ -61,8 +61,48 @@ func (llm *OllamaInvocationClient) Configure(connectorArgs map[string]interface{
 	return nil
 }
 
+// ollamaOptionKeys are the model options Ollama's /api/generate actually
+// understands (the practical subset of the Modelfile parameters used here).
+// Everything else in the merged task params is either pipeline-level config
+// ("strategy", "output_keys") or another backend's vocabulary ("max_tokens",
+// "response_format") and must not be forwarded: Ollama only warns and
+// ignores unknown option keys, which meant no output-token limit was ever
+// actually applied.
+var ollamaOptionKeys = map[string]bool{
+	"temperature":       true,
+	"top_p":             true,
+	"top_k":             true,
+	"min_p":             true,
+	"num_ctx":           true,
+	"num_predict":       true,
+	"seed":              true,
+	"stop":              true,
+	"repeat_penalty":    true,
+	"repeat_last_n":     true,
+	"num_keep":          true,
+	"presence_penalty":  true,
+	"frequency_penalty": true,
+	"mirostat":          true,
+	"mirostat_eta":      true,
+	"mirostat_tau":      true,
+}
+
+// ollamaConsumedKeys are task params this connector consumes itself (or
+// deliberately translates) - they are expected in taskParams and not worth a
+// "dropping" debug log, unlike genuinely unknown keys.
+var ollamaConsumedKeys = map[string]bool{
+	"model_name":      true,
+	"output_keys":     true,
+	"max_tokens":      true,
+	"strategy":        true,
+	"response_format": true,
+}
+
 // Prepare sets model-specific runtime options from the merged per-task
-// params (called fresh before every InvokeLLM, including retries).
+// params (called fresh before every InvokeLLM, including retries). The
+// filtering has to live here rather than in Configure: Configure only sees
+// the connector-level Args, while these params are per task and can differ
+// between stages (per-stage model/temperature overrides).
 func (llm *OllamaInvocationClient) Prepare(taskParams map[string]interface{}) error {
 	// Return an error instead of log.Fatal: a missing model_name in one task
 	// config must fail that task, not os.Exit the whole service.
@@ -71,19 +111,27 @@ func (llm *OllamaInvocationClient) Prepare(taskParams map[string]interface{}) er
 		return fmt.Errorf("model_name must be a string")
 	}
 
+	// Allowlist: forward only options Ollama understands.
 	nargs := make(map[string]interface{})
-	maps.Copy(nargs, taskParams)
-
-	delete(nargs, "model_name")
-	delete(nargs, "output_keys")
-
-	defaultParams := map[string]interface{}{
-		"max_tokens": 2 << 14,
-		"response_format": map[string]interface{}{
-			"type": "json_object",
-		},
+	for key, value := range taskParams {
+		if ollamaOptionKeys[key] {
+			nargs[key] = value
+			continue
+		}
+		if !ollamaConsumedKeys[key] {
+			log.Debugf("ollama: dropping task param %q (not a known Ollama option)", key)
+		}
 	}
-	maps.Insert(nargs, maps.All(defaultParams))
+	// Map the OpenAI-style max_tokens onto Ollama's num_predict and always
+	// set an explicit output budget, so hitting the limit surfaces as
+	// done_reason "length" (see InvokeLLM) instead of silent truncation.
+	if _, ok := nargs["num_predict"]; !ok {
+		if maxTokens, ok := taskParams["max_tokens"]; ok {
+			nargs["num_predict"] = maxTokens
+		} else {
+			nargs["num_predict"] = defaultMaxOutputTokens
+		}
+	}
 
 	llm.ModelName = model
 	llm.RequestParams = nargs
@@ -152,6 +200,13 @@ func (llm *OllamaInvocationClient) InvokeLLM(runner context.Context, buf bytes.B
 
 	if response.Response == "" {
 		return "", metrics, fmt.Errorf("response is empty - %s", response.DoneReason)
+	}
+	// A "length" done reason means the model hit num_predict mid-generation:
+	// the payload is cut off (usually unparseable JSON). Fail with a
+	// self-describing error instead of letting the reader report a
+	// misleading parse failure.
+	if response.DoneReason == "length" {
+		return "", metrics, fmt.Errorf("response truncated at the output-token limit after %d tokens (done_reason=length) - increase max_tokens/num_predict for this task", response.EvalCount)
 	}
 
 	return response.Response, metrics, nil

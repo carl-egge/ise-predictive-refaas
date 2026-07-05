@@ -55,12 +55,12 @@
 - [x] [E2] Deterministic JSON extraction fallback before failing a parse
 - [ ] [E3] Vary sampling on resample-style retries
 - [ ] [E4] Truncate feedback to the first compiler errors
-- [ ] [E5] Stop sending junk params to Ollama; set explicit `num_predict`
+- [x] [E5] Stop sending junk params to Ollama; set explicit `num_predict`
 
 **F. Fault tolerance**
 - [ ] [F1] Per-test and per-build-command timeouts **(P0)**
 - [ ] [F2] Retry transient LLM API failures at the connector
-- [ ] [F3] Detect truncated LLM responses via finish/done reason
+- [x] [F3] Detect truncated LLM responses via finish/done reason
 - [ ] [F4] Upload handler must not block on a full queue
 - [ ] [F5] Configurable minimum delay between LLM calls (rate-limit throttle)
 
@@ -499,12 +499,13 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Focusing a limited-capacity model on the root error mirrors how cascading diagnostics are meant to be consumed and shrinks the prompt.
 - Architecture impact: Local | Effort: S | Priority: P2
 
-### [ ] [E5] Stop sending junk/foreign parameters to Ollama; set an explicit output budget
+### [x] [E5] Stop sending junk/foreign parameters to Ollama; set an explicit output budget
 - Category: Small-Model Robustness / Code Quality
 - Affected component(s): `internal/llmconnector/ollama.go` (`Prepare`)
 - Problem / current state: `Prepare` injects OpenAI-style `max_tokens` and `response_format` defaults into Ollama's `Options`, and leaves the pipeline-level `strategy` key in (ChatAI deletes it; Ollama doesn't) — none are valid Ollama options, and crucially **no `num_predict` limit is actually set**, leaving truncation behavior to model defaults. Confirmed 2026-07-04: Ollama only *warns* about unknown options and ignores them, so the junk keys are harmless noise — the actionable part of this item is solely the missing output budget.
 - Proposed change: Mirror ChatAI's deletions (`strategy`, `output_keys`); map a `max_tokens` task param to Ollama's `num_predict`; drop the `response_format` default (the `Format` field already handles structure).
 - Why: An explicit, sufficient `num_predict` prevents silent mid-JSON truncation — per Ollama's API documentation, `num_predict` is the generation-length control, not `max_tokens`.
+- Status: **Implemented 2026-07-04.** Ollama's `Prepare` now uses an allowlist (`ollamaOptionKeys`) of options `/api/generate` actually understands; everything else is dropped with a debug log for genuinely unknown keys. `max_tokens` is mapped onto `num_predict`, an explicit `num_predict` wins, and a shared `defaultMaxOutputTokens` (also used by ChatAI) applies otherwise — so an output budget is always in effect and overruns become detectable ([F3]). Note: the filtering stays in `Prepare` (not `Configure`) because `Configure` only receives connector `Args`, while these params are per-task and legitimately differ between stages (per-stage model/temperature overrides). Tests in `connector_local_test.go`.
 - Architecture impact: Local | Effort: S | Priority: P2
 
 ---
@@ -527,12 +528,13 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Separates infrastructure noise from code defects so retry/recovery budgets are only spent on actual translation problems.
 - Architecture impact: Local | Effort: M | Priority: P1
 
-### [ ] [F3] Detect truncated LLM responses via finish/done reason
+### [x] [F3] Detect truncated LLM responses via finish/done reason
 - Category: Fault Tolerance
 - Affected component(s): `internal/llmconnector/ollama.go` (`DoneReason` ignored on success), `chatai.go` (`finish_reason` not parsed)
 - Problem / current state: A response cut off at the token limit reaches the reader as malformed JSON, producing the misleading "could not find main" and an undirected retry.
 - Proposed change: Parse `DoneReason`/`finish_reason`; when it indicates length, return a specific error ("response truncated at N tokens"), optionally auto-retry once with a doubled limit.
 - Why: Makes an invisible failure mode self-describing and mechanically fixable — especially relevant for small local models with tight `num_ctx`.
+- Status: **Implemented 2026-07-04** for all three connectors: Ollama checks `done_reason == "length"` (reporting `eval_count`), ChatAI parses `finish_reason` and reports completion tokens (usage metrics still recorded on truncation), Gemini checks `FinishReason == MAX_TOKENS`. The error text names the knob to raise (`max_tokens`/`num_predict`). The optional auto-retry-with-doubled-limit was skipped — task-level retries plus the actionable error cover it. Tests with fake HTTP backends in `connector_local_test.go` (Ollama + ChatAI truncation and happy paths).
 - Architecture impact: Local | Effort: S | Priority: P1
 
 ### [ ] [F4] Upload handler must not block forever on a full queue

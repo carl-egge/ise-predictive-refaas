@@ -97,7 +97,7 @@ func (cc *ChatAIInvocationClient) Prepare(taskParams map[string]interface{}) err
 
 	// Only fill in defaults that weren't explicitly set by the task/pipeline options.
 	defaultParams := map[string]interface{}{
-		"max_tokens": 2 << 14,
+		"max_tokens": defaultMaxOutputTokens,
 		"response_format": map[string]interface{}{
 			"type": "json_object",
 		},
@@ -122,6 +122,10 @@ type chatCompletionResponse struct {
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
+		// FinishReason distinguishes a complete generation ("stop") from one
+		// cut off at max_tokens ("length") - the latter yields a truncated,
+		// usually unparseable payload.
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -212,9 +216,16 @@ func (cc *ChatAIInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffe
 	metrics.ConversionPromptTokenCount = parsed.Usage.PromptTokens
 	metrics.ConversionEvalTokenCount = parsed.Usage.CompletionTokens
 
-	if len(parsed.Choices) == 0 || parsed.Choices[0].Message.Content == "" {
+	if len(parsed.Choices) == 0 {
 		return "", metrics, fmt.Errorf("chatai response contained no choices")
 	}
+	choice := parsed.Choices[0]
+	if choice.FinishReason == "length" {
+		return "", metrics, fmt.Errorf("chatai response truncated at max_tokens after %d completion tokens (finish_reason=length) - increase max_tokens for this task", parsed.Usage.CompletionTokens)
+	}
+	if choice.Message.Content == "" {
+		return "", metrics, fmt.Errorf("chatai response contained no content (finish_reason=%s)", choice.FinishReason)
+	}
 
-	return parsed.Choices[0].Message.Content, metrics, nil
+	return choice.Message.Content, metrics, nil
 }

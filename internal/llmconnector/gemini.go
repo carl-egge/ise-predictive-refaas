@@ -116,6 +116,9 @@ func (g *GeminiInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer
 	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
 		return "", metrics, fmt.Errorf("gemini response contained no candidates (possibly blocked or empty)")
 	}
+	if resp.Candidates[0].FinishReason == genai.FinishReasonMaxTokens {
+		return "", metrics, fmt.Errorf("gemini response truncated at the output-token limit (finish_reason=MAX_TOKENS)")
+	}
 
 	var outBuf bytes.Buffer
 	for _, part := range resp.Candidates[0].Content.Parts {
