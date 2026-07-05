@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -135,7 +136,17 @@ func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.Tes
 	testCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(testCtx, "go", "run", ".")
+	// Prefer the binary goBuilder already produced (`go build -o fn .`):
+	// `go run .` recompiles on every test case, multiplied by every
+	// validation retry, and killing it on timeout only reaches the parent
+	// process. Fall back to `go run .` for pipelines whose build step didn't
+	// produce ./fn.
+	var cmd *exec.Cmd
+	if bin := filepath.Join(dir, "fn"); fileExists(bin) {
+		cmd = exec.CommandContext(testCtx, bin)
+	} else {
+		cmd = exec.CommandContext(testCtx, "go", "run", ".")
+	}
 	// `go run` spawns the compiled binary as a child that inherits the
 	// stdout/stderr pipes; killing `go run` alone leaves those pipes open
 	// and cmd.Run() would keep blocking on them (i.e. a looping child would
@@ -182,6 +193,12 @@ func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.Tes
 	}
 
 	return nil
+}
+
+// fileExists reports whether path exists as a regular file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // truncateForFeedback caps a captured test artifact so the failure evidence

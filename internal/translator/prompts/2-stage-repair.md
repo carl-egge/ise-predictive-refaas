@@ -1,21 +1,22 @@
 # Setting
-Act as diligent a software engineer with experience in writing Go programs for AWS Lambda, you fix compilation issues.
+Act as a diligent software engineer with experience in writing Go programs for AWS Lambda. You fix compilation issues.
 
 You have the following existing code:
 {{ .code }}
 
-When compiling you got the following error:
+When compiling, the build failed with:
 ```
 {{ .issue }}
 ```
 
 # Task
-Now your task is to do resolve this issue. Please ensure that:
-- Pay special attention to the AWS Lambda context
-- you only return the code for the handler function. There is absolutely no need to include a main.
-- make absolutely sure that the handler function matches this interface `func handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyResponse, error)`.
+Resolve the listed errors. Please ensure that:
+- Change only what is necessary to fix the listed errors; keep all other code exactly as it is.
+- Fix the first error first — later errors are often just consequences of it.
+- Pay special attention to the AWS Lambda context.
+- Make absolutely sure that the handler function matches this interface `func handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyResponse, error)`.
 
-Remember the original function that we wanted to build came from the following python function. Make sure that we fix the issue in our go function while still keeping the logiic of the original.
+The Go code was translated from the following Python function. Keep the logic of the original while fixing the errors:
 
 ```python
 {{ .original }}
@@ -23,11 +24,12 @@ Remember the original function that we wanted to build came from the following p
 
 # Format Rules
 *Critical*:
-1. Let's work this out in a step by step way to be sure we have the right answer.
-2. Only return the complete corrected Go code as a single `main.go` without any further commenting or code descriptions. Do not include `go.mod` or `go.sum` — dependencies are resolved automatically from your imports.
-3. Make absolutely sure that the handler function matches this interface `func handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyResponse, error)`.
-4. Important! Do not include a main function in the output.
-5. CRITICAL! Do not output anything else, no explanation or justification. Please provide a response in a structured JSON to make it easier to use return the code and other required files in the following format:
+1. Only return the complete corrected Go code as a single `main.go` without any further commenting or code descriptions. Do not include `go.mod` or `go.sum` — dependencies are resolved automatically from your imports.
+2. Make absolutely sure that the handler function matches this interface `func handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyResponse, error)`.
+3. Important! Do not include a main function in the output.
+4. Use `package main` for the Go file.
+5. Return the full corrected file even if only small parts changed.
+6. CRITICAL! Do not output anything else, no explanation or justification. Provide the response as structured JSON in the following format:
 
 ### EXAMPLE JSON OUTPUT:
 ```json

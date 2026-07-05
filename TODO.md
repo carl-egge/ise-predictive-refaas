@@ -32,7 +32,7 @@
 
 **C. Pipeline features**
 - [x] [C1] Structured per-test failure evidence into the repair/align loop **(P0)**
-- [ ] [C2] Fix the dev pipeline's test-failure dead-end (keep it short)
+- [x] [C2] Fix the dev pipeline's test-failure dead-end (keep it short)
 - [x] [C3] Deterministic `go.mod`; LLM returns only `main.go`
 - [ ] [C4] Deterministic Go post-processing gate (package clause, parse, goimports)
 - [ ] [C5] Detect repair-loop stagnation and change strategy
@@ -46,15 +46,15 @@
 **D. Prompts**
 - [x] [D1] Convert prompt: fix broken few-shot; state the harness contract **(P0)**
 - [x] [D2] Align prompt: failure evidence + checkable equivalence **(P0)**
-- [ ] [D3] Fix-errors prompt: structured compiler errors, minimal-change directive
-- [ ] [D4] All prompts: remove "step by step" vs. "JSON only" contradiction
+- [x] [D3] Fix-errors prompt: structured compiler errors, minimal-change directive
+- [x] [D4] All prompts: remove "step by step" vs. "JSON only" contradiction
 - [ ] [D5] Document stage: scope to translation-relevant facts (or merge with summarize)
 
 **E. Small-model robustness**
 - [x] [E1] Per-task output schemas for code-producing stages
 - [x] [E2] Deterministic JSON extraction fallback before failing a parse
 - [ ] [E3] Vary sampling on resample-style retries
-- [ ] [E4] Truncate feedback to the first compiler errors
+- [x] [E4] Truncate feedback to the first compiler errors
 - [x] [E5] Stop sending junk params to Ollama; set explicit `num_predict`
 
 **F. Fault tolerance**
@@ -65,7 +65,7 @@
 - [x] [F5] Configurable minimum delay between LLM calls (rate-limit throttle)
 
 **G. Efficiency & token economy**
-- [ ] [G1] Build once, run the binary per test
+- [x] [G1] Build once, run the binary per test
 - [ ] [G2] Right-size the repair/align prompt payloads
 - [ ] [G3] Make the cleaner stage skippable and measure its contribution
 - [ ] [G4] Reuse the Go module cache across builds and jobs
@@ -330,7 +330,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local | Effort: M | Priority: **P0**
 - Status: **Implemented 2026-07-04** (together with [D2]). `domain.TestFailure` carries name/kind/input/expected/actual/stderr (fields truncated at 2000 chars); kinds distinguish `output mismatch`, `execution error`, and `invalid test fixture`. `goTester` collects one entry per failing test (sorted by name for determinism) into `NewTestingErrorWithFailures`, and its summary now names the failing cases (`"2/3 tests failed: t1 (output mismatch), ..."`) instead of just a count. `LLMConverter.Apply` exposes the most recent TestingError's evidence as `{{ .failures }}` to every prompt. **Deferred:** kind-based *routing* (crashes → fixer vs. mismatches → realign) needs a per-error-type recovery mechanism in the pipeline config schema — revisit if evidence-driven realign alone proves insufficient. `flociTester` still uses the plain `NewTestingError`; wiring its per-case evidence in belongs to [C10]. Tests: real `go run` integration tests in `validator_test.go` (mismatch + crash evidence), render/selection tests in `readers_test.go`.
 
-### [ ] [C2] The embedded default (dev) pipeline wastes its test-failure retries — fix the dead-end without losing its brevity
+### [x] [C2] The embedded default (dev) pipeline wastes its test-failure retries — fix the dead-end without losing its brevity
 - Category: Feature
 - Affected component(s): `internal/pipeline/default.yaml`, `internal/pipeline/pipeline.go`
 - Problem / current state: In `default.yaml`, `goTester` is the *validation* of the `builder` task. A validation failure re-executes the *same* task — i.e. rebuilds identical code and re-runs the same tests, up to 3 times, with no LLM stage ever invoked (recovery only fires on `Execute` failure). `realign` isn't registered in this pipeline.
@@ -338,6 +338,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Proposed change: Keep `default.yaml` short and cheap, but remove the guaranteed-waste loop: either (a) set the builder task's retry budget so a test-validation failure fails fast instead of rebuilding identical code twice more, or (b) add one compact repair hop for validation failures (a single `fixer`/`realign` recovery) if quick dev runs should exercise the repair path at all. Full alignment with `default.json` remains a later option.
 - Why: Retrying identical code cannot change the outcome; in a dev pipeline the dead-end wastes build/test cycles and makes quick functional tests report misleadingly slow/void failures.
 - Architecture impact: Local | Effort: S | Priority: P1 (downgraded from P0 — the canonical evaluation pipeline `default.json` does not have this dead-end)
+- Status: **Implemented 2026-07-04** (variant (b)). `goTester` moved from the builder's `validation` to its own `tester` task (maxRetryCount 2) with a compact repair path: `testRecovery` (one `realign` attempt) → `recoveryBuild` (goBuilder — required, otherwise the retest would run the old binary). Test failures now get exactly one evidence-driven repair attempt ([C1]/[D2]) instead of two pointless identical rebuilds; the pipeline stays 7 small tasks. The optional `executeTask` change (route validation failures through OnFailure) was not made — no task uses `validation` for testing anymore in either default config.
 
 ### [x] [C3] Always regenerate `go.mod` deterministically; never trust the LLM's
 - Category: Feature
@@ -440,22 +441,24 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local | Effort: S | Priority: **P0**
 - Status: **Implemented 2026-07-04.** `3-stage-align.md` rewritten: it now states the harness execution contract, embeds `{{ .failures }}` via a template conditional ("fix the Go code so that each listed input produces exactly the expected output; do not change behavior for inputs not listed"), and falls back to `{{ .issue }}` when no evidence exists. Numbering gap (5→7) fixed, Python fence tagged, the step-by-step/JSON-only contradiction removed *for this prompt* ([D4] still covers translate/repair), and "return the full corrected file" added. Template rendering covered by `TestAlignPromptRendersFailureEvidence`.
 
-### [ ] [D3] Fix-errors prompt: structured compiler errors, no contradictions, minimal-change directive
+### [x] [D3] Fix-errors prompt: structured compiler errors, no contradictions, minimal-change directive
 - Category: Prompt-FixErrors
 - Affected component(s): `internal/translator/prompts/2-stage-repair.md`, `internal/builder/builder.go` (error text construction)
 - Problem / current state: `{{ .issue }}` is the raw combined stdout/stderr wrapped in `failed to build. … exit status 1`. The prompt says both "you only return the code for the handler function" and "return the complete code and other files" — a contradiction a small model resolves unpredictably. Its example output embeds a `go.mod` with literal `\r\n` escapes and the invalid `v1.24` version. Nothing tells the model to preserve working parts.
 - Proposed change: Pre-parse Go compiler output (`file:line:col: message`) into a numbered list; delete the "only the handler function" sentence; add "change only what is necessary to fix the listed errors"; remove the `go.mod` example per [C3].
 - Why: Precise, localized error context is the input format compiler-repair works best with — the Go toolchain already emits machine-parseable positions; removing the format contradiction eliminates a coin-flip in every fixer call.
 - Note: the broken `go.mod` example and the "other files" wording are already fixed by [C3] (single-`main.go` output stated in the prompt). Remaining scope: structured compiler errors and the minimal-change directive.
+- Status: **Implemented 2026-07-04** (together with [D4]/[E4]). `formatBuildError` in `builder.go` parses raw build output into a numbered, de-duplicated list of diagnostics (`file:line:col: message`, `go:` module errors, `go.mod:` parse errors), preserving the raw dump only when nothing is parseable — and keeping the marker lines verbatim so `isGoModFailure` still triggers. `2-stage-repair.md` rewritten: "change only what is necessary", "fix the first error first — later errors are often consequences", contradiction and step-by-step line removed, grammar fixed, full-file return required. Tests: `builder_test.go` (parsing, capping, marker preservation, raw fallback).
 - Architecture impact: Local | Effort: S–M | Priority: P1
 
-### [ ] [D4] All prompts: remove the "step by step" vs. "output nothing but JSON" contradiction
+### [x] [D4] All prompts: remove the "step by step" vs. "output nothing but JSON" contradiction
 - Category: Prompt-Convert / Prompt-FixErrors / Prompt-Align
 - Affected component(s): `1-stage-translate-1.md` (rule 1 vs. 7), `2-stage-repair.md` (rule 1 vs. 5), `3-stage-align.md` (rule 1 vs. 7)
 - Problem / current state: Each prompt instructs "Let's work this out in a step by step way…" while a later CRITICAL rule forbids any output except JSON. Under a JSON-constrained decoder the reasoning instruction can't be followed; on an unconstrained backend it invites prose that breaks `json.Unmarshal`.
 - Proposed change: Delete the step-by-step sentence (or give reasoning a sanctioned `"notes"` key in the output schema that readers ignore).
 - Why: Contradictory instructions measurably degrade instruction-following, and smaller models are the most sensitive; constrained decoding already nullifies the CoT benefit — based on structured-output decoding mechanics (Ollama structured outputs documentation).
 - Architecture impact: Local | Effort: S | Priority: P1
+- Status: **Done 2026-07-04.** The contradiction was removed prompt by prompt as each was rewritten: translate prompts by [D1], align by [D2], and repair (the last holdout) by [D3]'s rewrite. No active prompt contains the "step by step" instruction anymore (the unwired `1-stage-translate.md` draft still does — irrelevant, not embedded).
 
 ### [ ] [D5] Document stage: scope it to what translation actually needs (or merge it with summarize)
 - Category: Prompt-Document / Efficiency
@@ -496,13 +499,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Sampling diversity is what makes repeated attempts explore different solutions — the core observation behind self-consistency (Wang et al., arXiv:2203.11171).
 - Architecture impact: Local | Effort: S–M | Priority: P1
 
-### [ ] [E4] Truncate feedback to the first compiler errors
+### [x] [E4] Truncate feedback to the first compiler errors
 - Category: Small-Model Robustness / Efficiency
 - Affected component(s): `internal/builder/builder.go`, `2-stage-repair.md` input
 - Problem / current state: The fixer receives the full build output; Go compilers cascade — one missing brace produces dozens of downstream errors that mislead a small model into "fixing" symptoms.
 - Proposed change: After [D3]'s parsing, pass only the first N (e.g. 5) distinct `file:line` errors, noting "further errors omitted; fix these first".
 - Why: Focusing a limited-capacity model on the root error mirrors how cascading diagnostics are meant to be consumed and shrinks the prompt.
 - Architecture impact: Local | Effort: S | Priority: P2
+- Status: **Implemented 2026-07-04** as part of [D3]: `extractDiagnostics` de-duplicates and caps at `maxCompilerErrors` (5) distinct diagnostics, appending "... further errors omitted; fix the ones above first"; the repair prompt tells the model later errors are often consequences of the first.
 
 ### [x] [E5] Stop sending junk/foreign parameters to Ollama; set an explicit output budget
 - Category: Small-Model Robustness / Code Quality
@@ -567,13 +571,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 
 ## G. Efficiency & token economy
 
-### [ ] [G1] Build once, run the binary per test — stop recompiling in `go run .`
+### [x] [G1] Build once, run the binary per test — stop recompiling in `go run .`
 - Category: Efficiency
 - Affected component(s): `internal/builder/validator.go` (`doTest`)
 - Problem / current state: `goBuilder` already produces `fn` via `go build -o fn .`, but `doTest` invokes `go run .` for every test file — a full compile per test case, multiplied by every validation retry.
 - Proposed change: Execute `./fn` in `doTest`, falling back to `go run .` only if the binary is missing.
 - Why: Cuts test-stage latency by compile cost × test count without changing semantics, shortening every repair iteration.
 - Architecture impact: Local | Effort: S | Priority: P1
+- Status: **Implemented 2026-07-04.** `doTest` executes `./fn` when the build produced it, falling back to `go run .` otherwise. Side benefit for [F1]: a timeout then kills the translated program directly (no `go run` parent/child pipe indirection, no orphan). The timeout test pre-builds `fn` to exercise this path; the mismatch/crash tests cover the fallback.
 
 ### [ ] [G2] Right-size the repair/align prompt payloads
 - Category: Efficiency

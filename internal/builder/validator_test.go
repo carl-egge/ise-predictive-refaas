@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -162,9 +163,22 @@ func main() {
 	}
 }
 
+// buildFn compiles the package in dir to ./fn, the artifact goBuilder
+// normally produces, so tests can exercise the direct-binary execution path.
+func buildFn(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("go", "build", "-o", "fn", ".")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build -o fn: %v\n%s", err, out)
+	}
+}
+
 // TestGoPackageTesterTimesOutHangingPrograms guards the F1 behavior: a
 // translated infinite loop must fail its test with a timeout kind instead
-// of hanging the single worker goroutine indefinitely.
+// of hanging the single worker goroutine indefinitely. The package is
+// pre-built to ./fn, which also exercises the G1 direct-binary path (the
+// timeout then kills the program itself, not just a `go run` parent).
 func TestGoPackageTesterTimesOutHangingPrograms(t *testing.T) {
 	dir := writeRunnablePackage(t, `package main
 
@@ -172,6 +186,7 @@ import "time"
 
 func main() { time.Sleep(30 * time.Second) }
 `)
+	buildFn(t, dir)
 	runner := pipeline.NewRunner(context.Background(), nil, nil)
 	runner.SetWorkingDir(dir)
 	tester := NewGoPackageTester(map[string]interface{}{"strategy": "json", "test_timeout": "3s"})

@@ -1,3 +1,9 @@
+# Deliberately short dev pipeline for quick functional tests (the canonical
+# evaluation pipeline is default.json at the repo root). Unlike the previous
+# version - which had goTester as the builder's validation, so a test failure
+# rebuilt identical code with no LLM repair ever running - test failures here
+# get exactly one realign+rebuild repair attempt, keeping runs cheap but not
+# pointless.
 options:
   model_name: "qwen2.5-coder:3b"
   strategy: "json"
@@ -22,9 +28,26 @@ tasks:
     recovery: "gollmRecovery"
     retryDelay: "5s"
     maxRetryCount: 3
-    validation: "goTester"
+    next:
+      - "tester"
+  - id: "tester"
+    task: "goTester"
+    canApply: "canCompile"
+    maxRetryCount: 2
+    recovery: "testRecovery"
   - id: "gollmRecovery"
     task: "fixer"
     task_args:
       reader: go
+    maxRetryCount: 2
+  - id: "testRecovery"
+    task: "realign"
+    task_args:
+      reader: go
+    maxRetryCount: 1
+    next:
+      - "recoveryBuild"
+  - id: "recoveryBuild"
+    task: "goBuilder"
+    recovery: "gollmRecovery"
     maxRetryCount: 2

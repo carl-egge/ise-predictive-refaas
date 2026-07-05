@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -233,7 +234,61 @@ func (cc *GolangBuilder) runBuildCommands(ctx context.Context, dir, buildCmd str
 		if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
 			return stdout.String(), fmt.Errorf("build command %q timed out after %s. %s", buildCmd, timeout, stdout.String())
 		}
-		return stdout.String(), fmt.Errorf("failed to build. %s \n\n %+v", stdout.String(), err)
+		return stdout.String(), formatBuildError(buildCmd, stdout.String(), err)
 	}
 	return stdout.String(), nil
+}
+
+// maxCompilerErrors caps how many diagnostics reach the fixer prompt: Go
+// compiler errors cascade, and later ones are usually consequences of the
+// first, so a small focused list beats the full dump.
+const maxCompilerErrors = 5
+
+// goDiagnosticRe matches Go compiler diagnostics like
+// "./main.go:11:50: syntax error: ..." (column optional).
+var goDiagnosticRe = regexp.MustCompile(`^(\./)?\S+\.go:\d+(:\d+)?:\s`)
+
+// extractDiagnostics pulls the individual compiler / module diagnostics out
+// of raw build output, de-duplicated and capped at maxCompilerErrors. It
+// returns nil when the output contains no recognizable diagnostics (the
+// caller then falls back to the raw output).
+func extractDiagnostics(output string) []string {
+	seen := make(map[string]bool)
+	diags := make([]string, 0, maxCompilerErrors)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || seen[line] {
+			continue
+		}
+		// compiler diagnostics, module errors ("go: ...") and go.mod parse
+		// errors ("go.mod:6: unknown directive ...")
+		if !goDiagnosticRe.MatchString(line) && !strings.HasPrefix(line, "go: ") && !strings.HasPrefix(line, "go.mod:") {
+			continue
+		}
+		seen[line] = true
+		if len(diags) >= maxCompilerErrors {
+			diags = append(diags, "... further errors omitted; fix the ones above first")
+			break
+		}
+		diags = append(diags, line)
+	}
+	return diags
+}
+
+// formatBuildError turns raw build output into the structured error the
+// fixer prompt receives via {{ .issue }}: a numbered list of distinct
+// diagnostics instead of a raw log dump. When nothing parseable is found it
+// preserves the previous raw format. The diagnostic lines are kept verbatim,
+// so the go.mod failure markers isGoModFailure looks for stay detectable.
+func formatBuildError(buildCmd, output string, err error) error {
+	diags := extractDiagnostics(output)
+	if len(diags) == 0 {
+		return fmt.Errorf("failed to build. %s \n\n %+v", output, err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "the build command %q failed with the following errors:\n", buildCmd)
+	for i, d := range diags {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, d)
+	}
+	return errors.New(strings.TrimRight(b.String(), "\n"))
 }
