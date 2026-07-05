@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -60,8 +61,8 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 	}
 
 	startTime := time.Now()
-	errCount := 0
 	ctx := runner
+	failures := make([]domain.TestFailure, 0)
 	log.Debugf("Running GoPackageTester with %d tests", len(request.WorkingPackage.TestFiles))
 	for testFile, err := range maps.Collect(request.WorkingPackage.GetTestFiles()) {
 		if request.Metrics != nil {
@@ -69,19 +70,17 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 		}
 		if err != nil {
 			log.Debugf("failed to read test %s: %+v", testFile.Name, err)
-			errCount++
+			failures = append(failures, domain.TestFailure{
+				Name:   testFile.Name,
+				Kind:   domain.TestFailureFixture,
+				Stderr: truncateForFeedback(err.Error()),
+			})
 			continue
 		}
 
-		success, err := cc.doTest(ctx, runner.WorkingDir(), testFile)
-		if err != nil {
-			errCount++
-			log.Debugf("test %s failed: %v", testFile.Name, err)
-			continue
-		}
-		if !success {
-			errCount++
-			log.Debugf("test %s failed: %v", testFile.Name, err)
+		if failure := cc.doTest(ctx, runner.WorkingDir(), testFile); failure != nil {
+			failures = append(failures, *failure)
+			log.Debugf("test %s failed (%s)", testFile.Name, failure.Kind)
 			continue
 		}
 		if request.Metrics != nil {
@@ -89,19 +88,33 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 		}
 		log.Debugf("test %s succeeded ", testFile.Name)
 	}
+	errCount := len(failures)
 	if request.Metrics != nil {
 		request.Metrics.TestTime = time.Since(startTime)
 		request.Metrics.TestError = errCount
 	}
 	if errCount != 0 {
+		// Deterministic order: the failures feed prompt evidence and map
+		// iteration order above is randomized.
+		sort.Slice(failures, func(i, j int) bool { return failures[i].Name < failures[j].Name })
+		names := make([]string, 0, len(failures))
+		for _, f := range failures {
+			names = append(names, fmt.Sprintf("%s (%s)", f.Name, f.Kind))
+		}
 		log.Debugf("tests failed: %d/%d", errCount, len(request.WorkingPackage.TestFiles))
-		return domain.NewTestingError(fmt.Errorf("%d tests failed", errCount), errCount)
+		return domain.NewTestingErrorWithFailures(
+			fmt.Errorf("%d/%d tests failed: %s", errCount, len(request.WorkingPackage.TestFiles), strings.Join(names, ", ")),
+			failures,
+		)
 	}
 	log.Debugf("%d tests succeeded", len(request.WorkingPackage.TestFiles))
 	return nil
 }
 
-func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.TestFile) (bool, error) {
+// doTest runs one test case and returns nil on success, or the captured
+// failure evidence (input, expected vs. actual output, stderr) so repair
+// stages can see what actually went wrong instead of just a count.
+func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.TestFile) *domain.TestFailure {
 	cmd := exec.CommandContext(ctx, "go", "run", ".")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), t.Env...)
@@ -113,17 +126,40 @@ func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.Tes
 	cmd.Stdout = out
 	cmd.Stderr = errBuf
 	if err := cmd.Run(); err != nil {
-		return false, fmt.Errorf("test failed. %s - %s - %s", out.String(), errBuf.String(), err)
+		return &domain.TestFailure{
+			Name:     t.Name,
+			Kind:     domain.TestFailureError,
+			Input:    truncateForFeedback(t.Input),
+			Expected: truncateForFeedback(t.Output),
+			Actual:   truncateForFeedback(out.String()),
+			Stderr:   truncateForFeedback(strings.TrimSpace(errBuf.String() + "\n" + err.Error())),
+		}
 	}
 	cleanOut := domain.MinimizeString(out.String())
 
-	assertEquals := cc.validateTestOutput(ctx, cleanOut, t)
-	if !assertEquals {
+	if !cc.validateTestOutput(ctx, cleanOut, t) {
 		log.Debugf("test failed. %s, expected:%s, errors:%s", cleanOut, t.Output, errBuf.String())
-		return false, fmt.Errorf("test failed. %s, expected:%s, errors:%s", cleanOut, t.Output, errBuf.String())
+		return &domain.TestFailure{
+			Name:     t.Name,
+			Kind:     domain.TestFailureMismatch,
+			Input:    truncateForFeedback(t.Input),
+			Expected: truncateForFeedback(t.Output),
+			Actual:   truncateForFeedback(cleanOut),
+			Stderr:   truncateForFeedback(strings.TrimSpace(errBuf.String())),
+		}
 	}
 
-	return true, nil
+	return nil
+}
+
+// truncateForFeedback caps a captured test artifact so the failure evidence
+// stays prompt-sized even when a function prints large payloads.
+func truncateForFeedback(s string) string {
+	const maxLen = 2000
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "\n... [truncated]"
 }
 
 func (cc *GoPackageTester) validateTestOutput(ctx context.Context, testOutput string, testFile *domain.TestFile) bool {

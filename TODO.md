@@ -31,7 +31,7 @@
 - [ ] [B7] `goTester` runs `go run .` in the service CWD when `WorkingDir` unset
 
 **C. Pipeline features**
-- [ ] [C1] Structured per-test failure evidence into the repair/align loop **(P0)**
+- [x] [C1] Structured per-test failure evidence into the repair/align loop **(P0)**
 - [ ] [C2] Fix the dev pipeline's test-failure dead-end (keep it short)
 - [x] [C3] Deterministic `go.mod`; LLM returns only `main.go`
 - [ ] [C4] Deterministic Go post-processing gate (package clause, parse, goimports)
@@ -45,7 +45,7 @@
 
 **D. Prompts**
 - [ ] [D1] Convert prompt: fix broken few-shot; state the harness contract **(P0)**
-- [ ] [D2] Align prompt: failure evidence + checkable equivalence **(P0)**
+- [x] [D2] Align prompt: failure evidence + checkable equivalence **(P0)**
 - [ ] [D3] Fix-errors prompt: structured compiler errors, minimal-change directive
 - [ ] [D4] All prompts: remove "step by step" vs. "JSON only" contradiction
 - [ ] [D5] Document stage: scope to translation-relevant facts (or merge with summarize)
@@ -320,13 +320,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 
 ## C. Pipeline feature improvements (primary focus)
 
-### [ ] [C1] Feed structured per-test failure evidence into the repair/align loop
+### [x] [C1] Feed structured per-test failure evidence into the repair/align loop
 - Category: Feature
 - Affected component(s): `internal/builder/validator.go` (`GoPackageTester.Apply`/`doTest`), `internal/translator/translator.go` (template vars), `3-stage-align.md`
 - Problem / current state: `doTest` produces a rich error (actual output, expected output, stderr) but `Apply` discards it, returning only `"N tests failed"`. That string becomes `LastError()`, which is all any LLM stage can ever see — and the align prompt doesn't even reference `{{ .issue }}`. Recorded evidence (identical errors across 4+ attempts) shows blind repair does not converge.
 - Proposed change: Collect per-test failures into the `TestingError` (`Failures []TestFailure{Name, Input, Expected, Actual, Stderr}`, capped), expose them as a rendered `{{ .failures }}` template var (deterministic order). Distinguish process error vs. output mismatch so pipelines can route crashes to `fixer` and mismatches to `realign`. Update `3-stage-align.md` to consume `{{ .failures }}` ([D2]).
 - Why: Execution feedback (failing input, expected vs. actual) is the single strongest known signal for LLM self-repair — Chen et al., *Teaching Large Language Models to Self-Debug* (arXiv:2304.05128) show unit-test feedback substantially outperforms blind resampling — and the current pipeline structurally withholds it.
 - Architecture impact: Local | Effort: M | Priority: **P0**
+- Status: **Implemented 2026-07-04** (together with [D2]). `domain.TestFailure` carries name/kind/input/expected/actual/stderr (fields truncated at 2000 chars); kinds distinguish `output mismatch`, `execution error`, and `invalid test fixture`. `goTester` collects one entry per failing test (sorted by name for determinism) into `NewTestingErrorWithFailures`, and its summary now names the failing cases (`"2/3 tests failed: t1 (output mismatch), ..."`) instead of just a count. `LLMConverter.Apply` exposes the most recent TestingError's evidence as `{{ .failures }}` to every prompt. **Deferred:** kind-based *routing* (crashes → fixer vs. mismatches → realign) needs a per-error-type recovery mechanism in the pipeline config schema — revisit if evidence-driven realign alone proves insufficient. `flociTester` still uses the plain `NewTestingError`; wiring its per-case evidence in belongs to [C10]. Tests: real `go run` integration tests in `validator_test.go` (mismatch + crash evidence), render/selection tests in `readers_test.go`.
 
 ### [ ] [C2] The embedded default (dev) pipeline wastes its test-failure retries — fix the dead-end without losing its brevity
 - Category: Feature
@@ -427,13 +428,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Note: point (3) (`go.mod` placeholders) is already done by [C3] — both translate prompts now request a single `main.go` and state that dependencies are automatic. Remaining scope: the body few-shot fix, the execution contract, input/output pairing, and the gotcha list.
 - Architecture impact: Local | Effort: S | Priority: **P0**
 
-### [ ] [D2] Align prompt: give it the failure evidence and a checkable definition of "equivalent"
+### [x] [D2] Align prompt: give it the failure evidence and a checkable definition of "equivalent"
 - Category: Prompt-Align
 - Affected component(s): `internal/translator/prompts/3-stage-align.md`
 - Problem / current state: The prompt asks the model to verify alignment using only `{{ .original }}` and `{{ .code }}` — no test results, no `{{ .issue }}`, no input/output pairs — even though the stage only runs *after concrete tests failed*. Also: numbering gap (rules 5→7), untagged code fence, step-by-step/JSON-only contradiction.
 - Proposed change: Restructure around evidence: "The Go version failed these test cases: [input, expected stdout, actual stdout] ({{ .failures }} from [C1]; minimally `{{ .issue }}` + `{{ .input }}`/`{{ .output }}` today). Modify the Go code so that for each input it produces exactly the expected output. Do not change behavior for passing cases. Return complete corrected files." Fix numbering/fence.
 - Why: Converts an open-ended judgment task into a constrained transformation with a verifiable target — the setting where execution-feedback repair is proven effective (Chen et al., arXiv:2304.05128); the prompt-side half of [C1].
 - Architecture impact: Local | Effort: S | Priority: **P0**
+- Status: **Implemented 2026-07-04.** `3-stage-align.md` rewritten: it now states the harness execution contract, embeds `{{ .failures }}` via a template conditional ("fix the Go code so that each listed input produces exactly the expected output; do not change behavior for inputs not listed"), and falls back to `{{ .issue }}` when no evidence exists. Numbering gap (5→7) fixed, Python fence tagged, the step-by-step/JSON-only contradiction removed *for this prompt* ([D4] still covers translate/repair), and "return the full corrected file" added. Template rendering covered by `TestAlignPromptRendersFailureEvidence`.
 
 ### [ ] [D3] Fix-errors prompt: structured compiler errors, no contradictions, minimal-change directive
 - Category: Prompt-FixErrors

@@ -2,6 +2,7 @@ package translator
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"iter"
 	"maps"
@@ -123,6 +124,11 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 		errStr = last.Error()
 	}
 
+	// The most recent test-stage failure evidence (if any), rendered for
+	// prompts as {{ .failures }}: repair works best when the model sees
+	// which input produced which wrong output, not just a failure count.
+	failuresBlock := renderTestFailures(latestTestFailures(code.Errors()))
+
 	// Known metadata keys (e.g. "intent" from a prior summary stage) are
 	// promoted to top-level template vars so later prompts can reference
 	// them directly, e.g. {{ .intent }}. The fixed vars below always take
@@ -133,6 +139,7 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 	}
 	templateVars["code"] = codeBlock.String()
 	templateVars["issue"] = errStr
+	templateVars["failures"] = failuresBlock
 	templateVars["original"] = srcFile
 	templateVars["input"] = result.Input
 	templateVars["output"] = result.Output
@@ -208,6 +215,50 @@ func (cc *LLMConverter) applyMetadata(response string, code *domain.ConversionRe
 	}
 	maps.Copy(code.Metadata, values)
 	return nil
+}
+
+// latestTestFailures returns the failure evidence of the most recent
+// TestingError in the request's error history, or nil when no test stage
+// has recorded evidence yet (e.g. before the first goTester run).
+func latestTestFailures(errs []error) []domain.TestFailure {
+	for i := len(errs) - 1; i >= 0; i-- {
+		var te domain.TestingError
+		if errors.As(errs[i], &te) && len(te.Failures()) > 0 {
+			return te.Failures()
+		}
+	}
+	return nil
+}
+
+// renderTestFailures formats failure evidence into the fixed, deterministic
+// block prompts consume via {{ .failures }}. Empty when there is none, so
+// templates can branch with {{ if .failures }}.
+func renderTestFailures(failures []domain.TestFailure) string {
+	if len(failures) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, f := range failures {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "Test case %q (%s):\n", f.Name, f.Kind)
+		if f.Input != "" {
+			fmt.Fprintf(&b, "  Input: %s\n", f.Input)
+		}
+		if f.Expected != "" {
+			fmt.Fprintf(&b, "  Expected output: %s\n", f.Expected)
+		}
+		actual := f.Actual
+		if actual == "" {
+			actual = "(empty)"
+		}
+		fmt.Fprintf(&b, "  Actual output: %s\n", actual)
+		if f.Stderr != "" {
+			fmt.Fprintf(&b, "  Stderr: %s\n", f.Stderr)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func getFirstTestFile(code *domain.ConversionRequest) *domain.TestFile {

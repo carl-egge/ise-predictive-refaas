@@ -1,6 +1,8 @@
 package translator
 
 import (
+	"bytes"
+	"errors"
 	"go/parser"
 	"go/token"
 	"slices"
@@ -172,6 +174,74 @@ func TestJsonCodeBlockReaderRejectsNonJSON(t *testing.T) {
 		} else if !strings.Contains(err.Error(), "not a JSON object") {
 			t.Errorf("error should say the response was not a JSON object, got: %v", err)
 		}
+	}
+}
+
+// TestRenderTestFailuresAndSelection guards the C1 plumbing: the most
+// recent TestingError's evidence is selected from the error history and
+// rendered into the fixed block prompts consume.
+func TestRenderTestFailuresAndSelection(t *testing.T) {
+	failures := []domain.TestFailure{{
+		Name:     "test/t1.json",
+		Kind:     domain.TestFailureMismatch,
+		Input:    `{"a":1}`,
+		Expected: `{"result":3}`,
+		Actual:   `{"result":"3"}`,
+	}}
+
+	rendered := renderTestFailures(failures)
+	for _, want := range []string{"test/t1.json", "output mismatch", `Input: {"a":1}`, `Expected output: {"result":3}`, `Actual output: {"result":"3"}`} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered block missing %q:\n%s", want, rendered)
+		}
+	}
+
+	history := []error{
+		errors.New("older build error"),
+		domain.NewTestingErrorWithFailures(errors.New("1/1 tests failed"), failures),
+		errors.New("newer build error"),
+	}
+	got := latestTestFailures(history)
+	if len(got) != 1 || got[0].Name != "test/t1.json" {
+		t.Errorf("latestTestFailures = %+v, want the TestingError's evidence", got)
+	}
+	if latestTestFailures([]error{errors.New("no tests yet")}) != nil {
+		t.Error("latestTestFailures without a TestingError must return nil")
+	}
+}
+
+// TestAlignPromptRendersFailureEvidence verifies the D2 template: with
+// failure evidence the prompt shows the test cases; without it, it falls
+// back to the {{ .issue }} summary.
+func TestAlignPromptRendersFailureEvidence(t *testing.T) {
+	conv, ok := NewAlignmentConverter(map[string]interface{}{"reader": "go"}).(*LLMConverter)
+	if !ok {
+		t.Fatal("NewAlignmentConverter did not return an LLMConverter (invalid template?)")
+	}
+
+	vars := map[string]interface{}{
+		"code":     "#### main.go\n```go\npackage main\n```",
+		"original": "def handler(event, context): ...",
+		"issue":    "2/3 tests failed: t1 (output mismatch)",
+		"failures": "Test case \"t1\" (output mismatch):\n  Input: {}\n  Expected output: 1\n  Actual output: 2",
+		"input":    "",
+		"output":   "",
+	}
+	var buf bytes.Buffer
+	if err := conv.template.Execute(&buf, vars); err != nil {
+		t.Fatalf("template execute: %v", err)
+	}
+	if !strings.Contains(buf.String(), "failed the following test cases") || !strings.Contains(buf.String(), `Test case "t1"`) {
+		t.Errorf("prompt should embed the failure evidence:\n%s", buf.String())
+	}
+
+	vars["failures"] = ""
+	buf.Reset()
+	if err := conv.template.Execute(&buf, vars); err != nil {
+		t.Fatalf("template execute (no failures): %v", err)
+	}
+	if !strings.Contains(buf.String(), "2/3 tests failed") {
+		t.Errorf("prompt should fall back to the issue summary:\n%s", buf.String())
 	}
 }
 
