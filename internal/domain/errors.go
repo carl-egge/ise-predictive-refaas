@@ -26,6 +26,9 @@ type TestFailure struct {
 	Expected string
 	Actual   string
 	Stderr   string
+	// Detail is the validator's explanation of the mismatch (e.g. the JSON
+	// path of the first divergence), when it can produce one.
+	Detail string
 }
 
 // TestingError represents a failure during the test execution and carries an

@@ -20,13 +20,15 @@ import (
 func TestSimilarityValidationDirection(t *testing.T) {
 	v := SimilarityValidation{}
 
-	if !v.validate("hello world", "hello world") {
+	if ok, _ := v.validate("hello world", "hello world"); !ok {
 		t.Error("identical strings must pass validation")
 	}
-	if v.validate(`{"totally":"different"}`, "expected output") {
+	if ok, reason := v.validate(`{"totally":"different"}`, "expected output"); ok {
 		t.Error("disjoint strings must fail validation")
+	} else if reason == "" {
+		t.Error("a similarity failure should carry a reason")
 	}
-	if !v.validateUndeterministic("hello world", "hello world") {
+	if ok, _ := v.validateUndeterministic("hello world", "hello world"); !ok {
 		t.Error("identical strings must pass undeterministic validation")
 	}
 }
@@ -34,17 +36,27 @@ func TestSimilarityValidationDirection(t *testing.T) {
 // TestJsonAwareValidateHappyPath compares a harness-wrapped Go response
 // against an expected fixture in the canonical (paper) format.
 func TestJsonAwareValidateHappyPath(t *testing.T) {
-	v := MakeAwareSimilarityValidation(0.85)
+	v := NewJSONStructureValidation()
 
 	expected := `{"statusCode": 200, "body": "{\"result\": 3}"}`
 	actual := `{"response":{"statusCode":200,"headers":null,"body":"{\"result\":3}"}}`
-	if !v.validate(actual, expected) {
-		t.Error("matching wrapped response must pass validation")
+	if ok, reason := v.validate(actual, expected); !ok {
+		t.Errorf("matching wrapped response must pass validation, got: %s", reason)
 	}
 
 	wrongStatus := `{"response":{"statusCode":500,"body":"{\"result\":3}"}}`
-	if v.validate(wrongStatus, expected) {
+	if ok, reason := v.validate(wrongStatus, expected); ok {
 		t.Error("mismatching statusCode must fail validation")
+	} else if !strings.Contains(reason, "statusCode") {
+		t.Errorf("mismatch reason should name the diverging path, got: %s", reason)
+	}
+
+	// multi-key body strings must compare structurally: key order and
+	// spacing differences between json.dumps and json.Marshal are irrelevant
+	expectedMulti := `{"statusCode": 200, "body": "{\"a\": 1, \"b\": 2}"}`
+	actualMulti := `{"response":{"statusCode":200,"body":"{\"b\":2,\"a\":1}"}}`
+	if ok, reason := v.validate(actualMulti, expectedMulti); !ok {
+		t.Errorf("body key order must not matter, got: %s", reason)
 	}
 }
 
@@ -52,15 +64,38 @@ func TestJsonAwareValidateHappyPath(t *testing.T) {
 // bug where a matching nested object caused all remaining expected keys to be
 // skipped (nondeterministically, due to map iteration order).
 func TestJsonAwareValidateChecksAllSiblingKeys(t *testing.T) {
-	v := MakeAwareSimilarityValidation(0.85)
+	v := NewJSONStructureValidation()
 
 	expected := `{"a": {"x": 1}, "b": 2}`
 	actual := `{"a": {"x": 1}, "b": 3}`
 	// run repeatedly: the old bug only surfaced when "a" was iterated first
 	for i := 0; i < 50; i++ {
-		if v.validate(actual, expected) {
+		if ok, _ := v.validate(actual, expected); ok {
 			t.Fatal("mismatching sibling key must fail validation even when a nested object matches")
 		}
+	}
+}
+
+// TestJsonStructureValidationShapeOnly guards the maintainer-decided mode
+// for non-deterministic tests: same structure and value types pass even
+// with different values; type changes still fail.
+func TestJsonStructureValidationShapeOnly(t *testing.T) {
+	v := NewJSONStructureValidation()
+
+	expected := `{"statusCode": 200, "body": "{\"temp\": 21.5, \"city\": \"Hamburg\"}"}`
+	sameShape := `{"response":{"statusCode":200,"body":"{\"temp\":3.2,\"city\":\"Berlin\"}"}}`
+	if ok, reason := v.validateUndeterministic(sameShape, expected); !ok {
+		t.Errorf("same-shape output must pass shape-only validation, got: %s", reason)
+	}
+
+	wrongType := `{"response":{"statusCode":200,"body":"{\"temp\":\"3.2\",\"city\":\"Berlin\"}"}}`
+	if ok, _ := v.validateUndeterministic(wrongType, expected); ok {
+		t.Error("a type change must fail even in shape-only mode")
+	}
+
+	// strict mode must reject the same-shape/different-values output
+	if ok, _ := v.validate(sameShape, expected); ok {
+		t.Error("different values must fail strict validation")
 	}
 }
 
@@ -117,6 +152,9 @@ func main() { fmt.Println(`+"`"+`{"foo": 1}`+"`"+`) }
 	}
 	if !strings.Contains(f.Input, `"a":1`) || !strings.Contains(f.Expected, "bar") || !strings.Contains(f.Actual, "foo") {
 		t.Errorf("evidence incomplete: %+v", f)
+	}
+	if !strings.Contains(f.Detail, "mismatch at") {
+		t.Errorf("Detail should carry the divergence path, got: %q", f.Detail)
 	}
 	if !strings.Contains(err.Error(), "1/1 tests failed") {
 		t.Errorf("summary should name the count, got: %v", err)
@@ -230,18 +268,24 @@ func TestRunBuildCommandsTimeout(t *testing.T) {
 // different JSON types, must produce a mismatch, not a panic that aborts the
 // whole conversion run.
 func TestJsonAwareValidateDoesNotPanicOnTypeMismatch(t *testing.T) {
-	v := MakeAwareSimilarityValidation(0.85)
+	v := NewJSONStructureValidation()
 
 	// handler returned a scalar where an object was expected
-	if v.validate(`{"response":"just a string"}`, `{"statusCode": 200}`) {
+	if ok, _ := v.validate(`{"response":"just a string"}`, `{"statusCode": 200}`); ok {
 		t.Error("scalar response vs object expectation must fail validation")
 	}
-	// number vs string leaf
-	if v.validate(`{"response":{"statusCode":"200"}}`, `{"statusCode": 200}`) {
+	// number vs string leaf (the stringified-number translation bug)
+	if ok, _ := v.validate(`{"response":{"statusCode":"200"}}`, `{"statusCode": 200}`); ok {
 		t.Error("string statusCode vs numeric expectation must fail validation")
 	}
 	// string vs number leaf (reverse direction)
-	if v.validate(`{"response":{"statusCode":200}}`, `{"statusCode": "200"}`) {
+	if ok, _ := v.validate(`{"response":{"statusCode":200}}`, `{"statusCode": "200"}`); ok {
 		t.Error("numeric statusCode vs string expectation must fail validation")
+	}
+	// harness-reported handler error
+	if ok, reason := v.validate(`{"error":"runtime blew up"}`, `{"statusCode": 200}`); ok {
+		t.Error("a harness error envelope must fail validation")
+	} else if !strings.Contains(reason, "handler returned an error") {
+		t.Errorf("reason should surface the handler error, got: %s", reason)
 	}
 }

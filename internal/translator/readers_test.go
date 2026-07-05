@@ -187,10 +187,11 @@ func TestRenderTestFailuresAndSelection(t *testing.T) {
 		Input:    `{"a":1}`,
 		Expected: `{"result":3}`,
 		Actual:   `{"result":"3"}`,
+		Detail:   "output mismatch at result",
 	}}
 
 	rendered := renderTestFailures(failures)
-	for _, want := range []string{"test/t1.json", "output mismatch", `Input: {"a":1}`, `Expected output: {"result":3}`, `Actual output: {"result":"3"}`} {
+	for _, want := range []string{"test/t1.json", "output mismatch", `Input: {"a":1}`, `Expected output: {"result":3}`, `Actual output: {"result":"3"}`, "Mismatch: output mismatch at result"} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("rendered block missing %q:\n%s", want, rendered)
 		}

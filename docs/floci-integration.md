@@ -109,6 +109,7 @@ black-box fixtures (payload/expected output only, no side effects).
 | `description`    | Free text.                                                              |
 | `payload`        | Raw event passed to the Lambda.                                         |
 | `expectedOutput` | Optional. Matched against the response as a tolerant **JSON subset** — extra fields are ignored, formatting is irrelevant. Omit to assert only on side effects. |
+| `outputMode`     | Optional. How `expectedOutput` is compared: `tolerant` (default; lenient scalars, `"3"` matches `3`), `strict` (scalar types and values must match exactly), or `shape` (structure and value **types** only — for non-deterministic outputs like timestamps or generated ids). |
 | `setup`          | Declarative actions run **before** invocation.                          |
 | `sideEffects`    | Declarative assertions checked **after** invocation.                    |
 

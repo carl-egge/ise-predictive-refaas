@@ -22,8 +22,8 @@
 - [x] [A17] Zip ingestion: last-`.py`-wins, macOS junk entries, CRLF `.env` parsing
 
 **B. Software quality**
-- [ ] [B1] Unify the two output-comparison implementations (+ type-shape-only mode)
-- [ ] [B2] Tests for orchestration and validation semantics
+- [x] [B1] Unify the two output-comparison implementations (+ type-shape-only mode)
+- [x] [B2] Tests for orchestration and validation semantics
 - [ ] [B3] Error taxonomy unused; raw error strings muddle diagnostics
 - [ ] [B4] Job status conflates "in progress" and "unknown"
 - [x] [B5] Observability: chatlog correlation + per-stage metrics **(P0)**
@@ -260,21 +260,23 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 
 ## B. Software quality issues
 
-### [ ] [B1] Two divergent output-comparison implementations; the better one is unused by the core path
+### [x] [B1] Two divergent output-comparison implementations; the better one is unused by the core path
 - Category: Code Quality
 - Affected component(s): `internal/builder/validator.go` vs. `internal/floci/output.go`
 - Problem / current state: `internal/floci`'s `matchOutput`/`jsonSubset` is deterministic, recursion-safe, reports a dotted path to the first divergence, and has tests; `JsonAwareSimilarityValidation` is buggy (A1–A3), untested, and reports nothing. Two subtly different definitions of "equivalent output" make experimental results incomparable between `goTester` and `flociTester`.
 - Proposed change: Extract `jsonSubset` into a shared package and make `GoPackageTester` use it (after unwrapping the harness's `"response"`/`"error"` envelope), keeping similarity as an explicit opt-in fallback. For fixtures flagged non-deterministic (e.g. `f9`/`f10`, live external APIs — maintainer-confirmed as in-scope now and on larger scraped test sets later), the comparison must degrade to **type-shape only**: same JSON structure and value *types*, scalar values ignored. The current `valueValidation=false` mode approximates this but is undocumented and only skips scalar leaves — make shape-only comparison a first-class, documented mode of the unified comparator.
 - Why: One tested, deterministic equivalence definition eliminates a class of nondeterministic verdicts and gives repair stages a mismatch *path* to report ([C1]); the shape-only mode is what makes network-dependent fixtures validatable at all (maintainer decision, 2026-07-04).
 - Architecture impact: Local | Effort: M | Priority: P1
+- Status: **Implemented 2026-07-04.** New shared package `internal/compare` (`JSONSubset(want, got, mode)` with divergence-path reporting and JSON-encoded-string awareness — body key order/formatting never matters) with **three modes**, anticipating the future AWS evaluation set where flociTester becomes a primary route needing flexibility beyond output equivalence: `Strict` (exact scalar types+values; catches stringified-number bugs), `Tolerant` (floci's historical lenient scalars, `"3"`≈`3` — stays the floci default so existing behavior is preserved), `ShapeOnly` (structure + value types only; array lengths may differ). goTester's `strategy: "json"` now uses `NewJSONStructureValidation` (Strict normally, ShapeOnly for `undeterministic` fixtures, similarity strictly as non-JSON fallback) — the old `JsonAwareSimilarityValidation` is deleted; `ValidationStrategy` returns a mismatch *reason* that lands in the new `TestFailure.Detail` and renders as a "Mismatch:" line in `{{ .failures }}`. Floci `TestCase` gains declarative `outputMode` (`tolerant`/`strict`/`shape`, documented in docs/floci-integration.md), and black-box fixtures flagged non-deterministic derive `shape` cases automatically — both validation routes now agree on what "equivalent" means. Note: goTester leaf strings are now compared exactly under Strict (previously fuzzy 0.85 overlap) — an intentional tightening.
 
-### [ ] [B2] No tests for orchestration or validation semantics
+### [x] [B2] No tests for orchestration or validation semantics
 - Category: Code Quality
 - Affected component(s): `internal/pipeline` (no tests for `executeTask`), `internal/builder` (no validator tests)
 - Problem / current state: Retry budgets, recovery-before-retry, snapshot restore, validation-failure recursion are untested; the inverted validator (A1) and the recovery bug (A4) would both have been caught by small table-driven tests.
 - Proposed change: Add `pipeline_test.go` with fake converters asserting max-executions semantics, recovery invocation order, snapshot restore, validation-failure retry count; add `validator_test.go` with expected/actual JSON pairs including type mismatches.
 - Why: Every future pipeline change needs a safety net to avoid regressing the retry machinery the success rate depends on.
 - Architecture impact: None (test-only) | Effort: M | Priority: P1
+- Status: **Implemented 2026-07-04** (grown across the whole fixing campaign, completed in this pass). `pipeline_test.go` now covers all the originally listed gaps: max-executions semantics, recovery invocation order (`main, recover, main, recover, main` — recovery never runs after the final attempt), snapshot restore on a corrupted working package, validation-failure retry semantics (shared budget, validation error returned), cancellation abort at task entry, LLMError recovery-skip, and per-task metrics. `pipeline_io_test.go` covers compile-time checks (cycles/unknown refs, retry-count defaulting, embedded default pipeline). Validator semantics are covered by `validator_test.go` (direction, sibling keys, type mismatches, shape-only, harness envelope, evidence/timeout integration via real `go run`) plus the new `compare_test.go` mode table.
 
 ### [ ] [B3] Error taxonomy exists but is never consumed; raw error strings muddle diagnostics
 - Category: Code Quality

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/carl-egge/ise-predictive-refaas/internal/compare"
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
 )
 
@@ -27,12 +28,32 @@ type TestCase struct {
 	// validation and assert only on side effects.
 	ExpectedOutput json.RawMessage `json:"expectedOutput,omitempty"`
 
+	// OutputMode selects how ExpectedOutput is compared: "" or "tolerant"
+	// (default: structural subset with tolerant scalars), "strict" (scalar
+	// types and values must match exactly), or "shape" (structure and value
+	// types only - for non-deterministic outputs like timestamps or
+	// generated ids, where value equivalence is impossible by design).
+	OutputMode string `json:"outputMode,omitempty"`
+
 	// Setup actions run before invocation (e.g. create a bucket/table, seed an
 	// item). SideEffects are asserted after invocation. Both are dispatched by
 	// their Type through the setup/checker registries, so new kinds can be
 	// added without touching the runner.
 	Setup       []Assertion `json:"setup,omitempty"`
 	SideEffects []Assertion `json:"sideEffects,omitempty"`
+}
+
+// compareMode maps the declarative OutputMode onto the shared comparator's
+// mode, defaulting to the historical tolerant behavior.
+func (tc TestCase) compareMode() compare.Mode {
+	switch tc.OutputMode {
+	case "strict":
+		return compare.Strict
+	case "shape":
+		return compare.ShapeOnly
+	default:
+		return compare.Tolerant
+	}
 }
 
 // Assertion is a single declarative setup action or side-effect check. The Type
@@ -171,6 +192,11 @@ func parsePackageTestCase(name string, raw []byte) (TestCase, error) {
 	}
 	if strings.TrimSpace(tf.Output) != "" {
 		tc.ExpectedOutput = json.RawMessage(tf.Output)
+	}
+	if tf.UndeterministicResults {
+		// mirror the goTester semantics: non-deterministic fixtures are
+		// compared by structure and value types only
+		tc.OutputMode = "shape"
 	}
 	return tc, nil
 }

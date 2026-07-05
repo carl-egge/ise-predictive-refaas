@@ -5,18 +5,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/carl-egge/ise-predictive-refaas/internal/compare"
 )
 
-// matchOutput validates a Lambda response against an expected value in a
-// black-box, formatting-tolerant way. Both sides are parsed as JSON and
-// compared as a subset: every field present in expected must appear in actual
-// with an equal value, while extra fields in actual are ignored. This mirrors
-// the goTester's lenient comparison but is structural rather than
-// string-similarity based.
+// matchOutput validates a Lambda response against an expected value using
+// the shared comparator (internal/compare) - the same definition of
+// "equivalent" the goTester uses, so results are comparable between the two
+// validation routes. mode selects the flexibility level: tolerant subset
+// matching by default, strict scalar typing, or type-shape-only for
+// non-deterministic outputs (see TestCase.OutputMode).
 //
 // If either side is not valid JSON, it falls back to a trimmed substring
 // comparison so plain-string handlers still validate.
-func matchOutput(expected, actual []byte) error {
+func matchOutput(expected, actual []byte, mode compare.Mode) error {
 	if len(expected) == 0 {
 		return nil // no expectation declared
 	}
@@ -34,56 +36,11 @@ func matchOutput(expected, actual []byte) error {
 		return fmt.Errorf("output %q does not contain expected %q", a, e)
 	}
 
-	if ok, path := jsonSubset(exp, act); !ok {
+	if ok, path := compare.JSONSubset(exp, act, mode); !ok {
 		return fmt.Errorf("output mismatch at %s: expected %s, got %s",
 			path, compact(expected), compact(actual))
 	}
 	return nil
-}
-
-// jsonSubset reports whether want is a subset of got. On mismatch it returns a
-// dotted path to the first divergence for a readable error message.
-func jsonSubset(want, got interface{}) (bool, string) {
-	switch w := want.(type) {
-	case map[string]interface{}:
-		g, ok := got.(map[string]interface{})
-		if !ok {
-			return false, "$"
-		}
-		for k, wv := range w {
-			gv, ok := g[k]
-			if !ok {
-				return false, k
-			}
-			if ok, sub := jsonSubset(wv, gv); !ok {
-				return false, joinPath(k, sub)
-			}
-		}
-		return true, ""
-	case []interface{}:
-		g, ok := got.([]interface{})
-		if !ok || len(g) != len(w) {
-			return false, "[]"
-		}
-		for i := range w {
-			if ok, sub := jsonSubset(w[i], g[i]); !ok {
-				return false, joinPath(fmt.Sprintf("[%d]", i), sub)
-			}
-		}
-		return true, ""
-	default:
-		if !scalarsEqual(want, got) {
-			return false, "."
-		}
-		return true, ""
-	}
-}
-
-func joinPath(head, tail string) string {
-	if tail == "" || tail == "." {
-		return head
-	}
-	return head + "." + tail
 }
 
 func compact(b []byte) string {

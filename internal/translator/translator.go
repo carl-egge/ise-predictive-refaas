@@ -291,6 +291,9 @@ func renderTestFailures(failures []domain.TestFailure) string {
 			actual = "(empty)"
 		}
 		fmt.Fprintf(&b, "  Actual output: %s\n", actual)
+		if f.Detail != "" {
+			fmt.Fprintf(&b, "  Mismatch: %s\n", f.Detail)
+		}
 		if f.Stderr != "" {
 			fmt.Fprintf(&b, "  Stderr: %s\n", f.Stderr)
 		}
