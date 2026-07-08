@@ -29,7 +29,13 @@ type ConverterService struct {
 	// keyed by job UUID. An entry exists from upload until the job finishes
 	// (success, failure, or cancellation), at which point it is removed.
 	cancels map[uuid.UUID]context.CancelFunc
-	mutex   sync.RWMutex
+	// status tracks jobs that have been accepted but haven't finished yet,
+	// keyed by job UUID. An entry exists from upload until the job finishes,
+	// at which point it is removed (the job then only exists in results).
+	// This lets pollHandler distinguish "still queued/running" from
+	// "unknown uuid" instead of both reporting 404.
+	status map[uuid.UUID]jobStatus
+	mutex  sync.RWMutex
 	// runnerMu serializes use of the shared Runner between the background
 	// worker (Convert) and /reconfigure (Reconfigure), which swaps the
 	// runner's pipeline/LLM client and removes its working directory - doing
@@ -39,6 +45,14 @@ type ConverterService struct {
 	// the in-flight conversion to finish.
 	runnerMu sync.Mutex
 }
+
+// jobStatus is the state of a job that hasn't finished yet.
+type jobStatus string
+
+const (
+	statusQueued  jobStatus = "queued"
+	statusRunning jobStatus = "running"
+)
 
 // queuedConversion pairs a conversion request with the context that controls
 // it, so cancelling that context (via stopHandler) aborts the job whether
@@ -63,6 +77,7 @@ func MakeConverterService() error {
 		results:      make(map[uuid.UUID]*domain.ConversionRequest),
 		metrics:      make(map[uuid.UUID]domain.Metrics),
 		cancels:      make(map[uuid.UUID]context.CancelFunc),
+		status:       make(map[uuid.UUID]jobStatus),
 	}
 
 	log.Infof("Starting converter service with options: %+v", options)
@@ -85,6 +100,11 @@ func (service *ConverterService) Start(ctx context.Context) {
 	for job := range service.requestQueue {
 		request := job.request
 		log.Infof("starting request for %s", request.Id)
+
+		service.mutex.Lock()
+		service.status[request.Id] = statusRunning
+		service.mutex.Unlock()
+
 		startTime := time.Now()
 		service.runnerMu.Lock()
 		err := service.converter.Convert(job.ctx, request)
@@ -96,6 +116,7 @@ func (service *ConverterService) Start(ctx context.Context) {
 			cancel()
 			delete(service.cancels, request.Id)
 		}
+		delete(service.status, request.Id)
 		service.mutex.Unlock()
 
 		if err != nil {
@@ -146,7 +167,22 @@ func (service *ConverterService) pollHandler(w http.ResponseWriter, r *http.Requ
 	}
 	service.mutex.RLock()
 	resp, ok := service.results[jobUUID]
+	status, inProgress := service.status[jobUUID]
 	service.mutex.RUnlock()
+
+	if inProgress {
+		w.Header().Set("X-Job-Status", string(status))
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, fmt.Sprintf("Unsupported method: %s", r.Method), http.StatusMethodNotAllowed)
+			return
+		}
+		http.Error(w, fmt.Sprintf("job %s is still %s", jobUUID, status), http.StatusAccepted)
+		return
+	}
 
 	if r.Method == http.MethodHead {
 		if ok {
@@ -236,6 +272,7 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 	jobCtx, cancel := context.WithCancel(context.Background())
 	service.mutex.Lock()
 	service.cancels[request.Id] = cancel
+	service.status[request.Id] = statusQueued
 	service.mutex.Unlock()
 
 	service.requestQueue <- &queuedConversion{ctx: jobCtx, request: request}

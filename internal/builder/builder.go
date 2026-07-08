@@ -88,7 +88,6 @@ func (cc *GolangBuilder) Apply(runner *pipeline.Runner, request *domain.Conversi
 	dir, err := os.MkdirTemp("", "fn_lmm")
 	if err != nil {
 		log.Errorf("Error creating temporary directory: %s", err)
-		request.AddError(err)
 		return err
 	}
 	runner.SetWorkingDir(dir)
@@ -99,7 +98,11 @@ func (cc *GolangBuilder) Apply(runner *pipeline.Runner, request *domain.Conversi
 			request.Metrics.BuildError += 1
 		}
 		log.Debugf("failed to build: %s", err.Error())
-		request.AddError(err)
+		// Don't AddError here too - executeTask (internal/pipeline/pipeline.go)
+		// already records every returned task error into req.errs exactly
+		// once; doing it here as well duplicated the same failure (once raw,
+		// once CompilationError-wrapped) in the error history and in the
+		// {{ .failures }}/issues lists derived from it.
 		return domain.NewCompilationError(err)
 	}
 	log.Debugf("compiled code in %s", time.Since(start))
@@ -283,7 +286,7 @@ func extractDiagnostics(output string) []string {
 func formatBuildError(buildCmd, output string, err error) error {
 	diags := extractDiagnostics(output)
 	if len(diags) == 0 {
-		return fmt.Errorf("failed to build. %s \n\n %+v", output, err)
+		return fmt.Errorf("failed to build. %s%s", output, exitStatusSuffix(err))
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "the build command %q failed with the following errors:\n", buildCmd)
@@ -291,4 +294,16 @@ func formatBuildError(buildCmd, output string, err error) error {
 		fmt.Fprintf(&b, "%d. %s\n", i+1, d)
 	}
 	return errors.New(strings.TrimRight(b.String(), "\n"))
+}
+
+// exitStatusSuffix formats err for appending to the captured build output,
+// unless err is just the command's exit status (e.g. "exit status 1") - that
+// adds no information once the command's combined stdout/stderr is already
+// shown, and only clutters the {{ .issue }} text the fixer prompt reads.
+func exitStatusSuffix(err error) string {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return ""
+	}
+	return fmt.Sprintf("\n\n %+v", err)
 }

@@ -3,6 +3,7 @@ package builder
 import (
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -68,5 +69,29 @@ func TestFormatBuildErrorKeepsGoModMarkers(t *testing.T) {
 	raw := formatBuildError("go build", "linker exploded in some novel way", errors.New("exit status 2"))
 	if !strings.Contains(raw.Error(), "linker exploded") {
 		t.Errorf("fallback should preserve the raw output, got: %v", raw)
+	}
+}
+
+// TestFormatBuildErrorStripsRedundantExitStatus guards [B3]: a plain
+// *exec.ExitError ("exit status N") carries no information beyond what the
+// captured combined stdout/stderr already shows, so it must not be appended a
+// second time to the fallback message. A non-exit-status error (e.g. the
+// command failing to start) is unique information and must still appear.
+func TestFormatBuildErrorStripsRedundantExitStatus(t *testing.T) {
+	// a real *exec.ExitError, since the fallback path type-asserts for it
+	exitErr := exec.Command("false").Run()
+	if exitErr == nil {
+		t.Fatal("expected the `false` command to exit non-zero")
+	}
+
+	err := formatBuildError("go build", "unparseable linker noise", exitErr)
+	if strings.Contains(err.Error(), "exit status") {
+		t.Errorf("redundant exit status suffix should be stripped, got: %v", err)
+	}
+
+	other := errors.New(`exec: "go": executable file not found in $PATH`)
+	err = formatBuildError("go build", "", other)
+	if !strings.Contains(err.Error(), "executable file not found") {
+		t.Errorf("a non-exit-status error carries unique information and must be kept, got: %v", err)
 	}
 }

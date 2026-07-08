@@ -61,7 +61,7 @@ func (CanCompileConverter) Apply(run *Runner, req *domain.ConversionRequest) err
 	}
 
 	if req.SourcePackage.RootFile == "" {
-		return fmt.Errorf("no soruce root file defined")
+		return fmt.Errorf("no source root file defined")
 	}
 
 	if req.WorkingPackage.RootFile == "" {

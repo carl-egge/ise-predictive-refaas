@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
@@ -186,6 +187,49 @@ func TestExecuteTaskRecoveryRunsBetweenAttempts(t *testing.T) {
 		if order[i] != want[i] {
 			t.Fatalf("invocation order = %v, want %v", order, want)
 		}
+	}
+}
+
+// TestExecuteTaskJoinsOriginalErrorWithFailedRecovery guards [B3]: when a
+// recovery task itself fails, the returned/last-recorded error must still
+// surface the original defect (what the fixer/align prompt's {{ .issue }}
+// needs) instead of only "recovery also failed", and a typed error on either
+// side must still be reachable via errors.As.
+func TestExecuteTaskJoinsOriginalErrorWithFailedRecovery(t *testing.T) {
+	originalErr := domain.NewCompilationError(errors.New("undefined: foo"))
+	failing := &stubConverter{err: originalErr}
+	recovery := &stubConverter{err: errors.New("recovery prompt errored")}
+
+	task := &ConversionTask{
+		ID:            "main",
+		Execute:       failing,
+		MaxRetryCount: 2,
+		OnFailure:     &ConversionTask{ID: "recover", Execute: recovery, MaxRetryCount: 1},
+	}
+	p := NewPipeline(task)
+	runner := NewRunner(context.Background(), p, nil)
+
+	req := &domain.ConversionRequest{}
+	err := p.Execute(runner, req)
+	if err == nil {
+		t.Fatal("expected the task to fail")
+	}
+
+	if !strings.Contains(err.Error(), "undefined: foo") {
+		t.Errorf("returned error = %q, want it to still contain the original defect", err.Error())
+	}
+	if !strings.Contains(err.Error(), "recovery prompt errored") {
+		t.Errorf("returned error = %q, want it to also contain the recovery failure", err.Error())
+	}
+
+	var ce domain.CompilationError
+	if !errors.As(err, &ce) {
+		t.Errorf("errors.As found no CompilationError in %v, want the original typed error reachable", err)
+	}
+
+	last := req.LastError()
+	if last == nil || !strings.Contains(last.Error(), "undefined: foo") {
+		t.Errorf("LastError() = %v, want it to still contain the original defect", last)
 	}
 }
 

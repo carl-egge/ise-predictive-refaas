@@ -42,6 +42,7 @@
 - [ ] [C9] Support multi-file Python inputs (currently rejected at upload)
 - [ ] [C10] Unified fixture schema + per-job validation routing (goTester vs. flociTester)
 - [ ] [C11] Prevent AWS leakage: always resolve to the Floci harness
+- [ ] [C12] Unify the two test JSON shapes into one canonical fixture schema
 
 **D. Prompts**
 - [x] [D1] Convert prompt: fix broken few-shot; state the harness contract **(P0)**
@@ -278,21 +279,23 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: None (test-only) | Effort: M | Priority: P1
 - Status: **Implemented 2026-07-04** (grown across the whole fixing campaign, completed in this pass). `pipeline_test.go` now covers all the originally listed gaps: max-executions semantics, recovery invocation order (`main, recover, main, recover, main` — recovery never runs after the final attempt), snapshot restore on a corrupted working package, validation-failure retry semantics (shared budget, validation error returned), cancellation abort at task entry, LLMError recovery-skip, and per-task metrics. `pipeline_io_test.go` covers compile-time checks (cycles/unknown refs, retry-count defaulting, embedded default pipeline). Validator semantics are covered by `validator_test.go` (direction, sibling keys, type mismatches, shape-only, harness envelope, evidence/timeout integration via real `go run`) plus the new `compare_test.go` mode table.
 
-### [ ] [B3] Error taxonomy exists but is never consumed; raw error strings muddle diagnostics
+### [x] [B3] Error taxonomy exists but is never consumed; raw error strings muddle diagnostics
 - Category: Code Quality
 - Affected component(s): `internal/domain/errors.go`, `internal/pipeline/pipeline.go`, `internal/builder/builder.go`
-- Problem / current state: `CompilationError`/`TestingError`/`LLMError` are created but nothing type-switches on them. When a recovery task fails, its error *replaces* the original task error, hiding the root cause. Build errors are double-wrapped; typos ("no soruce root file") ship in user-facing messages.
+- Problem / current state: `CompilationError`/`TestingError`/`LLMError` are created but nothing type-switches on them. When a recovery task fails, its error *replaces* the original task error, hiding the root cause. Build errors are double-wrapped;
 - Proposed change: Wrap-and-join recovery errors with the original; strip redundant `exit status` suffixes; keep typed errors for [C1]'s crash-vs-mismatch routing.
 - Why: Cleaner errors directly improve what the fixer prompt sees (`{{ .issue }}` is `LastError().Error()`).
 - Architecture impact: Local | Effort: S | Priority: P2
+- Status: **Implemented 2026-07-08.** `internal/pipeline/pipeline.go`'s `executeTask` now joins (`errors.Join`) the original task error with a wrapped recovery failure when `OnFailure` itself fails, instead of letting the recovery error silently replace it - `LastError()`/`{{ .issue }}` (and `errors.As`) can still see the original defect. `internal/builder/builder.go`'s `GolangBuilder.Apply` no longer calls `request.AddError` itself (both the temp-dir and build-failure paths) - `executeTask` already records every returned task error into `req.errs` exactly once, so the same failure was previously appearing twice (once raw, once `CompilationError`-wrapped). `formatBuildError`'s fallback (no parseable diagnostics) now drops the trailing `%+v` of the error when it's a plain `*exec.ExitError` ("exit status N"), which is redundant once the command's combined stdout/stderr is already shown; non-exit-status errors (e.g. command not found) are still appended since they carry unique information. `internal/domain/errors.go`'s `CompilationError`/`TestingError`/`LLMError` gained `Unwrap() error` so they compose correctly inside `errors.Join`/`fmt.Errorf("%w", ...)` and remain traversable by `errors.As`/`errors.Is`. Tests: `TestExecuteTaskJoinsOriginalErrorWithFailedRecovery` (`internal/pipeline/pipeline_test.go`), `TestFormatBuildErrorStripsRedundantExitStatus` (`internal/builder/builder_test.go`).
 
-### [ ] [B4] Job status conflates "in progress" and "unknown"
+### [x] [B4] Job status conflates "in progress" and "unknown"
 - Category: Code Quality
 - Affected component(s): `internal/service/service.go` (`results` written only on completion)
 - Problem / current state: `HEAD /{uuid}` returns 404 until the job finishes; clients cannot distinguish a queued/running job from a nonexistent one.
 - Proposed change: Record the request at enqueue time with a status field; `HEAD` returns 200+status, `GET` on an unfinished job returns 202/425 instead of 404.
 - Why: Reliable polling avoids evaluation scripts abandoning or double-submitting long jobs.
 - Architecture impact: Local | Effort: S | Priority: P2
+- Status: **Implemented 2026-07-08.** New `status map[uuid.UUID]jobStatus` (`"queued"`/`"running"`) on `ConverterService`, set in `uploadHandler` at enqueue time and updated to `"running"` in `Start` when a job is dequeued, removed once `Convert` returns. `pollHandler` checks this map first: `HEAD` on a queued/running job returns 200 with an `X-Job-Status` header, `GET` returns 202 with a status message instead of falling through to the existing "not found"/completed-package logic. Unknown uuids still 404.
 
 ### [x] [B5] Observability gaps: chatlogs lack job/stage correlation; no per-stage metrics
 - Category: Code Quality
@@ -419,6 +422,15 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local
 - Estimated effort: M
 - Priority: P1
+
+### [ ] [C12] Unify the two test JSON shapes into one canonical fixture schema
+- Category: Feature
+- Affected component(s): `internal/domain/types.go` (`TestFile`), `internal/floci/testcase.go` (`parsePackageTestCase`), `internal/builder/validator.go` (`goTester`), `internal/floci` (`flociTester`) — overlaps with [C10]'s routing work but is narrower: this item is only about the *shape* of the fixture JSON, not which tester a job gets routed to
+- Problem / current state: `goTester` and `flociTester` currently accept two structurally different fixture dialects: (1) simple black-box I/O — `{"input": "<json-string>", "output": "<json-string>"}` for side-effect-free functions; (2) the Floci side-effect dialect — `{"name", "description", "payload", "expectedOutput", "setup": [...], "sideEffects": [...]}`. Maintaining two shapes (plus `floci.parsePackageTestCase`'s ad hoc shape-detection between them) doubles the fixture-parsing code path and the mental model needed to author a test.
+- Proposed change (not yet implemented — structural note only): treat the Floci side-effect shape as canonical and make the simple I/O shape its degenerate case, unified into one schema: `name`, `description`, `payload` (parsed JSON value passed as the event — for simple fixtures this is just the old `input`), `expectedOutput` (optional — omitting it means "skip output validation, assert side effects only"; for simple fixtures this is the old `output`), `setup`/`sideEffects` (empty for simple fixtures), plus an `outputMode` (`tolerant` default / `strict` / `shape` — `shape` replacing today's `undeterministic: true` flag) and a `provenance` field (`{"method": "heuristic|mined|llm", "output_source": "golden|authored"}`) recording how the fixture was produced. Legacy `input`/`output`/`deterministic` fixtures would be auto-lowered into this canonical shape by the parser rather than requiring authors to rewrite existing fixtures.
+- Why: One schema instead of two removes duplicated parsing/detection logic in `floci.parsePackageTestCase` and `builder/validator.go`, gives every fixture a place to record how it was generated (useful once fixture mining/generation is explored), and folds `undeterministic`/`deterministic` into the same `outputMode` concept already introduced by [B1]'s shape-only comparison mode — rather than keeping it as a separate boolean alongside the new mode enum.
+- Architecture impact: Local (schema/parsing consolidation; no new pipeline stages) | Effort: M | Priority: P2
+- Note: purely a structural TODO at this point — no implementation, migration, or field additions have been made; captured here per maintainer request for future scoping alongside [C10].
 
 ---
 

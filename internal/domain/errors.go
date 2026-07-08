@@ -63,6 +63,13 @@ func (e TestingError) Error() string {
 	return e.err.Error()
 }
 
+// Unwrap exposes the wrapped error so errors.Is/errors.As can see through a
+// TestingError to whatever it wraps (e.g. a context deadline error), and so
+// TestingError values compose correctly inside errors.Join/fmt.Errorf("%w").
+func (e TestingError) Unwrap() error {
+	return e.err
+}
+
 // Code returns the error code for the testing error.
 func (e TestingError) Code() int {
 	return e.errorCode
@@ -85,6 +92,11 @@ func (e CompilationError) Error() string {
 	return e.err.Error()
 }
 
+// Unwrap exposes the wrapped error - see TestingError.Unwrap.
+func (e CompilationError) Unwrap() error {
+	return e.err
+}
+
 // LLMError wraps errors coming from LLM invocation or parsing.
 type LLMError struct {
 	err error
@@ -100,4 +112,9 @@ func (e LLMError) Error() string {
 		return ""
 	}
 	return e.err.Error()
+}
+
+// Unwrap exposes the wrapped error - see TestingError.Unwrap.
+func (e LLMError) Unwrap() error {
+	return e.err
 }

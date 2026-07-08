@@ -149,17 +149,27 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 					log.Debugf("skipping recovery for task (%s): %v", task.ID, err)
 					time.Sleep(task.RetryDelay)
 				} else if task.OnFailure != nil {
-					req.AddError(err)
+					originalErr := err
+					req.AddError(originalErr)
 					log.Debugf("attempting to recover task (%s) before retrying", task.ID)
-					err = p.executeTask(runner, req, task.OnFailure)
+					recoveryErr := p.executeTask(runner, req, task.OnFailure)
 					// the recovery task overwrote CurrentTask; restore it for
 					// this task's remaining attempts/validation
 					req.CurrentTask = task.ID
-					if err == nil {
+					if recoveryErr == nil {
 						log.Debugf("Retrying failed task (%s) after recovery", task.ID)
 						continue
 					}
 					log.Debugf("Recovery failed.")
+					// Join instead of letting recoveryErr replace originalErr:
+					// otherwise LastError() (the fixer/align prompt's
+					// {{ .issue }}) only ever sees "recovery also failed"
+					// and never the code defect that triggered recovery in
+					// the first place. errors.As still finds typed errors
+					// (LLMError/TestingError/CompilationError) on either
+					// side, since Join's Unwrap() []error is traversed by
+					// errors.As/Is.
+					err = errors.Join(originalErr, fmt.Errorf("recovery task (%s) also failed: %w", task.OnFailure.ID, recoveryErr))
 					break
 				} else {
 					time.Sleep(task.RetryDelay)
