@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -18,52 +17,55 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/exp/maps"
 )
 
 // ConverterService manages background conversion jobs and exposes an HTTP interface.
 type ConverterService struct {
 	converter    *pipeline.Runner
-	requestQueue chan *domain.ConversionRequest
+	requestQueue chan *queuedConversion
 	results      map[uuid.UUID]*domain.ConversionRequest
 	metrics      map[uuid.UUID]domain.Metrics
-	mutex        sync.RWMutex
+	// cancels holds the CancelFunc for every queued or in-progress job,
+	// keyed by job UUID. An entry exists from upload until the job finishes
+	// (success, failure, or cancellation), at which point it is removed.
+	cancels map[uuid.UUID]context.CancelFunc
+	// status tracks jobs that have been accepted but haven't finished yet,
+	// keyed by job UUID. An entry exists from upload until the job finishes,
+	// at which point it is removed (the job then only exists in results).
+	// This lets pollHandler distinguish "still queued/running" from
+	// "unknown uuid" instead of both reporting 404.
+	status map[uuid.UUID]jobStatus
+	mutex  sync.RWMutex
+	// runnerMu serializes use of the shared Runner between the background
+	// worker (Convert) and /reconfigure (Reconfigure), which swaps the
+	// runner's pipeline/LLM client and removes its working directory - doing
+	// that mid-conversion would be a data race and could delete the build dir
+	// out from under a running job. It is never held together with mutex, so
+	// the two locks cannot deadlock; a /reconfigure request simply waits for
+	// the in-flight conversion to finish.
+	runnerMu sync.Mutex
 }
 
-func setOrDefault(key, defaultValue string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return defaultValue
-}
+// jobStatus is the state of a job that hasn't finished yet.
+type jobStatus string
 
-func setFileFromEnv(key, defaultValue string) string {
-	if val := os.Getenv(key); val != "" {
-		fs, err := os.OpenFile(val, os.O_RDONLY, 0644)
-		if err != nil {
-			return defaultValue
-		}
-		defer fs.Close()
-		fsdat, err := io.ReadAll(fs)
-		if err != nil {
-			return defaultValue
-		}
-		if len(fsdat) == 0 {
-			return defaultValue
-		}
-		return string(fsdat)
-	}
-	return defaultValue
+const (
+	statusQueued  jobStatus = "queued"
+	statusRunning jobStatus = "running"
+)
+
+// queuedConversion pairs a conversion request with the context that controls
+// it, so cancelling that context (via stopHandler) aborts the job whether
+// it's still waiting in requestQueue or already running.
+type queuedConversion struct {
+	ctx     context.Context
+	request *domain.ConversionRequest
 }
 
 // MakeConverterService constructs and starts the HTTP converter service; it
 // blocks by calling http.ListenAndServe.
 func MakeConverterService() error {
-	options := pipeline.DefaultOptions
-	options.Args = maps.Clone(pipeline.DefaultOptions.Args)
-	options.Args["OLLAMA_API_URL"] = setOrDefault("OLLAMA_API_URL", pipeline.DefaultOllamaAPIURL)
-	options.Args["GEMINI_API_KEY"] = setOrDefault("GEMINI_API_KEY", "NOT+SET")
-
+	options := pipeline.ConverterOptions{}
 	converter, err := pipeline.MakeCodeConverter(&options)
 	if err != nil {
 		return err
@@ -71,9 +73,11 @@ func MakeConverterService() error {
 
 	sv := ConverterService{
 		converter:    converter,
-		requestQueue: make(chan *domain.ConversionRequest, 100),
+		requestQueue: make(chan *queuedConversion, 100),
 		results:      make(map[uuid.UUID]*domain.ConversionRequest),
 		metrics:      make(map[uuid.UUID]domain.Metrics),
+		cancels:      make(map[uuid.UUID]context.CancelFunc),
+		status:       make(map[uuid.UUID]jobStatus),
 	}
 
 	log.Infof("Starting converter service with options: %+v", options)
@@ -82,6 +86,7 @@ func MakeConverterService() error {
 	r.Path("/").Methods(http.MethodPost).HandlerFunc(sv.uploadHandler)
 	r.Path("/metrics").Methods(http.MethodGet).HandlerFunc(sv.metricsHandler)
 	r.Path("/reconfigure").Methods(http.MethodPost).HandlerFunc(sv.reconfigure)
+	r.Path("/stop/{uuid}").Methods(http.MethodPost).HandlerFunc(sv.stopHandler)
 	r.Path("/{uuid}").Methods(http.MethodHead, http.MethodGet).HandlerFunc(sv.pollHandler)
 
 	ctx := context.Background()
@@ -92,11 +97,28 @@ func MakeConverterService() error {
 
 // Start runs the background worker loop that processes queued conversion requests.
 func (service *ConverterService) Start(ctx context.Context) {
-	for request := range service.requestQueue {
+	for job := range service.requestQueue {
+		request := job.request
 		log.Infof("starting request for %s", request.Id)
+
+		service.mutex.Lock()
+		service.status[request.Id] = statusRunning
+		service.mutex.Unlock()
+
 		startTime := time.Now()
-		err := service.converter.Convert(request)
+		service.runnerMu.Lock()
+		err := service.converter.Convert(job.ctx, request)
+		service.runnerMu.Unlock()
 		endTime := time.Now()
+
+		service.mutex.Lock()
+		if cancel, ok := service.cancels[request.Id]; ok {
+			cancel()
+			delete(service.cancels, request.Id)
+		}
+		delete(service.status, request.Id)
+		service.mutex.Unlock()
+
 		if err != nil {
 			request.Completed = false
 			log.Debugf("error converting best n for %s: %v", request.Id, err)
@@ -145,7 +167,22 @@ func (service *ConverterService) pollHandler(w http.ResponseWriter, r *http.Requ
 	}
 	service.mutex.RLock()
 	resp, ok := service.results[jobUUID]
+	status, inProgress := service.status[jobUUID]
 	service.mutex.RUnlock()
+
+	if inProgress {
+		w.Header().Set("X-Job-Status", string(status))
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, fmt.Sprintf("Unsupported method: %s", r.Method), http.StatusMethodNotAllowed)
+			return
+		}
+		http.Error(w, fmt.Sprintf("job %s is still %s", jobUUID, status), http.StatusAccepted)
+		return
+	}
 
 	if r.Method == http.MethodHead {
 		if ok {
@@ -163,9 +200,11 @@ func (service *ConverterService) pollHandler(w http.ResponseWriter, r *http.Requ
 
 	if ok {
 		defer func() {
-			service.mutex.RLock()
+			// deleting is a map write and needs the write lock; doing it
+			// under RLock can crash the process on concurrent requests.
+			service.mutex.Lock()
 			delete(service.results, jobUUID)
-			service.mutex.RUnlock()
+			service.mutex.Unlock()
 		}()
 		if resp == nil || resp.WorkingPackage == nil {
 			outputhandler.WriteHTTPError(w, fmt.Errorf("no working package for job uuid %s", jobUUID.String()))
@@ -217,16 +256,56 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	dp, err := inputhandler.ReadFromBytes(fileData)
-	if err != nil || dp == nil {
+	if err != nil {
+		// malformed archives (bad zip, multiple root source files) are client
+		// errors and should say why instead of a generic 500.
+		http.Error(w, fmt.Sprintf("Error reading file: %v", err), http.StatusBadRequest)
+		return
+	}
+	if dp == nil {
 		http.Error(w, "Error reading file", http.StatusInternalServerError)
 		return
 	}
 
 	request := pipeline.MakeConversionRequest(dp)
 
-	service.requestQueue <- request
+	jobCtx, cancel := context.WithCancel(context.Background())
+	service.mutex.Lock()
+	service.cancels[request.Id] = cancel
+	service.status[request.Id] = statusQueued
+	service.mutex.Unlock()
+
+	service.requestQueue <- &queuedConversion{ctx: jobCtx, request: request}
 	log.Infof("got new conversion request for %s", request.Id)
-	http.Redirect(w, r, fmt.Sprintf("/%s", request.Id.String()), http.StatusCreated)
+	// http.Redirect(w, r, fmt.Sprintf("/%s", request.Id.String()), http.StatusCreated)
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte(fmt.Sprintf("%s\n", request.Id.String())))
+}
+
+// stopHandler cancels a queued or in-progress conversion identified by uuid.
+// The pipeline aborts at the next opportunity instead of continuing to spend
+// build/test/LLM resources on it; already-finished jobs are not tracked here
+// anymore and report 404.
+func (service *ConverterService) stopHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	jobUUID, err := uuid.Parse(vars["uuid"])
+	if err != nil {
+		http.Error(w, fmt.Sprintf("uuid error:%+v %+v", vars, err), http.StatusBadRequest)
+		return
+	}
+
+	service.mutex.RLock()
+	cancel, ok := service.cancels[jobUUID]
+	service.mutex.RUnlock()
+
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	cancel()
+	log.Infof("cancellation requested for %s", jobUUID)
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (service *ConverterService) reconfigure(w http.ResponseWriter, r *http.Request) {
@@ -237,8 +316,15 @@ func (service *ConverterService) reconfigure(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	service.mutex.Lock()
+	// Reconfigure swaps the runner's pipeline/client and cleans its working
+	// dir; runnerMu keeps that from racing an in-flight Convert. The state
+	// maps are wiped under the separate state mutex afterwards - the two
+	// locks are intentionally never nested.
+	service.runnerMu.Lock()
 	err := service.converter.Reconfigure(&options)
+	service.runnerMu.Unlock()
+
+	service.mutex.Lock()
 	service.metrics = make(map[uuid.UUID]domain.Metrics)
 	service.results = make(map[uuid.UUID]*domain.ConversionRequest)
 	service.mutex.Unlock()

@@ -9,11 +9,22 @@ services:
       - OLLAMA_API_URL=${OLLAMA_API_URL}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL}
+      # Optional Floci integration. Leave FLOCI_ENABLED unset (or "false") to
+      # keep the feature off — the flociTester stage then no-ops even if present
+      # in a pipeline. Set FLOCI_ENABLED=true (and start with --profile floci)
+      # to deploy/test translated functions against the Floci emulator.
+      - FLOCI_ENABLED=${FLOCI_ENABLED:-false}
+      - FLOCI_ENDPOINT=${FLOCI_ENDPOINT:-http://floci:4566}
+      - FLOCI_REGION=${FLOCI_REGION:-us-east-1}
     volumes:
       - ./chatlogs:/app/chatlogs
       - ./data:/app/data
+      # Example Floci test cases referenced by examples/floci/pipeline.json.
+      - ./examples:/app/examples
     depends_on:
       - ollama
+    networks:
+      - refaas-net
     restart: unless-stopped
 
   ollama:
@@ -26,7 +37,43 @@ services:
     environment:
       # Ollama runs its own defaults; no extra env vars required here.
       - OLLAMA_ALLOW_NETWORK=false
+    networks:
+      - refaas-net
     restart: unless-stopped
+
+  # Optional local AWS emulator for the Floci integration stage. Only started
+  # when explicitly requested:
+  #
+  #   docker compose --profile floci up --build
+  #
+  # Requirements (see docs/floci-integration.md):
+  #   - the Docker socket, because Lambda runs real Docker containers
+  #   - a writable data mount, because Floci extracts deployment packages there
+  #   - run as root to avoid permission failures on the mounted data dir
+  #   - the Lambda Docker network set to this compose network, so Lambda
+  #     runtime containers can reach Floci's runtime API
+  floci:
+    image: hectorvent/floci:latest
+    container_name: floci
+    profiles: ["floci"]
+    user: root
+    ports:
+      - "4566:4566"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data/floci:/app/data
+    environment:
+      # Place Lambda runtime containers on this compose network so they can
+      # reach Floci by container name. The exact variable name can vary by
+      # Floci version — confirm against the Floci docs for the image you pull.
+      - FLOCI_SERVICES_LAMBDA_DOCKER_NETWORK=refaas-net
+    networks:
+      - refaas-net
+    restart: unless-stopped
+
+networks:
+  refaas-net:
+    name: refaas-net
 
 volumes:
   ollama_data:

@@ -1,6 +1,14 @@
 /chatlogs/*.*
 /logs/*.*
-/data/*.*
+/data/
+data
+/data/**
+/examples/output/*
+/examples/metrics/*
+/docs/writing/*
+/docs/*.bkp
 faasllm
 *.txt
 .env
+
+.claude

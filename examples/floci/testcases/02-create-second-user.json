@@ -1,0 +1,14 @@
+{
+  "name": "create-second-user",
+  "description": "A second user; reuses the bucket/table created above (setup is idempotent).",
+  "payload": { "id": "u2", "name": "Alan Turing", "email": "alan@example.com" },
+  "expectedOutput": { "status": "ok" },
+  "setup": [
+    { "type": "s3.bucket", "bucket": "audit" },
+    { "type": "dynamodb.table", "table": "Users", "hashKey": "id" }
+  ],
+  "sideEffects": [
+    { "type": "dynamodb.itemExists", "table": "Users", "key": { "id": "u2" }, "attributes": { "name": "Alan Turing" } },
+    { "type": "s3.objectContains", "bucket": "audit", "key": "u2.json", "substring": "alan@example.com" }
+  ]
+}

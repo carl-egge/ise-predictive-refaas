@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"time"
@@ -88,47 +89,91 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 		log.Debugf("Task is nil. Skipping")
 		return nil
 	}
-	log.Debugf("starting %s", task.ID)
+	if err := runner.Err(); err != nil {
+		// runner's context was cancelled (e.g. via /stop/{uuid}): abort
+		// immediately rather than starting another task, retry, or recovery.
+		log.Debugf("aborting task (%s): %v", task.ID, err)
+		return err
+	}
+	log.Debugf("starting task (%s)", task.ID)
+	// Track which task is running so LLM calls and chatlogs can be
+	// attributed to their stage (see Metrics.PerTask).
+	req.CurrentTask = task.ID
 	if req.Metrics != nil {
 		req.Metrics.Tasks += 1
 	}
 
 	if task.CanApply != nil {
 		if applyErr := task.CanApply.Apply(runner, req); applyErr != nil {
-			log.Errorf("failed to apply task %s: %s", task.ID, applyErr)
-			return fmt.Errorf("task %s precondition failed - %v", task.ID, applyErr)
+			log.Errorf("failed to apply task (%s): %s", task.ID, applyErr)
+			return fmt.Errorf("task (%s) precondition failed - %v", task.ID, applyErr)
 		}
 	}
 
 	var err error
 	var workingPackage *domain.DeploymentPackage
 	if task.Execute != nil {
-		log.Debugf("Running task %s with (%d - %d) executions", task.ID, task.RetryCount, task.MaxRetryCount)
+
+		// Loop for retry attempts, executing the task and handling errors as needed.
+		// MaxRetryCount is the max number of executions (not extra retries).
+		log.Debugf("running task (%s) with (%d / %d) executions", task.ID, task.RetryCount+1, task.MaxRetryCount)
 		for ; task.RetryCount < task.MaxRetryCount; task.RetryCount++ {
 			if req.WorkingPackage != nil {
 				workingPackage = req.WorkingPackage.Copy()
 			}
+			attemptStart := time.Now()
 			err = task.Execute.Apply(runner, req)
+			if req.Metrics != nil {
+				req.Metrics.RecordTaskAttempt(task.ID, time.Since(attemptStart), err == nil)
+			}
 			if err == nil {
-				log.Debugf("task %s executed successfully", task.ID)
+				log.Debugf("task (%s) executed successfully", task.ID)
 				break
 			}
-			log.Debugf("task %s retry (%d) failed - %s", task.ID, task.RetryCount, err)
+			if cancelErr := runner.Err(); cancelErr != nil {
+				// Don't retry or invoke recovery once cancelled - that would
+				// spend more build/test/LLM resources on a stopped job.
+				log.Debugf("task (%s) aborted: %v", task.ID, cancelErr)
+				req.AddError(err)
+				return cancelErr
+			}
+			log.Debugf("task (%s) retry (%d) failed - %s", task.ID, task.RetryCount, err)
 			if task.RetryCount+1 < task.MaxRetryCount {
-				log.Errorf("task %s retrying...", task.ID)
+				log.Errorf("task (%s) retrying...", task.ID)
 
-				if task.OnFailure != nil {
-					req.AddError(err)
-					log.Debugf("attempting to recover task %s before retrying", task.ID)
-					err = p.executeTask(runner, req, task.OnFailure)
-					if err == nil {
-						log.Debugf("Retrying failed task %s after recovery", task.ID)
+				var llmErr domain.LLMError
+				if task.OnFailure != nil && errors.As(err, &llmErr) {
+					// An LLM/infrastructure failure (API outage, rate limit,
+					// truncation) has no code defect a recovery prompt could
+					// fix - don't spend recovery tokens on it, just retry.
+					log.Debugf("skipping recovery for task (%s): %v", task.ID, err)
+					time.Sleep(task.RetryDelay)
+				} else if task.OnFailure != nil {
+					originalErr := err
+					req.AddError(originalErr)
+					log.Debugf("attempting to recover task (%s) before retrying", task.ID)
+					recoveryErr := p.executeTask(runner, req, task.OnFailure)
+					// the recovery task overwrote CurrentTask; restore it for
+					// this task's remaining attempts/validation
+					req.CurrentTask = task.ID
+					if recoveryErr == nil {
+						log.Debugf("Retrying failed task (%s) after recovery", task.ID)
 						continue
 					}
 					log.Debugf("Recovery failed.")
+					// Join instead of letting recoveryErr replace originalErr:
+					// otherwise LastError() (the fixer/align prompt's
+					// {{ .issue }}) only ever sees "recovery also failed"
+					// and never the code defect that triggered recovery in
+					// the first place. errors.As still finds typed errors
+					// (LLMError/TestingError/CompilationError) on either
+					// side, since Join's Unwrap() []error is traversed by
+					// errors.As/Is.
+					err = errors.Join(originalErr, fmt.Errorf("recovery task (%s) also failed: %w", task.OnFailure.ID, recoveryErr))
 					break
+				} else {
+					time.Sleep(task.RetryDelay)
 				}
-				time.Sleep(task.RetryDelay)
 			}
 			if req.WorkingPackage != nil && task.CanApply != nil {
 				if err := task.CanApply.Apply(runner, req); err != nil {
@@ -144,28 +189,32 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 		}
 
 		if err != nil {
-			log.Debugf("task %s failed. %+v", task.ID, err)
+			log.Debugf("task (%s) failed. %+v", task.ID, err)
 			req.AddError(err)
 			return err
 		}
 	} else {
-		log.Debugf("task is not an executable task. Skipping")
+		log.Debugf("task (%s) is not an executable task. Skipping", task.ID)
 	}
-
+	// Perform validation if defined
 	if task.Validation != nil {
-		log.Debugf("performing validation task %s", task.ID)
+		log.Debugf("performing validation task (%s)", task.ID)
 		err = task.Validation.Apply(runner, req)
 		if err != nil {
-			log.Debugf("task validation for %s failed.", task.ID)
+			log.Debugf("task validation for (%s) failed.", task.ID)
 			req.AddError(err)
+			if cancelErr := runner.Err(); cancelErr != nil {
+				return cancelErr
+			}
 			if task.RetryCount < task.MaxRetryCount {
 				task.RetryCount++
 				return p.executeTask(runner, req, task)
 			}
 			return err
 		}
+		log.Debugf("task (%s) validated successfully", task.ID)
 	}
-	log.Debugf("task %s executed successfully", task.ID)
+	// Execute next tasks in the pipeline
 	for _, next := range task.Next {
 		if err := p.executeTask(runner, req, next); err != nil {
 			req.AddError(err)

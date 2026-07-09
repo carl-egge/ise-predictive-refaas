@@ -1,0 +1,13 @@
+{
+  "name": "store-message",
+  "description": "Stores a message in S3 and checks the object was written.",
+  "payload": { "bucket": "audit", "key": "m1.json", "message": "Hello, World!" },
+  "expectedOutput": { "statusCode": 200 },
+  "setup": [
+    { "type": "s3.bucket", "bucket": "audit" }
+  ],
+  "sideEffects": [
+    { "type": "s3.objectExists", "bucket": "audit", "key": "m1.json" },
+    { "type": "s3.objectContains", "bucket": "audit", "key": "m1.json", "substring": "Hello, World!" }
+  ]
+}

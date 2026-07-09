@@ -51,43 +51,116 @@ func (cc *Runner) SetWorkingDir(dir string) {
 
 // ConverterOptions holds configuration used when creating or reconfiguring a Runner.
 type ConverterOptions struct {
-	Pipeline         *PipelineFile `json:"pipeline,omitempty"`
-	CompiledPipeline *Pipeline     `json:"compiledPipeline,omitempty"`
+	LLMClient string `json:"LLMClient"`
+	// Args is connector-level config (API keys, endpoints), consumed once by
+	// llmconnector.Client.Configure when the Runner is built/reconfigured.
+	// It is merged with environment-derived defaults by setDefaults (see
+	// envDefaults in defaults.go) and is distinct from the per-task params
+	// in PipelineFile.Options/ConversionTaskStub.TaskArgs below, which are
+	// re-evaluated on every task execution via Client.Prepare.
+	Args map[string]any `json:"args"`
 
-	LLMClient string         `json:"LLMClient"`
-	Args      map[string]any `json:"args"`
+	// PipelineFile is embedded (rather than nested under a "pipeline" key) so
+	// its Options/Tasks fields are promoted directly onto the JSON/YAML
+	// representation of ConverterOptions.
+	PipelineFile `yaml:",inline"`
+
+	// Floci configures the optional Floci-backed integration testing backend.
+	// When Floci.Enabled is true (and a Floci starter has been registered via
+	// RegisterFlociStarter, i.e. the internal/floci package is linked in), the
+	// backend is started/verified when the Runner is built or reconfigured.
+	// When false, the "flociTester" stage — if present in the pipeline — is a
+	// no-op, so the feature is fully opt-in.
+	Floci FlociConfig `json:"floci,omitempty" yaml:"floci,omitempty"`
+
+	CompiledPipeline *Pipeline `json:"compiledPipeline,omitempty"`
 }
 
+// FlociConfig holds the configuration for the optional Floci integration. It
+// lives in the pipeline package (kept free of any AWS/Floci imports) so it can
+// be carried on ConverterOptions and handed to a registered starter without
+// creating an import cycle with internal/floci.
+type FlociConfig struct {
+	Enabled  bool   `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	Region   string `json:"region,omitempty" yaml:"region,omitempty"`
+}
+
+// flociStarter, if registered, is invoked with the resolved FlociConfig
+// whenever a Runner is created or reconfigured with Floci.Enabled set. It is a
+// package-level hook (mirroring converterFactories) so internal/floci can wire
+// in its AWS-backed startup without the pipeline package importing it.
+var flociStarter func(FlociConfig) error
+
+// RegisterFlociStarter registers the Floci backend starter. internal/floci
+// calls this from an init() so that merely importing it enables the feature.
+func RegisterFlociStarter(fn func(FlociConfig) error) { flociStarter = fn }
+
+// startFloci invokes the registered Floci starter when enabled. The starter is
+// expected to return quickly (recording config is local, no network I/O) and
+// perform any slow reachability checks in the background - startFloci runs
+// synchronously from MakeCodeConverter/Reconfigure, the latter while the
+// service holds its global lock (see ConverterService.reconfigure), so a slow
+// starter would otherwise stall unrelated requests. A startup failure is
+// logged as a warning rather than aborting Runner construction: the optional
+// stage will surface a hard error at execution time, and we never want an
+// unreachable emulator to take down the whole service.
+func (co *ConverterOptions) startFloci() {
+	if !co.Floci.Enabled || flociStarter == nil {
+		return
+	}
+	if err := flociStarter(co.Floci); err != nil {
+		log.Warnf("floci backend not started: %v", err)
+	}
+}
+
+// setDefaults fills in a missing LLMClient and merges environment-derived
+// defaults (see envDefaults) into Args, without overriding any value the
+// caller already set explicitly.
 func (co *ConverterOptions) setDefaults() {
 	if co.LLMClient == "" {
 		co.LLMClient = DefaultOptions.LLMClient
 	}
 	if co.Args == nil {
-		co.Args = DefaultOptions.Args
-	} else {
-		for k, v := range DefaultOptions.Args {
-			if _, ok := co.Args[k]; !ok {
-				co.Args[k] = v
-			}
+		co.Args = make(map[string]any)
+	}
+	for k, v := range envDefaults() {
+		if _, ok := co.Args[k]; !ok {
+			co.Args[k] = v
 		}
+	}
+	co.Floci.applyEnvDefaults()
+}
+
+// applyEnvDefaults fills the Floci config from environment variables when the
+// caller did not set values explicitly: FLOCI_ENABLED (true/1 enables it),
+// FLOCI_ENDPOINT, and FLOCI_REGION. This lets docker-compose flip the feature
+// on without a /reconfigure call.
+func (fc *FlociConfig) applyEnvDefaults() {
+	if !fc.Enabled {
+		if v := os.Getenv("FLOCI_ENABLED"); v == "true" || v == "1" {
+			fc.Enabled = true
+		}
+	}
+	if fc.Endpoint == "" {
+		fc.Endpoint = setOrDefault("FLOCI_ENDPOINT", "http://localhost:4566")
+	}
+	if fc.Region == "" {
+		fc.Region = setOrDefault("FLOCI_REGION", "us-east-1")
 	}
 }
 
 // DefaultOptions provides default converter configuration.
 var DefaultOptions = ConverterOptions{
 	LLMClient: "ollama",
-	Args: map[string]any{
-		"OLLAMA_API_URL": DefaultOllamaAPIURL,
-	},
 }
 
 // MakeCodeConverter constructs a Runner from ConverterOptions.
 func MakeCodeConverter(ops *ConverterOptions) (*Runner, error) {
 	if ops == nil {
-		ops = &DefaultOptions
-	} else {
-		ops.setDefaults()
+		ops = &ConverterOptions{}
 	}
+	ops.setDefaults()
 
 	factory, ok := llmconnector.Factories[ops.LLMClient]
 	if !ok {
@@ -97,11 +170,12 @@ func MakeCodeConverter(ops *ConverterOptions) (*Runner, error) {
 	if err != nil {
 		return nil, err
 	}
+	llmconnector.ConfigureThrottle(ops.Args)
 	var pipeline *Pipeline
 	if ops.CompiledPipeline != nil {
 		pipeline = ops.CompiledPipeline
-	} else if ops.Pipeline != nil {
-		pipeline, err = compilePipeline(*ops.Pipeline)
+	} else if len(ops.Tasks) > 0 {
+		pipeline, err = compilePipeline(ops.PipelineFile)
 		if err != nil {
 			return nil, err
 		}
@@ -112,6 +186,8 @@ func MakeCodeConverter(ops *ConverterOptions) (*Runner, error) {
 			return nil, err
 		}
 	}
+
+	ops.startFloci()
 
 	return &Runner{
 		Context:  context.Background(),
@@ -125,14 +201,22 @@ func MakeConversionRequest(srcPkg *domain.DeploymentPackage) *domain.ConversionR
 	return &domain.ConversionRequest{
 		Id:            uuid.New(),
 		SourcePackage: srcPkg,
+		Metadata:      make(map[string]string),
 		Metrics: &domain.Metrics{
 			TestCases: make(map[string]bool),
 		},
 	}
 }
 
-// Convert runs the configured pipeline against req and returns any error encountered.
-func (cc *Runner) Convert(req *domain.ConversionRequest) error {
+// Convert runs the configured pipeline against req using ctx as the
+// cancellation source for this conversion: cancelling ctx aborts the
+// pipeline at the next opportunity (between retries/tasks) instead of
+// continuing to spend build/test/LLM resources on it.
+func (cc *Runner) Convert(ctx context.Context, req *domain.ConversionRequest) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cc.Context = ctx
 	req.WorkingPackage = req.SourcePackage.Copy()
 	return cc.pipeline.Execute(cc, req)
 }
@@ -148,8 +232,11 @@ func (cc *Runner) Reconfigure(ops *ConverterOptions) error {
 	if err != nil {
 		return err
 	}
+	llmconnector.ConfigureThrottle(ops.Args)
 
-	if ops.Pipeline == nil && ops.CompiledPipeline == nil {
+	ops.startFloci()
+
+	if len(ops.Tasks) == 0 && ops.CompiledPipeline == nil {
 		return fmt.Errorf("no pipeline specified")
 	}
 
@@ -160,7 +247,7 @@ func (cc *Runner) Reconfigure(ops *ConverterOptions) error {
 		return nil
 	}
 
-	pipeline, err := compilePipeline(*ops.Pipeline)
+	pipeline, err := compilePipeline(ops.PipelineFile)
 	if err != nil {
 		return err
 	}
@@ -187,7 +274,7 @@ func (cc *Runner) ConvertFromFileBest(sourceFile string) (*domain.ConversionRequ
 	log.Debugf("got deployment package: %s - %+v", sourceFile, dp)
 
 	req := MakeConversionRequest(dp)
-	if err := cc.Convert(req); err != nil {
+	if err := cc.Convert(context.Background(), req); err != nil {
 		return nil, err
 	}
 

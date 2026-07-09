@@ -26,40 +26,162 @@ func (gr BasicLLMDeploymentReader) MakeDeploymentFile(response string, original 
 		return nil, fmt.Errorf("response is empty")
 	}
 
-	files := JsonCodeBlockReader(response)
+	files, err := JsonCodeBlockReader(response)
+	if err != nil {
+		return nil, err
+	}
 	log.Debugf("found %d files", len(files))
 	dp := domain.DeploymentPackage{}
 
-	keys := slices.Collect(maps.Keys(files))
-	index := slices.IndexFunc(keys, func(x string) bool {
-		return strings.HasPrefix(x, "main")
-	})
-
-	if index == -1 {
-		return nil, fmt.Errorf("could not find main")
+	key, err := selectMainFile(files, original)
+	if err != nil {
+		return nil, err
 	}
-	key := keys[index]
-	if rootFile, ok := files[key]; ok {
-		dp.RootFile = rootFile
-		delete(files, key)
-	}
+	dp.RootFile = files[key]
+	delete(files, key)
 	if original != nil {
 		dp.TestFiles = original.TestFiles
 		dp.Suffix = original.Suffix
+		dp.Env = original.Env
 	}
 	dp.BuildFiles = files
 	return &dp, nil
 }
 
-// JsonCodeBlockReader unmarshals a JSON object mapping filenames to file
-// contents produced by an LLM.
-func JsonCodeBlockReader(response string) map[string]string {
-	var content map[string]string
-	err := json.Unmarshal([]byte(response), &content)
-	if err != nil {
-		log.Error(err)
+// selectMainFile deterministically picks the response key holding the main
+// source file: an exact "main.<original suffix>" match wins, otherwise the
+// lexically first "main*" key with non-empty content. Go map iteration order
+// is randomized, so without sorting the picked file could differ between runs
+// - and a nullable/empty schema field (e.g. Gemini's fallback schema emits
+// main.go, go.mod and main.py) could silently replace the working source with
+// an empty string.
+func selectMainFile(files map[string]string, original *domain.DeploymentPackage) (string, error) {
+	if original != nil && original.Suffix != "" {
+		exact := "main." + original.Suffix
+		if content, ok := files[exact]; ok && content != "" {
+			return exact, nil
+		}
 	}
-	return content
+	keys := slices.Collect(maps.Keys(files))
+	slices.Sort(keys)
+	for _, key := range keys {
+		if strings.HasPrefix(key, "main") && files[key] != "" {
+			return key, nil
+		}
+	}
+	return "", fmt.Errorf("could not find a non-empty main file in response (keys: %v)", keys)
+}
+
+// JsonCodeBlockReader unmarshals a JSON object mapping filenames to file
+// contents produced by an LLM. Structured-output enforcement is a per-model
+// capability and can silently fall back to unconstrained text (verified on
+// the ChatAI backend), so before failing this deterministically retries on
+// progressively more aggressive extractions: the raw response, the contents
+// of a markdown code fence, and the first balanced top-level {...} region.
+// Non-string values inside an otherwise valid object are skipped instead of
+// failing the whole response.
+func JsonCodeBlockReader(response string) (map[string]string, error) {
+	for _, candidate := range jsonCandidates(response) {
+		if content, ok := parseStringMap(candidate); ok {
+			return content, nil
+		}
+	}
+	return nil, fmt.Errorf("LLM response is not a JSON object (no parseable {...} found): %.200s", response)
+}
+
+// jsonCandidates yields the extraction attempts for JsonCodeBlockReader in
+// order of increasing leniency.
+func jsonCandidates(response string) []string {
+	candidates := []string{strings.TrimSpace(response)}
+	if fenced := stripCodeFences(response); fenced != "" {
+		candidates = append(candidates, fenced)
+	}
+	if balanced := firstJSONObject(response); balanced != "" {
+		candidates = append(candidates, balanced)
+	}
+	return candidates
+}
+
+// stripCodeFences returns the contents of the first markdown code fence
+// (```json ... ``` or plain ``` ... ```), or "" when the response has none.
+func stripCodeFences(s string) string {
+	start := strings.Index(s, "```")
+	if start == -1 {
+		return ""
+	}
+	rest := s[start+3:]
+	if nl := strings.IndexByte(rest, '\n'); nl != -1 {
+		// drop the info string ("json", "go", ...) on the opening fence line
+		rest = rest[nl+1:]
+	}
+	if end := strings.Index(rest, "```"); end != -1 {
+		rest = rest[:end]
+	}
+	return strings.TrimSpace(rest)
+}
+
+// firstJSONObject returns the first balanced top-level {...} region of s,
+// tracking string literals and escapes so braces inside embedded code (a
+// very common payload here) don't break the matching. Returns "" when no
+// complete object exists (e.g. a truncated response).
+func firstJSONObject(s string) string {
+	start := strings.IndexByte(s, '{')
+	if start == -1 {
+		return ""
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1]
+			}
+		}
+	}
+	return ""
+}
+
+// parseStringMap attempts to decode candidate as a JSON object, keeping the
+// string-valued fields and skipping others (a model may attach arrays or
+// nested objects the schema didn't ask for; they must not sink the usable
+// part of the response).
+func parseStringMap(candidate string) (map[string]string, bool) {
+	if candidate == "" || candidate[0] != '{' {
+		return nil, false
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(candidate), &raw); err != nil {
+		return nil, false
+	}
+	content := make(map[string]string, len(raw))
+	for key, value := range raw {
+		var str string
+		if err := json.Unmarshal(value, &str); err != nil {
+			log.Debugf("skipping non-string value for response key %q", key)
+			continue
+		}
+		content[key] = str
+	}
+	return content, true
 }
 
 // GoJsonOllamaReader parses JSON mapping of filename->content returned by an
@@ -75,7 +197,10 @@ func (gr GoJsonOllamaReader) MakeDeploymentFile(response string, original *domai
 		return nil, fmt.Errorf("original is empty")
 	}
 
-	files := JsonCodeBlockReader(response)
+	files, err := JsonCodeBlockReader(response)
+	if err != nil {
+		return nil, err
+	}
 	log.Debugf("found %d files", len(files))
 	dp := domain.DeploymentPackage{}
 	if rootFile, ok := files["main.go"]; ok {
@@ -88,13 +213,25 @@ func (gr GoJsonOllamaReader) MakeDeploymentFile(response string, original *domai
 	} else {
 		return nil, fmt.Errorf("main.go not found in response")
 	}
-	dp.BuildFiles = files
-	dp.BuildCmd = []string{"go mod tidy", "go build -o fn ."}
-	if _, ok := files["go.mod"]; !ok {
-		dp.BuildCmd = append([]string{"go mod init example.com"}, dp.BuildCmd...)
+	// go.mod/go.sum are always regenerated deterministically by the build
+	// commands below - LLM-authored module files are a recurring failure
+	// class (invalid versions, unknown directives). Keep only additional
+	// non-empty .go sources; anything else in the response (module files,
+	// chatter keys like "explanation") is dropped.
+	dp.BuildFiles = make(map[string]string)
+	for name, content := range files {
+		if strings.HasSuffix(name, ".go") && content != "" {
+			dp.BuildFiles[name] = content
+			continue
+		}
+		log.Debugf("dropping unexpected response key %q (not a Go source file)", name)
 	}
+	dp.BuildCmd = []string{"go mod init example.com", "go mod tidy", "go build -o fn ."}
 	dp.Suffix = "go"
 	dp.TestFiles = original.TestFiles
+	// carry the uploaded package's env vars forward - dropping them here
+	// silently detached test env config (e.g. AWS endpoints) from goTester.
+	dp.Env = original.Env
 
 	return &dp, nil
 }
@@ -107,7 +244,8 @@ func (gr GoJsonOllamaReader) prepareGoRootFile(file string) (string, error) {
 	}
 
 	if gr.containsGoMainMethod(file) {
-		log.Debugf("file %s contains main method", file)
+		// log.Debugf("file %s contains main method", file)
+		log.Debugf("the existing main() method will be removed from the file")
 		return gr.removeGoMainMethod(file), nil
 	}
 
@@ -136,6 +274,11 @@ func (gr GoJsonOllamaReader) removeGoMainMethod(content string) string {
 
 	removeLambdaImport := false
 	var output strings.Builder
+	// node.Decls excludes the package clause (it lives on node.Name), so it
+	// must be re-emitted explicitly or the rebuilt file loses "package X".
+	output.WriteString("package ")
+	output.WriteString(node.Name.Name)
+	output.WriteString("\n\n")
 	for _, decl := range node.Decls {
 		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
 			if funcDecl.Name.Name == "main" {
@@ -160,31 +303,4 @@ func (gr GoJsonOllamaReader) removeGoMainMethod(content string) string {
 func (gr GoJsonOllamaReader) containsGoMainMethod(content string) bool {
 	mainMethodRegex := regexp.MustCompile(`func main\(\)`)
 	return mainMethodRegex.MatchString(content)
-}
-
-// GoDeepSeekOllamaReader adapts DeepSeek responses into a DeploymentPackage
-// using the internal GoJsonOllamaReader.
-type GoDeepSeekOllamaReader struct {
-	internal GoJsonOllamaReader
-}
-
-// MakeDeploymentFile extracts JSON blocks and delegates to the internal reader.
-func (gr GoDeepSeekOllamaReader) MakeDeploymentFile(response string, original *domain.DeploymentPackage) (*domain.DeploymentPackage, error) {
-	if response == "" {
-		return nil, fmt.Errorf("response is empty")
-	}
-	content := response
-	if strings.Contains(content, "</think>") {
-		_, content, _ = strings.Cut(content, "</think>")
-	}
-
-	start := strings.Index(content, "{")
-	end := strings.LastIndex(content, "}")
-
-	if start == -1 || end == -1 {
-		return nil, fmt.Errorf("response is missing json - %s", content)
-	}
-	jsonContent := content[start : end+1]
-	jsonContent = strings.Replace(jsonContent, "\n", "", -1)
-	return gr.internal.MakeDeploymentFile(jsonContent, original)
 }

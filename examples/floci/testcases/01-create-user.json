@@ -1,0 +1,15 @@
+{
+  "name": "create-user",
+  "description": "Stores a user in DynamoDB and writes an audit object to S3.",
+  "payload": { "id": "u1", "name": "Ada Lovelace", "email": "ada@example.com" },
+  "expectedOutput": { "status": "ok", "id": "u1" },
+  "setup": [
+    { "type": "s3.bucket", "bucket": "audit" },
+    { "type": "dynamodb.table", "table": "Users", "hashKey": "id" }
+  ],
+  "sideEffects": [
+    { "type": "s3.objectExists", "bucket": "audit", "key": "u1.json" },
+    { "type": "s3.objectContains", "bucket": "audit", "key": "u1.json", "substring": "Ada Lovelace" },
+    { "type": "dynamodb.itemExists", "table": "Users", "key": { "id": "u1" }, "attributes": { "name": "Ada Lovelace", "email": "ada@example.com" } }
+  ]
+}

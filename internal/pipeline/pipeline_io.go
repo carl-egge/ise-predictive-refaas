@@ -4,23 +4,33 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-// PipelineFile models the YAML structure used to describe pipelines.
+// PipelineFile models the YAML structure used to describe pipelines. It is
+// used standalone for on-disk pipeline files (e.g. default.yaml) and embedded
+// directly into ConverterOptions so the /reconfigure JSON body carries
+// options/tasks at the top level instead of under a nested "pipeline" key.
 type PipelineFile struct {
-	DefaultOptions map[string]interface{} `json:"options" yaml:"options"`
-	Tasks          []ConversionTaskStub   `json:"tasks" yaml:"tasks"`
+	// Options holds pipeline-wide default params (model_name, temperature,
+	// strategy, etc.). It is merged into every task's params at compile
+	// time, before that task's own TaskArgs are applied on top.
+	Options map[string]interface{} `json:"options" yaml:"options"`
+	Tasks   []ConversionTaskStub   `json:"tasks" yaml:"tasks"`
 }
 
 // ConversionTaskStub is an intermediate representation used when assembling
 // ConversionTask instances from YAML.
 type ConversionTaskStub struct {
-	ID            string `json:"id" yaml:"id"`
-	Task          string `json:"task" yaml:"task"`
-	task          Converter
+	ID   string `json:"id" yaml:"id"`
+	Task string `json:"task" yaml:"task"`
+	task Converter
+	// TaskArgs overrides PipelineFile.Options for this task only. The merged
+	// result (Options + TaskArgs) is what the task's converter — and, for
+	// LLM tasks, the connector's Prepare — actually receives as its params.
 	TaskArgs      map[string]interface{} `json:"task_args" yaml:"task_args"`
 	CanApply      string                 `json:"canApply" yaml:"canApply"`
 	canApply      Converter
@@ -96,24 +106,35 @@ func compilePipeline(fileContent PipelineFile) (*Pipeline, error) {
 	pipelineMapping := make(map[string]ConversionTask)
 	uncompletedTasks := make([]ConversionTaskStub, 0)
 	for _, task := range fileContent.Tasks {
-		args := make(map[string]interface{})
-		maps.Copy(args, fileContent.DefaultOptions)
-		if task.TaskArgs != nil {
-			maps.Copy(args, task.TaskArgs)
+		// MaxRetryCount is effectively the task's max number of *executions*;
+		// a zero value (field omitted in the config) would make the execute
+		// loop in executeTask skip the task entirely and silently run only
+		// its validation, so default it to a single execution.
+		if task.MaxRetryCount < 1 {
+			task.MaxRetryCount = 1
 		}
-		taskImpl, err := MakeConverter(task.Task, args)
+		// taskParams is this task's Execute converter's config: pipeline-wide
+		// Options first, then this task's own TaskArgs override on top.
+		taskParams := make(map[string]interface{})
+		maps.Copy(taskParams, fileContent.Options)
+		if task.TaskArgs != nil {
+			maps.Copy(taskParams, task.TaskArgs)
+		}
+		taskImpl, err := MakeConverter(task.Task, taskParams)
 		if err != nil {
 			return nil, err
 		}
 		task.task = taskImpl
 
-		apply, err := MakeConverter(task.CanApply, fileContent.DefaultOptions)
+		// canApply/validation intentionally only see the pipeline-wide
+		// Options, not this task's TaskArgs.
+		apply, err := MakeConverter(task.CanApply, fileContent.Options)
 		if err != nil {
 			return nil, err
 		}
 		task.canApply = apply
 
-		validation, err := MakeConverter(task.Validation, fileContent.DefaultOptions)
+		validation, err := MakeConverter(task.Validation, fileContent.Options)
 		if err != nil {
 			return nil, err
 		}
@@ -150,6 +171,18 @@ func compilePipeline(fileContent PipelineFile) (*Pipeline, error) {
 			} else {
 				remainingUncompletedTasks = append(remainingUncompletedTasks, task)
 			}
+		}
+		if len(remainingUncompletedTasks) == len(uncompletedTasks) {
+			// No task resolved in this pass, so none ever will: the remaining
+			// stubs reference unknown ids or form a cycle. Without this check
+			// the loop spins forever - and /reconfigure calls compilePipeline
+			// while holding the service's global lock, deadlocking the whole
+			// service on a single bad config body.
+			ids := make([]string, 0, len(remainingUncompletedTasks))
+			for _, t := range remainingUncompletedTasks {
+				ids = append(ids, t.ID)
+			}
+			return nil, fmt.Errorf("pipeline contains unresolvable task references (unknown or cyclic ids) in tasks: %s", strings.Join(ids, ", "))
 		}
 		uncompletedTasks = remainingUncompletedTasks
 	}

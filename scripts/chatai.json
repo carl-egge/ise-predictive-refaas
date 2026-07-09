@@ -1,0 +1,64 @@
+{
+  "LLMClient": "chatai",
+  "options": {
+    "model_name": "qwen3-coder-30b-a3b-instruct",
+    "strategy": "json",
+    "temperature": 0.1,
+    "top_p": 0.8,
+    "num_ctx": 32768
+  },
+  "tasks": [
+    {
+      "id": "root",
+      "task": "cleaner",
+      "maxRetryCount": 2,
+      "next": ["convert"],
+      "validation": "canCompile"
+    },
+    {
+      "id": "convert",
+      "task": "coder",
+      "task_args": { "reader": "go", "output_keys": { "main.go": {}, "go.mod": {} } },
+      "maxRetryCount": 2,
+      "validation": "canCompile",
+      "next": ["builder"]
+    },
+    {
+      "id": "builder",
+      "task": "goBuilder",
+      "canApply": "canCompile",
+      "recovery": "gollmRecovery",
+      "maxRetryCount": 2,
+      "next": ["goTester"]
+    },
+    {
+      "id": "gollmRecovery",
+      "task": "fixer",
+      "canApply": "canCompile",
+      "task_args": { "reader": "go", "output_keys": { "main.go": {}, "go.mod": {} } },
+      "maxRetryCount": 2
+    },
+    {
+      "id": "goTester",
+      "task": "goTester",
+      "canApply": "canCompile",
+      "maxRetryCount": 2,
+      "recovery": "testRecovery"
+    },
+    {
+      "id": "testRecovery",
+      "task": "realign",
+      "canApply": "canCompile",
+      "task_args": { "reader": "go", "output_keys": { "main.go": {}, "go.mod": {} } },
+      "maxRetryCount": 2,
+      "next": ["testRecoveryBuild"]
+    },
+    {
+      "id": "testRecoveryBuild",
+      "canApply": "canCompile",
+      "task": "goBuilder",
+      "recovery": "gollmRecovery",
+      "maxRetryCount": 2
+    }
+  ]
+}

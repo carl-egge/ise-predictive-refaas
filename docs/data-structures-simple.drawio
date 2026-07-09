@@ -1,0 +1,61 @@
+<mxfile host="Electron" agent="claude-code">
+  <diagram name="ReFaaS Core Data Structures" id="refaas-core">
+    <mxGraphModel dx="934" dy="662" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="600" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="cr" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=26;horizontalStack=0;resizeParent=0;resizeParentMax=0;collapsible=0;swimlaneFillColor=#ffffff;fillColor=#dae8fc;strokeColor=#6c8ebf;html=1;" value="ConversionRequest" vertex="1">
+          <mxGeometry height="118" width="250" x="300" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="crb" parent="cr" style="text;align=left;verticalAlign=top;spacingLeft=8;spacingRight=6;spacingTop=4;overflow=hidden;html=0;fontSize=11;" value="Id : UUID&#xa;SourcePackage : DeploymentPackage&#xa;WorkingPackage : DeploymentPackage&#xa;Metrics : Metrics&#xa;Metadata : map[string]string&#xa;Completed : bool" vertex="1">
+          <mxGeometry height="92" width="250" y="26" as="geometry" />
+        </mxCell>
+        <mxCell id="dp" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=26;horizontalStack=0;resizeParent=0;resizeParentMax=0;collapsible=0;swimlaneFillColor=#ffffff;fillColor=#dae8fc;strokeColor=#6c8ebf;html=1;" value="DeploymentPackage" vertex="1">
+          <mxGeometry height="118" width="250" x="110" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="dpb" parent="dp" style="text;align=left;verticalAlign=top;spacingLeft=8;spacingRight=6;spacingTop=4;overflow=hidden;html=0;fontSize=11;" value="RootFile : string&#xa;TestFiles : map[name]TestFile&#xa;BuildFiles : map[name]string&#xa;BuildCmd : []string&#xa;Env : []string" vertex="1">
+          <mxGeometry height="92" width="250" y="26" as="geometry" />
+        </mxCell>
+        <mxCell id="me" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=26;horizontalStack=0;resizeParent=0;resizeParentMax=0;collapsible=0;swimlaneFillColor=#ffffff;fillColor=#dae8fc;strokeColor=#6c8ebf;html=1;" value="Metrics" vertex="1">
+          <mxGeometry height="118" width="240" x="480" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="meb" parent="me" style="text;align=left;verticalAlign=top;spacingLeft=8;spacingRight=6;spacingTop=4;overflow=hidden;html=0;fontSize=11;" value="TotalTime : Duration&#xa;Conversion/Build/TestTime : Duration&#xa;PromptTokenCount : int&#xa;EvalTokenCount : int&#xa;TestCases : map[name]bool" vertex="1">
+          <mxGeometry height="92" width="240" y="26" as="geometry" />
+        </mxCell>
+        <mxCell id="tf" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=26;horizontalStack=0;resizeParent=0;resizeParentMax=0;collapsible=0;swimlaneFillColor=#ffffff;fillColor=#dae8fc;strokeColor=#6c8ebf;html=1;" value="TestFile" vertex="1">
+          <mxGeometry height="92" width="250" x="300" y="380" as="geometry" />
+        </mxCell>
+        <mxCell id="tfb" parent="tf" style="text;align=left;verticalAlign=top;spacingLeft=8;spacingRight=6;spacingTop=4;overflow=hidden;html=0;fontSize=11;" value="Input : string&#xa;Output : string&#xa;Env : []string&#xa;UndeterministicResults : bool" vertex="1">
+          <mxGeometry height="66" width="250" y="26" as="geometry" />
+        </mxCell>
+        <mxCell id="r1" edge="1" parent="1" source="cr" style="endArrow=none;startArrow=diamondThin;startFill=1;html=1;rounded=0;startSize=14;fontSize=11;" target="dp" value="source / working">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r1m" connectable="0" parent="r1" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=11;" value="2" vertex="1">
+          <mxGeometry relative="1" x="0.7" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="r2" edge="1" parent="1" source="cr" style="endArrow=none;startArrow=diamondThin;startFill=1;html=1;rounded=0;startSize=14;fontSize=11;" target="me" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r2m" connectable="0" parent="r2" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=11;" value="1" vertex="1">
+          <mxGeometry relative="1" x="0.7" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="r3" edge="1" parent="1" source="dp" style="endArrow=none;startArrow=diamondThin;startFill=1;html=1;rounded=0;startSize=14;fontSize=11;" target="tf" value="TestFiles">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r3m" connectable="0" parent="r3" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=11;" value="0..*" vertex="1">
+          <mxGeometry relative="1" x="0.7" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="cap" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#555555;" value="◆  composition  (owner holds the part; multiplicity at the part end)" vertex="1">
+          <mxGeometry height="20" width="380" x="430" y="510" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

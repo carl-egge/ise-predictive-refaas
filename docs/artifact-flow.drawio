@@ -1,0 +1,49 @@
+<mxfile host="Electron" agent="claude-code">
+  <diagram name="ReFaaS Artifact Flow" id="refaas-artifact">
+    <mxGraphModel dx="934" dy="662" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="780" pageHeight="380" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;" value="ReFaaS Artifact Transformation:  Python function .zip  →  converted Go function .zip" vertex="1">
+          <mxGeometry height="24" width="720" x="30" y="10" as="geometry" />
+        </mxCell>
+        <mxCell id="a1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" value="Python function&#xa;(.zip: source + test fixtures)" vertex="1">
+          <mxGeometry height="60" width="200" x="30" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="a2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" value="DeploymentPackage&#xa;(RootFile, TestFiles, BuildFiles)" vertex="1">
+          <mxGeometry height="60" width="200" x="330" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="a3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" value="Go package&#xa;(main.go, go.mod)" vertex="1">
+          <mxGeometry height="60" width="200" x="680" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="a4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" value="Compiled binary&#xa;(+ test harness)" vertex="1">
+          <mxGeometry height="60" width="200" x="680" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="a5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" value="Validated Go package&#xa;(tests pass vs fixtures)" vertex="1">
+          <mxGeometry height="60" width="200" x="330" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="a6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" value="Converted Go function&#xa;(.zip)" vertex="1">
+          <mxGeometry height="60" width="200" x="30" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="t1" edge="1" parent="1" source="a1" style="endArrow=block;html=1;rounded=0;fontSize=10;" target="a2" value="inputhandler&#xa;(parse .zip)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" edge="1" parent="1" source="a2" style="endArrow=block;html=1;rounded=0;fontSize=10;strokeColor=#d79b00;fontColor=#9a6b00;" target="a3" value="cleaner + coder  «LLM»&#xa;normalize &amp; translate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t3" edge="1" parent="1" source="a3" style="endArrow=block;html=1;rounded=0;fontSize=10;strokeColor=#b85450;fontColor=#b85450;" target="a4" value="goBuilder&#xa;compile">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t4" edge="1" parent="1" source="a4" style="endArrow=block;html=1;rounded=0;fontSize=10;strokeColor=#b85450;fontColor=#b85450;" target="a5" value="goTester&#xa;run vs TestFile fixtures">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t5" edge="1" parent="1" source="a5" style="endArrow=block;html=1;rounded=0;fontSize=10;" target="a6" value="outputhandler&#xa;(write .zip)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cap" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#555555;" value="Orange = LLM transformation,  red = build/test validation.  On build or test failure the package is repaired by an LLM recovery stage and the step is retried (see pipeline activity diagram)." vertex="1">
+          <mxGeometry height="30" width="720" x="30" y="320" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
