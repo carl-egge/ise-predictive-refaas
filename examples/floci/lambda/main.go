@@ -9,6 +9,15 @@
 //
 // then returns {"status":"ok","id":"<id>"}.
 //
+// Two fields are optional and only exercised when present, so existing test
+// cases that omit them are unaffected:
+//   - "notifyQueue": sends an SQS message ("user-created:<id>") to this queue
+//   - "auditStream": puts a Kinesis record ({"id":...}) onto this stream
+//
+// Both assume the queue/stream was already created by the test case's own
+// setup actions (sqs.queue / kinesis.stream) — the same way the handler
+// assumes the "Users" table and "audit" bucket already exist.
+//
 // The AWS clients are configured from the standard environment
 // (AWS_ENDPOINT_URL / AWS_REGION / credentials), which Floci injects into the
 // Lambda container so calls loop back to the emulator.
@@ -30,13 +39,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
 type event struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Email       string `json:"email"`
+	NotifyQueue string `json:"notifyQueue,omitempty"`
+	AuditStream string `json:"auditStream,omitempty"`
 }
 
 type response struct {
@@ -78,6 +91,31 @@ func handle(ctx context.Context, raw json.RawMessage) (response, error) {
 		Body:   bytes.NewReader(audit),
 	}); err != nil {
 		return response{}, fmt.Errorf("writing audit object: %w", err)
+	}
+
+	if e.NotifyQueue != "" {
+		sqsc := sqs.NewFromConfig(cfg)
+		urlOut, err := sqsc.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String(e.NotifyQueue)})
+		if err != nil {
+			return response{}, fmt.Errorf("resolving queue %q: %w", e.NotifyQueue, err)
+		}
+		if _, err := sqsc.SendMessage(ctx, &sqs.SendMessageInput{
+			QueueUrl:    urlOut.QueueUrl,
+			MessageBody: aws.String(fmt.Sprintf("user-created:%s", e.ID)),
+		}); err != nil {
+			return response{}, fmt.Errorf("notifying queue %q: %w", e.NotifyQueue, err)
+		}
+	}
+
+	if e.AuditStream != "" {
+		kc := kinesis.NewFromConfig(cfg)
+		if _, err := kc.PutRecord(ctx, &kinesis.PutRecordInput{
+			StreamName:   aws.String(e.AuditStream),
+			Data:         audit,
+			PartitionKey: aws.String(e.ID),
+		}); err != nil {
+			return response{}, fmt.Errorf("streaming audit record to %q: %w", e.AuditStream, err)
+		}
 	}
 
 	return response{Status: "ok", ID: e.ID}, nil

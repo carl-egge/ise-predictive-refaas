@@ -1,0 +1,15 @@
+{
+  "name": "create-user-streams-audit",
+  "description": "Same as create-user, but also emits a Kinesis audit record (auditStream is set on the event).",
+  "payload": { "id": "u4", "name": "Katherine Johnson", "email": "katherine@example.com", "auditStream": "audit-events" },
+  "expectedOutput": { "status": "ok", "id": "u4" },
+  "setup": [
+    { "type": "s3.bucket", "bucket": "audit" },
+    { "type": "dynamodb.table", "table": "Users", "hashKey": "id" },
+    { "type": "kinesis.stream", "streamName": "audit-events", "shardCount": 1 }
+  ],
+  "sideEffects": [
+    { "type": "dynamodb.itemExists", "table": "Users", "key": { "id": "u4" }, "attributes": { "name": "Katherine Johnson" } },
+    { "type": "kinesis.recordReceived", "streamName": "audit-events", "substring": "u4" }
+  ]
+}

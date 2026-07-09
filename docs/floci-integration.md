@@ -5,7 +5,16 @@ translated function as a real Lambda running inside a local
 [Floci](https://floci.io) AWS emulator. Unlike the built-in `goTester` (which
 runs `go run .` and compares stdout), the Floci stage exercises the function
 through the actual Lambda runtime and can assert on **AWS side effects** — S3
-objects, DynamoDB items, and anything else you add a checker for.
+objects, DynamoDB items, SQS messages, Step Functions executions, Kinesis
+records, Cognito users, RDS Data API rows, and anything else you add a checker
+for.
+
+Only services with a directly queryable, synchronous side effect are wired up
+today. Services that are effectively fire-and-forget in real AWS too — SNS and
+EventBridge have no "list what was published" API, SES has no "list sent
+mail" API, CloudWatch Metrics is eventually consistent — are deliberately left
+out rather than faked with a workaround (e.g. subscribing an SQS queue just to
+have something to poll).
 
 The feature is fully opt-in. With Floci disabled the stage is a no-op and the
 existing translation/build/test behavior is unchanged.
@@ -115,20 +124,41 @@ black-box fixtures (payload/expected output only, no side effects).
 
 ### Built-in setup actions
 
-| `type`            | Parameters                          | Effect                              |
-|-------------------|-------------------------------------|-------------------------------------|
-| `s3.bucket`       | `bucket`                            | Create bucket (idempotent).         |
-| `s3.object`       | `bucket`, `key`, `body`             | Seed an object.                     |
-| `dynamodb.table`  | `table`, `hashKey` (default `id`)   | Create a PAY_PER_REQUEST table.     |
-| `dynamodb.item`   | `table`, `item`                     | Seed an item.                       |
+| `type`             | Parameters                                               | Effect                                                    |
+|--------------------|------------------------------------------------------------|--------------------------------------------------------------|
+| `s3.bucket`        | `bucket`                                                  | Create bucket (idempotent).                               |
+| `s3.object`        | `bucket`, `key`, `body`                                   | Seed an object.                                            |
+| `dynamodb.table`   | `table`, `hashKey` (default `id`)                         | Create a PAY_PER_REQUEST table.                            |
+| `dynamodb.item`    | `table`, `item`                                           | Seed an item.                                              |
+| `sqs.queue`        | `queueName`                                               | Create a queue (idempotent).                               |
+| `sfn.stateMachine` | `stateMachineName`, `definition` (ASL), `roleArn` (opt.)  | Create a standard-workflow state machine.                  |
+| `kinesis.stream`   | `streamName`, `shardCount` (default 1)                    | Create a stream and wait until ACTIVE.                     |
+| `cognito.userPool` | `poolName`                                                | Create a user pool if none with that name exists yet.      |
+| `cognito.user`     | `poolName`/`poolId`, `username`, `attributes` (opt.)      | Seed a user (invite message suppressed).                   |
+| `rdsdata.execute`  | `resourceArn`, `secretArn`, `database`, `sql`             | Run a DDL/DML statement (e.g. create table, seed a row).   |
 
 ### Built-in side-effect checkers
 
-| `type`                 | Parameters                          | Asserts                                  |
-|------------------------|-------------------------------------|------------------------------------------|
-| `s3.objectExists`      | `bucket`, `key`                     | Object exists.                           |
-| `s3.objectContains`    | `bucket`, `key`, `substring`        | Object body contains the substring.      |
-| `dynamodb.itemExists`  | `table`, `key`, `attributes` (opt.) | Item exists; given attributes match.     |
+| `type`                   | Parameters                                                                    | Asserts                                                        |
+|--------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `s3.objectExists`        | `bucket`, `key`                                                                 | Object exists.                                                     |
+| `s3.objectContains`      | `bucket`, `key`, `substring`                                                    | Object body contains the substring.                                |
+| `dynamodb.itemExists`    | `table`, `key`, `attributes` (opt.)                                             | Item exists; given attributes match.                               |
+| `sqs.messageReceived`    | `queueName`/`queueUrl`, `substring` (opt.)                                      | A message is waiting; optionally its body contains the substring.  |
+| `sfn.executionStatus`    | `stateMachineName`/`stateMachineArn`, `status` (default `SUCCEEDED`), `substring` (opt.) | The most recently started execution reached the given status; optionally its output contains the substring. |
+| `kinesis.recordReceived` | `streamName`, `substring` (opt.)                                                | A record is readable from the stream; optionally some record's data contains the substring. |
+| `cognito.userAttributes` | `poolName`/`poolId`, `username`, `attributes` (opt.)                            | User exists; given attributes match.                               |
+| `rdsdata.rowExists`      | `resourceArn`, `secretArn`, `database`, `sql` (a SELECT), `attributes` (opt.)   | Query returns at least one row; given columns of the first row match. |
+
+Only services where the emulator itself exposes a way to read back what
+happened are covered. SNS, EventBridge, Secrets Manager, SSM, KMS, CloudWatch
+(Logs/Metrics), SES, STS, cross-Lambda invocation, Bedrock Runtime, and
+Textract were considered and left out: each is either stateless (nothing
+persists to query), read-mostly from a handler's perspective (seeding a value
+is a test input, not something to assert on afterward), or has no API in real
+AWS to list what happened after the fact — faking one (e.g. subscribing an SQS
+queue to an SNS topic purely so there's something to poll) was judged not
+worth the extra setup complexity for now.
 
 ## Adding a new assertion checker
 
@@ -136,25 +166,24 @@ Checkers and setup actions live in their own registries, so adding one does not
 touch the runner. Register a `CheckerFunc` (or `SetupFunc`) in an `init()`:
 
 ```go
-// internal/floci/checkers_sqs.go
+// internal/floci/checkers_kms.go
 func init() {
-    RegisterChecker("sqs.queueHasMessage", CheckerFunc(checkSQSMessage))
+    RegisterChecker("kms.keyEnabled", CheckerFunc(checkKMSKeyEnabled))
 }
 
-func checkSQSMessage(ctx context.Context, c *Clients, spec json.RawMessage) error {
+func checkKMSKeyEnabled(ctx context.Context, c *Clients, spec json.RawMessage) error {
     var s struct {
-        QueueURL  string `json:"queueUrl"`
-        Substring string `json:"substring"`
+        KeyID string `json:"keyId"`
     }
     if err := json.Unmarshal(spec, &s); err != nil {
         return err
     }
-    // ... use an SQS client (add one to Clients) to receive and assert ...
+    // ... use a KMS client (add one to Clients) to describe and assert ...
     return nil
 }
 ```
 
-Then reference it from a test case: `{ "type": "sqs.queueHasMessage", ... }`.
+Then reference it from a test case: `{ "type": "kms.keyEnabled", ... }`.
 Unregistered types fail loudly with the list of registered checkers, so typos
 are easy to spot.
 

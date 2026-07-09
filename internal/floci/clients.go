@@ -17,9 +17,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/aws/aws-sdk-go-v2/service/rdsdata"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sfn"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
 // Clients bundles the AWS SDK clients used by the Floci stage, all pointed at
@@ -30,6 +35,11 @@ type Clients struct {
 	Lambda   *lambda.Client
 	S3       *s3.Client
 	DynamoDB *dynamodb.Client
+	SQS      *sqs.Client
+	SFN      *sfn.Client
+	Kinesis  *kinesis.Client
+	Cognito  *cognitoidentityprovider.Client
+	RDSData  *rdsdata.Client
 	Region   string
 	Endpoint string
 }
@@ -63,6 +73,11 @@ func NewClients(ctx context.Context, endpoint, region string) (*Clients, error) 
 			o.UsePathStyle = true
 		}),
 		DynamoDB: dynamodb.NewFromConfig(cfg),
+		SQS:      sqs.NewFromConfig(cfg),
+		SFN:      sfn.NewFromConfig(cfg),
+		Kinesis:  kinesis.NewFromConfig(cfg),
+		Cognito:  cognitoidentityprovider.NewFromConfig(cfg),
+		RDSData:  rdsdata.NewFromConfig(cfg),
 		Region:   region,
 		Endpoint: endpoint,
 	}, nil

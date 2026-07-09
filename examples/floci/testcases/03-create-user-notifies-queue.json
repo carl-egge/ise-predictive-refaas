@@ -1,0 +1,15 @@
+{
+  "name": "create-user-notifies-queue",
+  "description": "Same as create-user, but also sends an SQS notification (notifyQueue is set on the event).",
+  "payload": { "id": "u3", "name": "Grace Hopper", "email": "grace@example.com", "notifyQueue": "user-events" },
+  "expectedOutput": { "status": "ok", "id": "u3" },
+  "setup": [
+    { "type": "s3.bucket", "bucket": "audit" },
+    { "type": "dynamodb.table", "table": "Users", "hashKey": "id" },
+    { "type": "sqs.queue", "queueName": "user-events" }
+  ],
+  "sideEffects": [
+    { "type": "dynamodb.itemExists", "table": "Users", "key": { "id": "u3" }, "attributes": { "name": "Grace Hopper" } },
+    { "type": "sqs.messageReceived", "queueName": "user-events", "substring": "u3" }
+  ]
+}
