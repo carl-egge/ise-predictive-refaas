@@ -66,6 +66,15 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 		return fmt.Errorf("the working package is required")
 	}
 
+	if runner.WorkingDir() == "" {
+		// Without a working dir, cmd.Dir is "" below and `go run .`/./fn
+		// silently executes in the refaas process's own CWD instead of the
+		// translated package - a goBuilder task must run first to produce
+		// one. Fail loudly instead of testing whatever happens to be in the
+		// service's directory.
+		return fmt.Errorf("goTester (task %q) has no working directory - a goBuilder task must run before it in the pipeline", request.CurrentTask)
+	}
+
 	if request.SourcePackage != nil && (len(request.SourcePackage.TestFiles)) > len(request.WorkingPackage.TestFiles) {
 		request.WorkingPackage.TestFiles = make(map[string]string)
 		maps.Copy(request.WorkingPackage.TestFiles, request.SourcePackage.TestFiles)

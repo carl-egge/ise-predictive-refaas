@@ -154,6 +154,31 @@ func main() { fmt.Println(`+"`"+`{"foo": 1}`+"`"+`) }
 	}
 }
 
+// TestGoPackageTesterRequiresWorkingDir guards [B7]: without a preceding
+// goBuilder task, runner.WorkingDir() is "" and cmd.Dir would silently fall
+// back to the refaas process's own CWD ("go run ." there instead of the
+// translated package). Apply must fail loudly instead.
+func TestGoPackageTesterRequiresWorkingDir(t *testing.T) {
+	runner := pipeline.NewRunner(context.Background(), nil, nil)
+	tester := NewGoPackageTester(nil)
+
+	req := &domain.ConversionRequest{
+		CurrentTask: "tester",
+		WorkingPackage: &domain.DeploymentPackage{
+			RootFile:  "package main",
+			TestFiles: map[string]string{"test/t1.json": `{"input":"{}","output":"{}"}`},
+		},
+	}
+
+	err := tester.Apply(runner, req)
+	if err == nil {
+		t.Fatal("expected Apply to fail when the working directory is unset")
+	}
+	if !strings.Contains(err.Error(), "goBuilder") {
+		t.Errorf("error should name the missing goBuilder prerequisite, got: %v", err)
+	}
+}
+
 // TestGoPackageTesterCollectsCrashEvidence verifies a non-zero exit is
 // reported as an execution error with the captured stderr.
 func TestGoPackageTesterCollectsCrashEvidence(t *testing.T) {

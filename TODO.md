@@ -24,11 +24,11 @@
 **B. Software quality**
 - [x] [B1] Unify the two output-comparison implementations (+ type-shape-only mode)
 - [x] [B2] Tests for orchestration and validation semantics
-- [ ] [B3] Error taxonomy unused; raw error strings muddle diagnostics
-- [ ] [B4] Job status conflates "in progress" and "unknown"
+- [X] [B3] Error taxonomy unused; raw error strings muddle diagnostics
+- [X] [B4] Job status conflates "in progress" and "unknown"
 - [x] [B5] Observability: chatlog correlation + per-stage metrics **(P0)**
-- [ ] [B6] Documentation drift on prompt wiring and Floci examples
-- [ ] [B7] `goTester` runs `go run .` in the service CWD when `WorkingDir` unset
+- [X] [B6] Documentation drift on prompt wiring and Floci examples
+- [X] [B7] `goTester` runs `go run .` in the service CWD when `WorkingDir` unset
 
 **C. Pipeline features**
 - [x] [C1] Structured per-test failure evidence into the repair/align loop **(P0)**
@@ -62,7 +62,7 @@
 - [x] [F1] Per-test and per-build-command timeouts **(P0)**
 - [x] [F2] Retry transient LLM API failures at the connector
 - [x] [F3] Detect truncated LLM responses via finish/done reason
-- [ ] [F4] Upload handler must not block on a full queue
+- [x] [F4] Upload handler must not block on a full queue
 - [x] [F5] Configurable minimum delay between LLM calls (rate-limit throttle)
 
 **G. Efficiency & token economy**
@@ -315,13 +315,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: None | Effort: S | Priority: P2
 - Status: **Implemented 2026-07-10.** `CLAUDE.md` now correctly says `prompts.go` embeds six templates (`1-stage-translate-1.md` → `coder`, `1-stage-translate-2.md` → `coder2`) and that the plain `1-stage-translate.md` is the unwired draft. `docs/floci-integration.md` and `README.md` now point at `examples/floci/pipeline-bundled.json` (the file that actually exists) instead of the nonexistent `examples/floci/pipeline.json`; the same stale path in a `docker-compose.yml` comment was fixed too. The README's environment-variable table gained the missing `ACADEMIC_CLOUD_ENDPOINT`/`ACADEMIC_CLOUD_API_KEY` (chatai) and `FLOCI_ENABLED`/`FLOCI_ENDPOINT`/`FLOCI_REGION` (Floci) rows, plus `APP_PORT`/`LLM_CALL_INTERVAL` which were also genuinely read (`internal/pipeline/defaults.go`, `internal/pipeline/runner.go`) but undocumented.
 
-### [ ] [B7] `goTester` runs `go run .` in the service's own directory when `WorkingDir` is unset
+### [x] [B7] `goTester` runs `go run .` in the service's own directory when `WorkingDir` is unset
 - Category: Code Quality
 - Affected component(s): `internal/builder/validator.go`, `internal/pipeline/runner.go`
 - Problem / current state: If a pipeline places `goTester` without a preceding `goBuilder`, `cmd.Dir` is `""` and `go run .` executes in the refaas process's CWD.
 - Proposed change: Error out in `Apply` when `runner.WorkingDir() == ""` naming the missing `goBuilder` prerequisite.
 - Why: Turns a bizarre, hard-to-diagnose behavior into an immediate config error.
 - Architecture impact: Local | Effort: S | Priority: P2
+- Status: **Implemented 2026-07-10.** `GoPackageTester.Apply` (`internal/builder/validator.go`) now checks `runner.WorkingDir() == ""` right after the working-package nil check and returns a config error naming the current task id and the missing `goBuilder` prerequisite, instead of silently falling through to `cmd.Dir = ""` (which runs `go run .`/`./fn` in the refaas process's own CWD). No change needed in `internal/pipeline/runner.go` - `WorkingDir()` already existed as the thing to check. Test: `TestGoPackageTesterRequiresWorkingDir`.
 
 ---
 
@@ -563,13 +564,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Status: **Implemented 2026-07-04** for all three connectors: Ollama checks `done_reason == "length"` (reporting `eval_count`), ChatAI parses `finish_reason` and reports completion tokens (usage metrics still recorded on truncation), Gemini checks `FinishReason == MAX_TOKENS`. The error text names the knob to raise (`max_tokens`/`num_predict`). The optional auto-retry-with-doubled-limit was skipped — task-level retries plus the actionable error cover it. Tests with fake HTTP backends in `connector_local_test.go` (Ollama + ChatAI truncation and happy paths).
 - Architecture impact: Local | Effort: S | Priority: P1
 
-### [ ] [F4] Upload handler must not block forever on a full queue
+### [x] [F4] Upload handler must not block forever on a full queue
 - Category: Fault Tolerance
 - Affected component(s): `internal/service/service.go` (`uploadHandler`)
 - Problem / current state: `service.requestQueue <- …` blocks the HTTP handler indefinitely when 100 jobs are queued, holding the connection and the parsed upload in memory.
 - Proposed change: Non-blocking send (`select` with `default`) returning `503` with a Retry-After hint; also remove the job's `cancels` entry in that path.
 - Why: Keeps the service responsive under batch load so evaluation scripts fail visibly instead of hanging.
 - Architecture impact: Local | Effort: S | Priority: P2
+- Status: **Implemented 2026-07-10.** `uploadHandler` now sends on `requestQueue` via `select`/`default` instead of a blocking send; when the queue is full it cancels the job's context, removes the `cancels`/`status` entries registered just before the send (so no dangling bookkeeping survives a rejected job), and responds `503 Service Unavailable` with a `Retry-After: 30` header instead of blocking the handler goroutine. Added `internal/service/service_test.go` (the package's first test file): `TestUploadHandlerRejectsWhenQueueFull` pre-fills a capacity-1 queue and asserts the 503/Retry-After response and that no `cancels`/`status` entry is left behind.
 
 ### [x] [F5] Configurable minimum delay between LLM calls (global rate-limit throttle)
 - Category: Fault Tolerance / Efficiency

@@ -275,11 +275,25 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 	service.status[request.Id] = statusQueued
 	service.mutex.Unlock()
 
-	service.requestQueue <- &queuedConversion{ctx: jobCtx, request: request}
-	log.Infof("got new conversion request for %s", request.Id)
-	// http.Redirect(w, r, fmt.Sprintf("/%s", request.Id.String()), http.StatusCreated)
-	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(fmt.Sprintf("%s\n", request.Id.String())))
+	select {
+	case service.requestQueue <- &queuedConversion{ctx: jobCtx, request: request}:
+		log.Infof("got new conversion request for %s", request.Id)
+		// http.Redirect(w, r, fmt.Sprintf("/%s", request.Id.String()), http.StatusCreated)
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(fmt.Sprintf("%s\n", request.Id.String())))
+	default:
+		// The queue is full: don't block the handler (and the parsed upload
+		// in memory) indefinitely waiting for worker capacity. Undo the
+		// bookkeeping above since this job was never actually accepted.
+		cancel()
+		service.mutex.Lock()
+		delete(service.cancels, request.Id)
+		delete(service.status, request.Id)
+		service.mutex.Unlock()
+		log.Warnf("rejecting conversion request for %s: queue is full", request.Id)
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, "conversion queue is full, retry later", http.StatusServiceUnavailable)
+	}
 }
 
 // stopHandler cancels a queued or in-progress conversion identified by uuid.
