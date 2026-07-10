@@ -19,7 +19,7 @@ services:
     volumes:
       - ./chatlogs:/app/chatlogs
       - ./data:/app/data
-      # Example Floci test cases referenced by examples/floci/pipeline.json.
+      # Example Floci test cases referenced by examples/floci/pipeline-bundled.json.
       - ./examples:/app/examples
     depends_on:
       - ollama

@@ -307,12 +307,13 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local | Effort: M | Priority: **P0** (raised 2026-07-04 by maintainer — open question 1, the failure-mode distribution, stays unanswerable until this lands; also a prerequisite for the [G5] experiment)
 - Status: **Implemented 2026-07-04.** `Metrics.PerTask` (`map[taskID]*TaskMetrics`: executions, failures, duration, LLM calls, prompt/eval tokens) is populated by `executeTask` (`RecordTaskAttempt` per execution attempt) and `LLMConverter.Apply` (`RecordLLMCall`, including failed calls — they cost tokens too); `ConversionRequest.CurrentTask` carries the running task id (restored after recovery recursion). Chatlog filenames now embed `<8-char request id>_<task id>_<model>`. Appears in `GET /metrics` as `per_task`. **This unblocks open question 1** — run f1–f14 and read the per-task failure/token distribution. Not addressed (unchanged scope): metrics still wiped on `/reconfigure` (use `store-metrics.sh`), `TestTime`/`TestCases` still not merged in `AddMetric`. Tests: `TestExecuteTaskRecordsPerTaskMetrics`.
 
-### [ ] [B6] Documentation drift on prompt wiring and Floci examples
+### [x] [B6] Documentation drift on prompt wiring and Floci examples
 - Category: Code Quality
 - Affected component(s): `CLAUDE.md` (claims `1-stage-translate.md` is wired — `prompts.go` actually embeds `-1` as `coder` and `-2` as `coder2`; plain `translate.md` is the unwired one), `docs/floci-integration.md` (references `examples/floci/pipeline.json`, which does not exist — only `pipeline-bundled.json`), README env-var table (missing chatai/floci vars)
 - Proposed change: Correct the three references (docs-only change).
 - Why: Prevents a future engineer/agent from editing the wrong (unwired) prompt file.
 - Architecture impact: None | Effort: S | Priority: P2
+- Status: **Implemented 2026-07-10.** `CLAUDE.md` now correctly says `prompts.go` embeds six templates (`1-stage-translate-1.md` → `coder`, `1-stage-translate-2.md` → `coder2`) and that the plain `1-stage-translate.md` is the unwired draft. `docs/floci-integration.md` and `README.md` now point at `examples/floci/pipeline-bundled.json` (the file that actually exists) instead of the nonexistent `examples/floci/pipeline.json`; the same stale path in a `docker-compose.yml` comment was fixed too. The README's environment-variable table gained the missing `ACADEMIC_CLOUD_ENDPOINT`/`ACADEMIC_CLOUD_API_KEY` (chatai) and `FLOCI_ENABLED`/`FLOCI_ENDPOINT`/`FLOCI_REGION` (Floci) rows, plus `APP_PORT`/`LLM_CALL_INTERVAL` which were also genuinely read (`internal/pipeline/defaults.go`, `internal/pipeline/runner.go`) but undocumented.
 
 ### [ ] [B7] `goTester` runs `go run .` in the service's own directory when `WorkingDir` is unset
 - Category: Code Quality

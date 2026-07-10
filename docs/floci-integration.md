@@ -77,12 +77,12 @@ The compose service is configured per Floci's requirements:
 ### Run the optional validation stage
 
 Point the service at a pipeline that includes the stage and enables the backend.
-The bundled example ([`examples/floci/pipeline.json`](../examples/floci/pipeline.json))
+The bundled example ([`examples/floci/pipeline-bundled.json`](../examples/floci/pipeline-bundled.json))
 appends `flociIntegration` after `goTester` and sets `floci.enabled`:
 
 ```bash
 docker compose --profile floci up --build           # start refaas + ollama + floci
-./scripts/reconfigure.sh examples/floci/pipeline.json
+./scripts/reconfigure.sh examples/floci/pipeline-bundled.json
 # then upload a .zip as usual:
 curl -F file=@examples/input/addition.zip http://localhost:8080/
 ```

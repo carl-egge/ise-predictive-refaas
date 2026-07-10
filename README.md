@@ -207,7 +207,7 @@ unchanged.
 # Start refaas + ollama + the Floci emulator (profile-gated):
 docker compose --profile floci up --build
 # Switch to a pipeline that enables Floci and includes the stage:
-./scripts/reconfigure.sh examples/floci/pipeline.json
+./scripts/reconfigure.sh examples/floci/pipeline-bundled.json
 ```
 
 Enable it with `floci.enabled=true` (in a `/reconfigure` body) or
@@ -222,8 +222,15 @@ This will start the service running on port 8080. However, for isolation, it is 
 
 | Variable | Default | Description |
 |:---|:---|:---|
-| `OLLAMA_API_URL` | Internal default (`OLLAMA_API_URL`) | URL for connecting to Ollama LLM API. |
+| `OLLAMA_API_URL` | `http://localhost:11434` | URL for connecting to Ollama LLM API. |
 | `GEMINI_API_KEY` | `"NOT+SET"` | API key for Gemini LLM (optional if not using Gemini backend). |
+| `ACADEMIC_CLOUD_ENDPOINT` | `https://chat-ai.academiccloud.de/v1` | Base URL for the GWDG/AcademicCloud Chat AI API (`chatai` backend). |
+| `ACADEMIC_CLOUD_API_KEY` | `"NOT+SET"` | API key for the Chat AI backend (optional if not using `chatai`). |
+| `APP_PORT` | `8080` | Port the service listens on. |
+| `LLM_CALL_INTERVAL` | `0s` | Minimum delay enforced between LLM calls across all jobs (`"0s"` disables the throttle); a duration string like `"2s"`/`"500ms"`. |
+| `FLOCI_ENABLED` | `false` | Enables the optional `flociTester` pipeline stage (`true`/`1`); see [Optional: Floci integration testing](#optional-floci-integration-testing). |
+| `FLOCI_ENDPOINT` | `http://localhost:4566` | Endpoint of the Floci AWS emulator, when enabled. |
+| `FLOCI_REGION` | `us-east-1` | AWS region used for the Floci-backed Lambda deployment, when enabled. |
 
 ---
 
