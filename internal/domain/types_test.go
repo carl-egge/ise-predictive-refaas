@@ -2,7 +2,6 @@ package domain
 
 import (
 	"encoding/json"
-	"slices"
 	"testing"
 )
 
@@ -27,28 +26,6 @@ func TestTestFileUndeterministicAliases(t *testing.T) {
 		}
 		if tf.UndeterministicResults != c.want {
 			t.Errorf("%s: UndeterministicResults = %v, want %v", c.raw, tf.UndeterministicResults, c.want)
-		}
-	}
-}
-
-// TestGetTestFilesMergesEnv verifies that a fixture's own "env" entries are
-// appended after the package-level env instead of being clobbered by it
-// (exec.Cmd keeps the last duplicate, so fixture entries win).
-func TestGetTestFilesMergesEnv(t *testing.T) {
-	dp := &DeploymentPackage{
-		Env: []string{"REGION=eu-1", "SHARED=pkg"},
-		TestFiles: map[string]string{
-			"test/t1.json": `{"input":"{}","output":"{}","env":["SHARED=test","EXTRA=1"]}`,
-		},
-	}
-
-	for tf, err := range dp.GetTestFiles() {
-		if err != nil {
-			t.Fatalf("GetTestFiles: %v", err)
-		}
-		want := []string{"REGION=eu-1", "SHARED=pkg", "SHARED=test", "EXTRA=1"}
-		if !slices.Equal(tf.Env, want) {
-			t.Errorf("Env = %v, want %v", tf.Env, want)
 		}
 	}
 }

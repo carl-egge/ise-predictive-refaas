@@ -89,10 +89,25 @@ curl -F file=@examples/input/addition.zip http://localhost:8080/
 
 ## Defining test cases
 
-Test cases are plain JSON files. Point a stage at a directory with
+Test cases are plain JSON files in the schema below — the **canonical fixture
+format for both validation stages**, defined in `internal/fixture`. The
+`goTester` parses the exact same shape (using `payload`/`expectedOutput`/
+`outputMode` and ignoring `setup`/`sideEffects` with a warning — only the
+Floci stage can execute those). Point a Floci stage at a directory with
 `task_args.test_cases_dir`; every `*.json` file in it is loaded (lexically). If
-no directory is configured, the stage derives basic cases from the package's own
-black-box fixtures (payload/expected output only, no side effects).
+no directory is configured, the stage uses the package's own bundled `test/`
+fixtures.
+
+Legacy black-box fixtures (`{"input": "<json-string>", "output":
+"<json-string>", "undeterministic": bool}`) are lowered into the canonical
+shape automatically by `fixture.Parse`: `input` becomes the `payload`,
+`output` becomes the `expectedOutput` (omitted when empty, which skips output
+validation), `undeterministic: true` becomes `outputMode: "shape"`, and a
+base64-encoded legacy `input` that decodes to JSON is decoded. Existing
+fixtures keep working unchanged; author new fixtures rich-only.
+
+Unknown fields are tolerated and ignored — externally generated fixtures may
+carry extra metadata (e.g. a `provenance` block) without breaking parsing.
 
 ```json
 {
@@ -121,6 +136,7 @@ black-box fixtures (payload/expected output only, no side effects).
 | `outputMode`     | Optional. How `expectedOutput` is compared: `tolerant` (default; lenient scalars, `"3"` matches `3`), `strict` (scalar types and values must match exactly), or `shape` (structure and value **types** only — for non-deterministic outputs like timestamps or generated ids). |
 | `setup`          | Declarative actions run **before** invocation.                          |
 | `sideEffects`    | Declarative assertions checked **after** invocation.                    |
+| `env`            | Optional. Per-test environment overrides (`"KEY=value"`), applied by the local `goTester` harness on top of the package's `.env`; the Floci route configures the Lambda environment at deploy time instead. |
 
 ### Built-in setup actions
 

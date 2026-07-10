@@ -46,7 +46,8 @@ cmd/refaas/main.go
             -> internal/llmconnector LLM Client implementations (ollama, gemini, chatai)
        -> internal/inputhandler   .zip -> domain.DeploymentPackage
        -> internal/outputhandler  domain.DeploymentPackage -> .zip / HTTP errors
-  -> internal/domain         shared types: ConversionRequest, DeploymentPackage, TestFile, Metrics
+  -> internal/domain         shared types: ConversionRequest, DeploymentPackage, TestFile (legacy fixture shape), Metrics
+  -> internal/fixture        canonical test-fixture schema (TestCase, MatchOutput) shared by builder, floci and translator
 ```
 
 ### Pipeline compilation and execution (`internal/pipeline`)
@@ -77,7 +78,7 @@ cmd/refaas/main.go
 ### Build/test stages (`internal/builder`)
 
 - `builder.go`'s `GolangBuilder` (`goBuilder`) writes `req.WorkingPackage` plus an embedded `test_handler.txt` harness into a fresh temp dir (`runner.SetWorkingDir`), runs the package's `BuildCmd` list, and on a known Go-modules failure mode (`"unknown revision"`) falls back to regenerating `go.mod` via `go mod init`/`go mod tidy` before retrying the build once.
-- `validator.go`'s `GoPackageTester` (`goTester`) runs `go run .` once per `TestFile` against the built working directory, feeding `TestFile.Input` on stdin and comparing stdout against `TestFile.Output` through a pluggable `ValidationStrategy` — plain string-similarity (`SimilarityValidation`, overlap-coefficient threshold) by default, or a JSON-structure-aware comparison (`JsonAwareSimilarityValidation`, selected via `task_args.strategy: "json"`) that recursively diffs JSON objects/arrays and falls back to string similarity for non-JSON leaves. `TestFile.UndeterministicResults` relaxes the similarity threshold for non-deterministic outputs.
+- `validator.go`'s `GoPackageTester` (`goTester`) runs the built binary (`./fn`, falling back to `go run .`) once per test fixture, feeding the case's `payload` on stdin and judging stdout — after unwrapping the harness's `{"response": ...}`/`{"error": ...}` envelope — against `expectedOutput` via the shared comparator (`internal/fixture.MatchOutput` → `internal/compare.JSONSubset`) per the fixture's `outputMode` (`tolerant` default / `strict` / `shape`). Fixtures are parsed through the canonical schema in `internal/fixture` (see below); cases declaring `setup`/`sideEffects` still run here but those assertions are ignored with a warning (only `flociTester` executes them). The old `task_args.strategy` switch is deprecated and ignored — comparison mode is per-fixture now.
 
 ### Service layer (`internal/service`)
 
@@ -90,7 +91,8 @@ cmd/refaas/main.go
 
 - `ConversionRequest`: carries `SourcePackage` (immutable original) and `WorkingPackage` (mutated in place by each pipeline stage), accumulated `errs` (append-only via `AddError`, read via `Errors()`/`LastError()`), and `Metrics`.
 - `DeploymentPackage`: `RootFile` (main source as a string) + `TestFiles`/`BuildFiles` (filename → content maps) + `BuildCmd` + `Env`. `Copy()` produces a snapshot used by the pipeline's retry/recovery logic to roll back a corrupted working package.
-- `TestFile` (JSON-decoded from a `DeploymentPackage.TestFiles` entry): `Input`/`Output` fixtures, `Env` overrides, `Services` (declared but not consumed anywhere yet — no service mocking/deployment is implemented), `UndeterministicResults` flag.
+- `TestFile` is the **legacy** black-box fixture shape (`Input`/`Output` JSON strings, `Env` overrides, `UndeterministicResults` flag, `Services` declared but unused); it survives only as the definition of that dialect for the lowering in `internal/fixture`.
+- The canonical fixture schema lives in `internal/fixture` (`TestCase`: `name`/`description`/`payload`/`expectedOutput`/`outputMode`/`setup`/`sideEffects`/`env`, plus `Assertion` and `MatchOutput`), shared by `goTester`, `flociTester` (which aliases these types), and the translator's prompt-context rendering. `fixture.Parse` shape-detects and auto-lowers legacy fixtures (`input`→`payload`, `output`→`expectedOutput` omitted when empty, `undeterministic: true`→`outputMode: "shape"`, base64-encoded input decoded); unknown fields (e.g. an external `provenance` block) are ignored. Field names and the `outputMode` vocabulary are a contract with the external dataset pipeline — don't rename them without coordinating a re-vendor there; the vectors in `internal/floci/output_test.go` pin the comparator semantics.
 - `Metrics.AddMetric` aggregates timing/token-count fields across stages; `StartTime`/`EndTime`/`TotalTime` track wall-clock per request.
 
 ## Conventions

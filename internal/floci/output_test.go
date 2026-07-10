@@ -46,13 +46,13 @@ func TestMatchOutput(t *testing.T) {
 // TestTestCaseCompareMode verifies the declarative outputMode mapping and
 // that black-box fixtures flagged non-deterministic derive shape-only cases.
 func TestTestCaseCompareMode(t *testing.T) {
-	if (TestCase{}).compareMode() != compare.Tolerant {
+	if (TestCase{}).CompareMode() != compare.Tolerant {
 		t.Error("default output mode should be tolerant")
 	}
-	if (TestCase{OutputMode: "strict"}).compareMode() != compare.Strict {
+	if (TestCase{OutputMode: "strict"}).CompareMode() != compare.Strict {
 		t.Error("outputMode strict should map to Strict")
 	}
-	if (TestCase{OutputMode: "shape"}).compareMode() != compare.ShapeOnly {
+	if (TestCase{OutputMode: "shape"}).CompareMode() != compare.ShapeOnly {
 		t.Error("outputMode shape should map to ShapeOnly")
 	}
 

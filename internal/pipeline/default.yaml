@@ -6,7 +6,6 @@
 # pointless.
 options:
   model_name: "qwen2.5-coder:3b"
-  strategy: "json"
 
 tasks:
   - id: "root"

@@ -2,7 +2,6 @@
   "LLMClient": "ollama",
   "options": {
     "model_name": "qwen2.5-coder:3b",
-    "strategy": "json",
     "temperature": 0.1,
     "top_p": 0.8,
     "num_ctx": 32768

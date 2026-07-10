@@ -2,7 +2,6 @@
   "LLMClient": "chatai",
   "options": {
     "model_name": "qwen3-coder-30b-a3b-instruct",
-    "strategy": "json",
     "temperature": 0.1,
     "top_p": 0.8,
     "num_ctx": 32768

@@ -2,7 +2,6 @@ package domain
 
 import (
 	"encoding/json"
-	"iter"
 	"maps"
 	"time"
 
@@ -63,24 +62,6 @@ type DeploymentPackage struct {
 	BuildCmd   []string
 	Env        []string
 	Suffix     string
-}
-
-// GetTestFiles yields TestFile entries stored in the package.
-func (dp *DeploymentPackage) GetTestFiles() iter.Seq2[*TestFile, error] {
-	return func(yield func(*TestFile, error) bool) {
-		for name, v := range dp.TestFiles {
-			file := &TestFile{}
-			err := json.Unmarshal([]byte(v), file)
-			file.Name = name
-			// Package-level env first, the fixture's own "env" entries last:
-			// exec.Cmd keeps the last value for duplicate keys, so per-test
-			// overrides win over package defaults instead of being clobbered.
-			file.Env = append(append([]string{}, dp.Env...), file.Env...)
-			if !yield(file, err) {
-				return
-			}
-		}
-	}
 }
 
 // Copy produces a shallow copy of the package maps and slices to be used as a
@@ -203,8 +184,11 @@ func (m *Metrics) AddMetric(mm Metrics) {
 	}
 }
 
-// TestFile holds the input/output fixtures and environment for a single test
-// of the converted function.
+// TestFile is the legacy black-box fixture shape (input/output as JSON
+// strings). The canonical on-disk schema is internal/fixture.TestCase
+// (payload/expectedOutput/outputMode/setup/sideEffects); fixture.Parse lowers
+// this legacy shape into it automatically, and this type only remains as the
+// definition of that legacy dialect for the lowering.
 type TestFile struct {
 	Name   string `json:"name"`
 	Input  string `json:"input"`

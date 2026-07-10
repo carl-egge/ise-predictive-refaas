@@ -3,15 +3,19 @@ module github.com/carl-egge/ise-predictive-refaas
 go 1.24.1
 
 require (
-	github.com/adrg/strutil v0.3.1
 	github.com/aws/aws-lambda-go v1.54.0
 	github.com/aws/aws-sdk-go-v2 v1.42.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.26
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.25
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.20.49
+	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.64.0
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.59.1
+	github.com/aws/aws-sdk-go-v2/service/kinesis v1.45.0
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.94.0
+	github.com/aws/aws-sdk-go-v2/service/rdsdata v1.34.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.1
+	github.com/aws/aws-sdk-go-v2/service/sfn v1.44.0
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.45.0
 	github.com/google/generative-ai-go v0.19.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
@@ -34,18 +38,13 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.30 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.30 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.30 // indirect
-	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.64.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/dynamodbstreams v1.34.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.12 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.22 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.12.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.29 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.30 // indirect
-	github.com/aws/aws-sdk-go-v2/service/kinesis v1.45.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/rdsdata v1.34.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sfn v1.44.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.2.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sqs v1.45.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.31.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.4 // indirect

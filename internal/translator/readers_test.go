@@ -246,24 +246,26 @@ func TestAlignPromptRendersFailureEvidence(t *testing.T) {
 	}
 }
 
-// TestSortedTestFilesAndRenderExamples guards the C7 behavior: fixtures are
+// TestSortedTestCasesAndRenderExamples guards the C7 behavior: fixtures are
 // selected in deterministic lexical order (map iteration is randomized),
 // unparseable ones are skipped, and rendering respects the example limit.
-func TestSortedTestFilesAndRenderExamples(t *testing.T) {
+// Rich (payload/expectedOutput) fixtures render the same way lowered legacy
+// ones do.
+func TestSortedTestCasesAndRenderExamples(t *testing.T) {
 	req := &domain.ConversionRequest{SourcePackage: &domain.DeploymentPackage{
 		TestFiles: map[string]string{
 			"test/t3.json":  `{"input":"{\"n\":3}","output":"{\"r\":3}"}`,
 			"test/t1.json":  `{"input":"{\"n\":1}","output":"{\"r\":1}"}`,
 			"test/bad.json": `not json`,
-			"test/t2.json":  `{"input":"{\"n\":2}","output":"{\"r\":2}"}`,
+			"test/t2.json":  `{"payload":{"n":2},"expectedOutput":{"r":2}}`,
 		},
 	}}
 
-	tests := sortedTestFiles(req)
+	tests := sortedTestCases(req)
 	if len(tests) != 3 {
-		t.Fatalf("sortedTestFiles = %d entries, want 3 (bad fixture skipped)", len(tests))
+		t.Fatalf("sortedTestCases = %d entries, want 3 (bad fixture skipped)", len(tests))
 	}
-	if tests[0].Name != "test/t1.json" || tests[2].Name != "test/t3.json" {
+	if tests[0].Name != "t1" || tests[2].Name != "t3" {
 		t.Errorf("fixtures not in lexical order: %s ... %s", tests[0].Name, tests[2].Name)
 	}
 

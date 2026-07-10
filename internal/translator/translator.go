@@ -2,7 +2,6 @@ package translator
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -11,6 +10,7 @@ import (
 	"text/template"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
+	"github.com/carl-egge/ise-predictive-refaas/internal/fixture"
 	"github.com/carl-egge/ise-predictive-refaas/internal/llmconnector"
 	"github.com/carl-egge/ise-predictive-refaas/internal/pipeline"
 	"github.com/google/uuid"
@@ -133,10 +133,11 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 	var codePrompt bytes.Buffer
 
 	codeBlock := codeBlockGenerator(code.WorkingPackage)
-	tests := sortedTestFiles(code)
-	first := &domain.TestFile{}
+	tests := sortedTestCases(code)
+	firstInput, firstOutput := "", ""
 	if len(tests) > 0 {
-		first = tests[0]
+		firstInput = string(tests[0].Payload)
+		firstOutput = string(tests[0].ExpectedOutput)
 	}
 
 	srcFile := ""
@@ -167,8 +168,8 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 	templateVars["failures"] = failuresBlock
 	templateVars["original"] = srcFile
 	templateVars["tests"] = renderTestExamples(tests, cc.maxExamples)
-	templateVars["input"] = first.Input
-	templateVars["output"] = first.Output
+	templateVars["input"] = firstInput
+	templateVars["output"] = firstOutput
 
 	err := cc.template.Execute(&codePrompt, templateVars)
 	if err != nil {
@@ -305,24 +306,25 @@ func renderTestFailures(failures []domain.TestFailure) string {
 // unless the task sets max_test_examples.
 const defaultTestExamples = 3
 
-// sortedTestFiles returns the source package's parseable test fixtures in
-// lexical name order. Map iteration order is randomized in Go, so without
+// sortedTestCases returns the source package's parseable test fixtures in
+// lexical file order, parsed through the canonical fixture schema (so a rich
+// payload/expectedOutput fixture renders into prompts the same way a lowered
+// legacy one does). Map iteration order is randomized in Go, so without
 // sorting the "first" test shown to a prompt could differ between runs and
 // retries, making experiments non-reproducible.
-func sortedTestFiles(code *domain.ConversionRequest) []*domain.TestFile {
+func sortedTestCases(code *domain.ConversionRequest) []fixture.TestCase {
 	if code.SourcePackage == nil {
 		return nil
 	}
 	names := slices.Sorted(maps.Keys(code.SourcePackage.TestFiles))
-	out := make([]*domain.TestFile, 0, len(names))
+	out := make([]fixture.TestCase, 0, len(names))
 	for _, name := range names {
-		file := &domain.TestFile{}
-		if err := json.Unmarshal([]byte(code.SourcePackage.TestFiles[name]), file); err != nil {
+		tc, err := fixture.Parse(name, []byte(code.SourcePackage.TestFiles[name]))
+		if err != nil {
 			log.Debugf("skipping unparseable test fixture %s for prompt context: %v", name, err)
 			continue
 		}
-		file.Name = name
-		out = append(out, file)
+		out = append(out, tc)
 	}
 	return out
 }
@@ -330,7 +332,7 @@ func sortedTestFiles(code *domain.ConversionRequest) []*domain.TestFile {
 // renderTestExamples formats up to limit test fixtures as input/expected
 // pairs for {{ .tests }}. Multiple cases matter: the error-path fixture is
 // often the only specification of the non-happy-path statusCode mapping.
-func renderTestExamples(tests []*domain.TestFile, limit int) string {
+func renderTestExamples(tests []fixture.TestCase, limit int) string {
 	if limit <= 0 {
 		limit = defaultTestExamples
 	}
@@ -338,11 +340,15 @@ func renderTestExamples(tests []*domain.TestFile, limit int) string {
 		tests = tests[:limit]
 	}
 	var b strings.Builder
-	for i, tf := range tests {
+	for i, tc := range tests {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "Test case %d:\n  Input: %s\n  Expected output: %s\n", i+1, capForPrompt(tf.Input), capForPrompt(tf.Output))
+		expected := string(tc.ExpectedOutput)
+		if expected == "" {
+			expected = "(unspecified - side effects are validated separately)"
+		}
+		fmt.Fprintf(&b, "Test case %d:\n  Input: %s\n  Expected output: %s\n", i+1, capForPrompt(string(tc.Payload)), capForPrompt(expected))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

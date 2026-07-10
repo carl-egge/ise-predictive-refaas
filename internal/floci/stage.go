@@ -125,7 +125,7 @@ func (t *FlociTester) runCase(ctx context.Context, clients *Clients, tc TestCase
 		return err
 	}
 
-	if err := matchOutput(tc.ExpectedOutput, resp, tc.compareMode()); err != nil {
+	if err := matchOutput(tc.ExpectedOutput, resp, tc.CompareMode()); err != nil {
 		return err
 	}
 

@@ -71,7 +71,8 @@ The codebase follows Standard Go Project Layout with a thin entrypoint and inter
 - **internal/pipeline**: pipeline orchestration, task registry, and config parsing.
 - **internal/llmconnector**: LLM client abstractions and provider implementations.
 - **internal/translator**: prompt rendering, LLM translation, and response parsing.
-- **internal/builder**: build/compile/test stages and validation strategies.
+- **internal/builder**: build/compile/test stages and output validation.
+- **internal/fixture**: the canonical test-fixture schema shared by `goTester` and `flociTester` (legacy `input`/`output` fixtures are lowered into it automatically).
 - **internal/inputhandler**: zip input parsing and normalization.
 - **internal/outputhandler**: zip output writing and HTTP error reporting.
 - **internal/service**: HTTP API and background processing.
@@ -110,7 +111,7 @@ Configures both the LLM backend and the conversion pipeline. `options`/`tasks` d
 | Name (JSON key) | Go type | Scope | Set when | Consumed by |
 |:---|:---|:---|:---|:---|
 | `args` | `ConverterOptions.Args` | Connector wiring (API keys, endpoints) | Once, at Runner build / `/reconfigure` | `llmconnector.Client.Configure` |
-| `options` | `PipelineFile.Options` | Pipeline-wide defaults for every task (model_name, temperature, strategy, ...) | Once, at pipeline compile | Merged into every task's params |
+| `options` | `PipelineFile.Options` | Pipeline-wide defaults for every task (model_name, temperature, ...) | Once, at pipeline compile | Merged into every task's params |
 | `task_args` | `ConversionTaskStub.TaskArgs` | This task only — overrides `options` | Once, at pipeline compile | Merged on top of `options` for this task's `task` converter (not `canApply`/`validation`) |
 | *(unnamed — internally "task params")* | merged `options` + `task_args` | This task, every run | Fresh before every task execution, including retries | `llmconnector.Client.Prepare` |
 
@@ -122,7 +123,6 @@ In short: `args` answers "how do I reach the LLM backend," `options`/`task_args`
   "args": { "key": "value" },
   "options": {
     "model_name": "string",
-    "strategy": "string",
     "temperature": "float",
     "top_p": "float",
     "num_ctx": "integer"
@@ -157,6 +157,7 @@ The same `options`/`tasks` shape is used standalone for the embedded default pip
 - **Accepted format**: Only `.zip` files.
 - **Job expiration**: Jobs are deleted **after download** or **server restart**.
 - **Concurrency**: A background worker sequentially processes uploaded jobs.
+- **Test fixtures**: The canonical fixture schema is the rich, side-effect-aware shape (`payload`/`expectedOutput`/`outputMode`/`setup`/`sideEffects`, defined in [internal/fixture](internal/fixture/testcase.go) and documented in [docs/floci-integration.md](docs/floci-integration.md)); both `goTester` and `flociTester` parse it. Legacy black-box fixtures (`input`/`output` JSON strings) keep working — they are lowered into the canonical shape automatically. New fixtures should be authored in the rich shape only.
 - **Cancellation**: `POST /stop/{uuid}` cancels a queued or in-progress job; the pipeline aborts at the next opportunity (between retries/tasks) rather than continuing to spend build/test/LLM resources on it.
 - **Pipeline Config**: The service supports **dynamic reconfiguration** without restarting.
 
@@ -281,7 +282,6 @@ curl -X POST -H "Content-Type: application/json" -d '{
   },
   "options": {
     "model_name": "qwen2.5-coder:32b",
-    "strategy": "json",
     "temperature": 0.1,
     "top_p": 0.8,
     "num_ctx": 32768

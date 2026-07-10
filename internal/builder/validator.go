@@ -10,14 +10,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/adrg/strutil"
-	"github.com/adrg/strutil/metrics"
 	"github.com/carl-egge/ise-predictive-refaas/internal/compare"
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
+	"github.com/carl-egge/ise-predictive-refaas/internal/fixture"
 	"github.com/carl-egge/ise-predictive-refaas/internal/pipeline"
 	log "github.com/sirupsen/logrus"
 )
@@ -28,9 +28,14 @@ import (
 const defaultTestTimeout = 30 * time.Second
 
 // GoPackageTester runs the package in the working directory and validates its
-// stdout against expected test outputs.
+// stdout against the expected test outputs. Fixtures are parsed through the
+// canonical schema (internal/fixture: payload/expectedOutput/outputMode, with
+// legacy input/output fixtures lowered automatically) and outputs are judged
+// by the shared comparator (fixture.MatchOutput) - the same definition of
+// "equivalent" the Floci route uses. Cases that declare setup/sideEffects run
+// like any other, but their side-effect assertions are ignored with a warning:
+// only the flociTester can execute those.
 type GoPackageTester struct {
-	validator ValidationStrategy
 	// testTimeout bounds each individual test-case run (task_args
 	// "test_timeout", default defaultTestTimeout).
 	testTimeout time.Duration
@@ -40,26 +45,21 @@ func init() {
 	pipeline.RegisterConverterFactory("goTester", NewGoPackageTester)
 }
 
-// NewGoPackageTester constructs a tester with an optional validation strategy
-// and per-test timeout from args.
+// NewGoPackageTester constructs a tester with an optional per-test timeout
+// from args.
 func NewGoPackageTester(args map[string]interface{}) pipeline.Converter {
-	var validator ValidationStrategy
 	if kind, ok := args["strategy"].(string); ok {
-		switch kind {
-		case "json":
-			validator = NewJSONStructureValidation()
-		default:
-			validator = &SimilarityValidation{}
-		}
+		// There is exactly one comparator now (fixture.MatchOutput); the
+		// per-fixture outputMode replaced the task-level strategy switch.
+		log.Debugf("goTester: strategy %q is deprecated and ignored; comparison is per-fixture via outputMode", kind)
 	}
 	return &GoPackageTester{
-		validator:   validator,
 		testTimeout: parseTimeout(args, "test_timeout", defaultTestTimeout),
 	}
 }
 
-// Apply builds/runs tests in the runner's working directory and updates the
-// request's metrics and error state.
+// Apply runs every test fixture in the runner's working directory and updates
+// the request's metrics and error state.
 func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.ConversionRequest) error {
 	if request.WorkingPackage == nil {
 		log.Errorf("missing working package for %s", request.Id)
@@ -74,31 +74,41 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 
 	startTime := time.Now()
 	ctx := runner
+	pkg := request.WorkingPackage
 	failures := make([]domain.TestFailure, 0)
-	log.Debugf("Running GoPackageTester with %d tests", len(request.WorkingPackage.TestFiles))
-	for testFile, err := range maps.Collect(request.WorkingPackage.GetTestFiles()) {
-		if request.Metrics != nil {
-			request.Metrics.TestCases[testFile.Name] = false
-		}
+	log.Debugf("Running GoPackageTester with %d tests", len(pkg.TestFiles))
+	// Parse per file (rather than fixture.FromPackage) so one broken fixture
+	// becomes a failure entry while the remaining cases still run.
+	for _, fileName := range slices.Sorted(maps.Keys(pkg.TestFiles)) {
+		tc, err := fixture.Parse(fileName, []byte(pkg.TestFiles[fileName]))
 		if err != nil {
-			log.Debugf("failed to read test %s: %+v", testFile.Name, err)
+			log.Debugf("failed to read test %s: %+v", fileName, err)
+			if request.Metrics != nil {
+				request.Metrics.TestCases[fileName] = false
+			}
 			failures = append(failures, domain.TestFailure{
-				Name:   testFile.Name,
+				Name:   fileName,
 				Kind:   domain.TestFailureFixture,
 				Stderr: truncateForFeedback(err.Error()),
 			})
 			continue
 		}
+		if request.Metrics != nil {
+			request.Metrics.TestCases[tc.Name] = false
+		}
+		if tc.HasSideEffects() {
+			log.Warnf("test case %q declares setup/sideEffects, which goTester cannot execute; only the payload/expectedOutput half is validated here (use the flociTester stage for side-effect assertions)", tc.Name)
+		}
 
-		if failure := cc.doTest(ctx, runner.WorkingDir(), testFile); failure != nil {
+		if failure := cc.doTest(ctx, runner.WorkingDir(), tc, pkg.Env); failure != nil {
 			failures = append(failures, *failure)
-			log.Debugf("test %s failed (%s)", testFile.Name, failure.Kind)
+			log.Debugf("test %s failed (%s)", tc.Name, failure.Kind)
 			continue
 		}
 		if request.Metrics != nil {
-			request.Metrics.TestCases[testFile.Name] = true
+			request.Metrics.TestCases[tc.Name] = true
 		}
-		log.Debugf("test %s succeeded ", testFile.Name)
+		log.Debugf("test %s succeeded ", tc.Name)
 	}
 	errCount := len(failures)
 	if request.Metrics != nil {
@@ -106,27 +116,26 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 		request.Metrics.TestError = errCount
 	}
 	if errCount != 0 {
-		// Deterministic order: the failures feed prompt evidence and map
-		// iteration order above is randomized.
+		// Deterministic order: the failures feed prompt evidence.
 		sort.Slice(failures, func(i, j int) bool { return failures[i].Name < failures[j].Name })
 		names := make([]string, 0, len(failures))
 		for _, f := range failures {
 			names = append(names, fmt.Sprintf("%s (%s)", f.Name, f.Kind))
 		}
-		log.Debugf("tests failed: %d/%d", errCount, len(request.WorkingPackage.TestFiles))
+		log.Debugf("tests failed: %d/%d", errCount, len(pkg.TestFiles))
 		return domain.NewTestingErrorWithFailures(
-			fmt.Errorf("%d/%d tests failed: %s", errCount, len(request.WorkingPackage.TestFiles), strings.Join(names, ", ")),
+			fmt.Errorf("%d/%d tests failed: %s", errCount, len(pkg.TestFiles), strings.Join(names, ", ")),
 			failures,
 		)
 	}
-	log.Debugf("%d tests succeeded", len(request.WorkingPackage.TestFiles))
+	log.Debugf("%d tests succeeded", len(pkg.TestFiles))
 	return nil
 }
 
 // doTest runs one test case and returns nil on success, or the captured
 // failure evidence (input, expected vs. actual output, stderr) so repair
 // stages can see what actually went wrong instead of just a count.
-func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.TestFile) *domain.TestFailure {
+func (cc *GoPackageTester) doTest(ctx context.Context, dir string, tc fixture.TestCase, pkgEnv []string) *domain.TestFailure {
 	timeout := cc.testTimeout
 	if timeout <= 0 {
 		timeout = defaultTestTimeout
@@ -155,8 +164,15 @@ func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.Tes
 	// the timeout even if the child never exits.
 	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), t.Env...)
-	in := strings.NewReader(t.Input)
+	// Package-level env first, the fixture's own entries last: exec.Cmd keeps
+	// the last value for duplicate keys, so per-test overrides win.
+	cmd.Env = append(append(os.Environ(), pkgEnv...), tc.Env...)
+	payload := string(tc.Payload)
+	if strings.TrimSpace(payload) == "" {
+		payload = "{}" // same default event the Floci route invokes with
+	}
+	expected := string(tc.ExpectedOutput)
+	in := strings.NewReader(payload)
 	out := &bytes.Buffer{}
 	errBuf := &bytes.Buffer{}
 
@@ -171,23 +187,23 @@ func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.Tes
 			stderrText = fmt.Sprintf("test run exceeded the %s time limit (likely an infinite loop or a blocking call without a timeout)", timeout)
 		}
 		return &domain.TestFailure{
-			Name:     t.Name,
+			Name:     tc.Name,
 			Kind:     kind,
-			Input:    truncateForFeedback(t.Input),
-			Expected: truncateForFeedback(t.Output),
+			Input:    truncateForFeedback(payload),
+			Expected: truncateForFeedback(expected),
 			Actual:   truncateForFeedback(out.String()),
 			Stderr:   truncateForFeedback(stderrText),
 		}
 	}
 	cleanOut := domain.MinimizeString(out.String())
 
-	if ok, reason := cc.validateTestOutput(cleanOut, t); !ok {
-		log.Debugf("test failed (%s). %s, expected:%s, errors:%s", reason, cleanOut, t.Output, errBuf.String())
+	if ok, reason := validateHarnessOutput(tc.ExpectedOutput, cleanOut, tc.CompareMode()); !ok {
+		log.Debugf("test failed (%s). %s, expected:%s, errors:%s", reason, cleanOut, expected, errBuf.String())
 		return &domain.TestFailure{
-			Name:     t.Name,
+			Name:     tc.Name,
 			Kind:     domain.TestFailureMismatch,
-			Input:    truncateForFeedback(t.Input),
-			Expected: truncateForFeedback(t.Output),
+			Input:    truncateForFeedback(payload),
+			Expected: truncateForFeedback(expected),
 			Actual:   truncateForFeedback(cleanOut),
 			Stderr:   truncateForFeedback(strings.TrimSpace(errBuf.String())),
 			Detail:   reason,
@@ -195,6 +211,36 @@ func (cc *GoPackageTester) doTest(ctx context.Context, dir string, t *domain.Tes
 	}
 
 	return nil
+}
+
+// validateHarnessOutput unwraps the test harness envelope ({"response": ...}
+// on success, {"error": ...} when the handler itself returned an error) from
+// the program's stdout and judges the payload against the fixture's expected
+// output via the shared comparator. An empty expectation skips output
+// validation (side-effect-only cases). Non-envelope stdout is compared as-is,
+// with MatchOutput's substring fallback covering non-JSON output.
+func validateHarnessOutput(expected json.RawMessage, stdout string, mode compare.Mode) (bool, string) {
+	if len(expected) == 0 {
+		return true, ""
+	}
+	actual := []byte(stdout)
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(actual, &envelope); err == nil {
+		if errVal, ok := envelope["error"]; ok {
+			log.Debugf("handle function caused error: %s", errVal)
+			return false, fmt.Sprintf("handler returned an error: %s", errVal)
+		}
+		if resp, ok := envelope["response"]; ok {
+			actual = resp
+		}
+	}
+	if err := fixture.MatchOutput(expected, actual, mode); err != nil {
+		if mode == compare.ShapeOnly {
+			return false, fmt.Sprintf("%s (values ignored for non-deterministic test)", err)
+		}
+		return false, err.Error()
+	}
+	return true, ""
 }
 
 // fileExists reports whether path exists as a regular file.
@@ -211,110 +257,4 @@ func truncateForFeedback(s string) string {
 		return s
 	}
 	return s[:maxLen] + "\n... [truncated]"
-}
-
-func (cc *GoPackageTester) validateTestOutput(testOutput string, testFile *domain.TestFile) (bool, string) {
-	validator := cc.validator
-	if validator == nil {
-		validator = &SimilarityValidation{}
-	}
-
-	if testFile.UndeterministicResults {
-		return validator.validateUndeterministic(testOutput, testFile.Output)
-	}
-	return validator.validate(testOutput, testFile.Output)
-}
-
-// ValidationStrategy decides whether a test run's output satisfies the
-// expected value. The string return is a human/prompt-readable reason for a
-// mismatch ("" on success), which flows into TestFailure.Detail.
-type ValidationStrategy interface {
-	validate(in, expected string) (bool, string)
-	validateUndeterministic(in, expected string) (bool, string)
-}
-
-// SimilarityValidation is the last-resort fuzzy comparison, used directly
-// only when no strategy is configured and as the fallback when either side
-// of a structural comparison is not JSON at all.
-type SimilarityValidation struct{}
-
-// validate passes when the output is sufficiently similar to the expected
-// value (overlap coefficient: 1.0 = identical, 0.0 = disjoint).
-func (SimilarityValidation) validate(in, expected string) (bool, string) {
-	return similarityAtLeast(in, expected, 0.9)
-}
-
-func (SimilarityValidation) validateUndeterministic(in, expected string) (bool, string) {
-	return similarityAtLeast(in, expected, 0.6)
-}
-
-func similarityAtLeast(in, expected string, threshold float64) (bool, string) {
-	sim := strutil.Similarity(in, expected, metrics.NewOverlapCoefficient())
-	if sim >= threshold {
-		return true, ""
-	}
-	return false, fmt.Sprintf("output similarity %.2f below threshold %.2f", sim, threshold)
-}
-
-// NewJSONStructureValidation returns the standard output validator
-// (task_args strategy: "json"): a deterministic structural comparison via
-// the shared compare package - strict subset matching normally, type-shape
-// only for tests flagged non-deterministic - with string similarity kept
-// strictly as the fallback for non-JSON outputs. The same comparator backs
-// the Floci route (floci.matchOutput), so both validation paths agree on
-// what "equivalent" means.
-func NewJSONStructureValidation() ValidationStrategy {
-	return &JSONStructureValidation{fallback: SimilarityValidation{}}
-}
-
-// JSONStructureValidation implements ValidationStrategy on top of
-// compare.JSONSubset.
-type JSONStructureValidation struct {
-	fallback SimilarityValidation
-}
-
-func (vs *JSONStructureValidation) validate(in, expected string) (bool, string) {
-	return vs.compareOutputs(in, expected, compare.Strict)
-}
-
-func (vs *JSONStructureValidation) validateUndeterministic(in, expected string) (bool, string) {
-	return vs.compareOutputs(in, expected, compare.ShapeOnly)
-}
-
-func (vs *JSONStructureValidation) compareOutputs(in, expected string, mode compare.Mode) (bool, string) {
-	var expectedJSON map[string]interface{}
-	if err := json.Unmarshal([]byte(expected), &expectedJSON); err != nil {
-		return vs.fallbackFor(mode)(in, expected)
-	}
-
-	var actualJSON map[string]interface{}
-	if err := json.Unmarshal([]byte(in), &actualJSON); err != nil {
-		return vs.fallbackFor(mode)(in, expected)
-	}
-
-	// unwrap the test harness envelope: {"response": ...} on success,
-	// {"error": ...} when the handler itself returned an error
-	if val, ok := actualJSON["error"]; ok {
-		log.Debugf("handle function caused error: %s", val)
-		return false, fmt.Sprintf("handler returned an error: %v", val)
-	}
-	actual := interface{}(actualJSON)
-	if val, ok := actualJSON["response"]; ok {
-		actual = val
-	}
-
-	if ok, path := compare.JSONSubset(expectedJSON, actual, mode); !ok {
-		if mode == compare.ShapeOnly {
-			return false, fmt.Sprintf("output structure/type mismatch at %s (values ignored for non-deterministic test)", path)
-		}
-		return false, fmt.Sprintf("output mismatch at %s", path)
-	}
-	return true, ""
-}
-
-func (vs *JSONStructureValidation) fallbackFor(mode compare.Mode) func(in, expected string) (bool, string) {
-	if mode == compare.ShapeOnly {
-		return vs.fallback.validateUndeterministic
-	}
-	return vs.fallback.validate
 }
