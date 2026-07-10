@@ -8,6 +8,30 @@ import (
 	"time"
 )
 
+// TestGeminiInvocationClientPrepareSetsTemperature guards [E3]: Gemini used
+// to hardcode temperature=0.1 in InvokeLLM regardless of taskParams, so a
+// per-task or retry-bumped "temperature" (the same key ollama/chatai read)
+// had no effect on this backend. Prepare must now pick it up, and must leave
+// a previously-set value alone when a later call's taskParams omits the key
+// (e.g. a task with no explicit "temperature" configured at all).
+func TestGeminiInvocationClientPrepareSetsTemperature(t *testing.T) {
+	client := &GeminiInvocationClient{Temperature: defaultGeminiTemperature}
+
+	if err := client.Prepare(map[string]interface{}{"temperature": 0.9}); err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	if client.Temperature != 0.9 {
+		t.Errorf("Temperature = %v, want 0.9", client.Temperature)
+	}
+
+	if err := client.Prepare(map[string]interface{}{}); err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	if client.Temperature != 0.9 {
+		t.Errorf("Temperature = %v after a call with no temperature key, want unchanged 0.9", client.Temperature)
+	}
+}
+
 // TestGeminiInvocationClient_LiveInvokeLLM makes a real, billable call
 // against the Gemini API using a small model and the shortest viable
 // prompt, to confirm the genai SDK, the configured API key, and the model

@@ -121,6 +121,11 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 			if req.WorkingPackage != nil {
 				workingPackage = req.WorkingPackage.Copy()
 			}
+			// Set fresh on every iteration (including after a recovery
+			// sub-call recurses into executeTask and mutates req for its own
+			// task), so it's always correct at the point Execute.Apply reads
+			// it - no restore logic needed, unlike CurrentTask.
+			req.CurrentAttempt = task.RetryCount + 1
 			attemptStart := time.Now()
 			err = task.Execute.Apply(runner, req)
 			if req.Metrics != nil {

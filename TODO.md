@@ -54,7 +54,7 @@
 **E. Small-model robustness**
 - [x] [E1] Per-task output schemas for code-producing stages
 - [x] [E2] Deterministic JSON extraction fallback before failing a parse
-- [ ] [E3] Vary sampling on resample-style retries
+- [x] [E3] Vary sampling on resample-style retries
 - [x] [E4] Truncate feedback to the first compiler errors
 - [x] [E5] Stop sending junk params to Ollama; set explicit `num_predict`
 
@@ -507,13 +507,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local | Effort: S | Priority: **P0** (raised 2026-07-04: API experiments confirmed the ChatAI backend **silently** drops schema enforcement on models that can't compile the grammar — see [E1] — so the Go layer is the only reliable line of defense against unconstrained text responses)
 - Status: **Implemented 2026-07-04.** `JsonCodeBlockReader` now returns `(map[string]string, error)` and tries three extractions in order: the trimmed raw response, the contents of the first markdown code fence (language tag stripped), and the first balanced top-level `{...}` region (string/escape-aware, so braces inside embedded code don't break matching). Non-string fields in an otherwise valid object are skipped instead of failing the response. On total failure the error now says "LLM response is not a JSON object …" (truncated echo) instead of the old nil map that surfaced downstream as the misleading "could not find main". All three call sites (both package readers + metadata mode) propagate the new error. Regression tests in `readers_test.go` cover fenced/prose-wrapped/escaped-brace responses, non-string skipping, truncated JSON, and plain garbage. Note: a *truncated* response still fails (no balanced object) — detecting that specifically via finish/done reason remains [F3].
 
-### [ ] [E3] Vary sampling on resample-style retries
+### [x] [E3] Vary sampling on resample-style retries
 - Category: Small-Model Robustness
 - Affected component(s): `internal/pipeline/pipeline.go` + `internal/translator/translator.go` (`Prepare` runs fresh per attempt — the hook exists)
 - Problem / current state: Retries of `cleaner`/`coder` (no recovery task) re-send the identical prompt at `temperature: 0.1`; a near-greedy model reproduces essentially the same wrong output, so `maxRetryCount` on those tasks buys almost nothing.
 - Proposed change: Track the attempt number (e.g. via `req.Metadata`) and add an opt-in temperature bump (`task_args.retry_temperature`) on attempts >1.
 - Why: Sampling diversity is what makes repeated attempts explore different solutions — the core observation behind self-consistency (Wang et al., arXiv:2203.11171).
 - Architecture impact: Local | Effort: S–M | Priority: P1
+- Status: **Implemented 2026-07-10.** `domain.ConversionRequest` gained a transient `CurrentAttempt int` field (mirroring `CurrentTask`, deliberately *not* `req.Metadata` — that map is promoted into prompt template vars, so a bookkeeping key there would leak into `{{ .* }}`). `pipeline.go`'s `executeTask` sets it to `task.RetryCount + 1` fresh on every retry-loop iteration (both the Execute-failure and validation-failure retry paths funnel through it, so both count as "attempts"). `translator.go`'s `LLMConverter` gained an opt-in `task_args.retry_temperature`: parsed once in `NewLLMConverter` (and stripped from `taskParams` like `prompt`/`reader`/`mode`), then `paramsForAttempt` hands `Client.Prepare` a one-off copy with `"temperature"` overridden only when `retry_temperature` is configured *and* `CurrentAttempt > 1` — the converter's own long-lived `taskParams` map is never mutated, so a bump can't leak into a later, unrelated first attempt. Fully opt-in: unconfigured tasks see byte-identical `taskParams` on every attempt, exactly as before. Also fixed a related pre-existing gap while here: `internal/llmconnector/gemini.go` previously hardcoded `temperature = 0.1` in every `InvokeLLM` call regardless of `taskParams`, so neither a pipeline's base `temperature` nor this new `retry_temperature` had any effect on the Gemini backend; `Prepare` now reads `"temperature"` (same key `ollama`/`chatai` already honor) into a new `Temperature` field that `InvokeLLM` uses, defaulting to the old hardcoded `0.1` when a task doesn't set one. Tests: `TestExecuteTaskTracksCurrentAttempt` (`internal/pipeline/pipeline_test.go`), `TestLLMConverterRetryTemperature`/`TestLLMConverterNoRetryTemperatureConfigured` (`internal/translator/translator_test.go`, the package's first test file), `TestGeminiInvocationClientPrepareSetsTemperature` (`internal/llmconnector/gemini_test.go`).
 
 ### [x] [E4] Truncate feedback to the first compiler errors
 - Category: Small-Model Robustness / Efficiency

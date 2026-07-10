@@ -190,6 +190,36 @@ func TestExecuteTaskRecoveryRunsBetweenAttempts(t *testing.T) {
 	}
 }
 
+// TestExecuteTaskTracksCurrentAttempt guards [E3]: a converter needs to be
+// able to tell a fresh execution from a resample-style retry of the same
+// task (e.g. to opt into a temperature bump), via
+// ConversionRequest.CurrentAttempt - 1-based, incrementing on every
+// execution of this task.
+func TestExecuteTaskTracksCurrentAttempt(t *testing.T) {
+	var attempts []int
+	failing := &funcConverter{fn: func(_ *Runner, req *domain.ConversionRequest) error {
+		attempts = append(attempts, req.CurrentAttempt)
+		return errors.New("still broken")
+	}}
+
+	task := &ConversionTask{ID: "main", Execute: failing, MaxRetryCount: 3}
+	p := NewPipeline(task)
+	runner := NewRunner(context.Background(), p, nil)
+
+	if err := p.Execute(runner, &domain.ConversionRequest{}); err == nil {
+		t.Fatal("expected the task to fail")
+	}
+	want := []int{1, 2, 3}
+	if len(attempts) != len(want) {
+		t.Fatalf("attempts = %v, want %v", attempts, want)
+	}
+	for i := range want {
+		if attempts[i] != want[i] {
+			t.Fatalf("attempts = %v, want %v", attempts, want)
+		}
+	}
+}
+
 // TestExecuteTaskJoinsOriginalErrorWithFailedRecovery guards [B3]: when a
 // recovery task itself fails, the returned/last-recorded error must still
 // surface the original defect (what the fixer/align prompt's {{ .issue }}

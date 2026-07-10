@@ -15,10 +15,23 @@ import (
 	"google.golang.org/api/option"
 )
 
+// defaultGeminiTemperature preserves this connector's historical fixed
+// sampling temperature for any task whose merged options/task_args don't set
+// their own "temperature" (the other connectors instead just omit the field
+// and let the backend apply its own default - Gemini's SDK has no such
+// implicit default, so InvokeLLM needs an explicit fallback).
+const defaultGeminiTemperature = 0.1
+
 // GeminiInvocationClient wraps the Gemini SDK and exposes the Client interface.
 type GeminiInvocationClient struct {
 	ModelName    string
 	geminiAPIKey string
+	// Temperature holds this task's sampling temperature (set by Prepare,
+	// from the merged options/task_args "temperature" - the same key the
+	// ollama/chatai connectors read), so per-task and per-attempt overrides
+	// (e.g. E3's opt-in retry_temperature bump) actually take effect here too
+	// instead of every call using a hardcoded value.
+	Temperature float32
 	// OutputSchema holds this task's expected response shape (set by
 	// Prepare, from task_args.output_keys). Falls back to the original
 	// main.go/go.mod/main.py schema when no task-specific schema is set.
@@ -49,6 +62,7 @@ func (g *GeminiInvocationClient) Configure(connectorArgs map[string]interface{})
 		return fmt.Errorf("GEMINI_API_KEY required")
 	}
 	g.geminiAPIKey = key.(string)
+	g.Temperature = defaultGeminiTemperature
 
 	model, ok := connectorArgs["GEMINI_MODEL"]
 	if ok {
@@ -68,8 +82,9 @@ func (g *GeminiInvocationClient) Configure(connectorArgs map[string]interface{})
 	return nil
 }
 
-// Prepare allows overriding the model and response schema via per-task
-// params (called fresh before every InvokeLLM, including retries).
+// Prepare allows overriding the model, sampling temperature, and response
+// schema via per-task params (called fresh before every InvokeLLM, including
+// retries).
 func (g *GeminiInvocationClient) Prepare(taskParams map[string]interface{}) error {
 	if taskParams == nil {
 		return nil
@@ -77,6 +92,14 @@ func (g *GeminiInvocationClient) Prepare(taskParams map[string]interface{}) erro
 	model, ok := taskParams["GEMINI_MODEL"]
 	if ok {
 		g.ModelName = model.(string)
+	}
+	switch v := taskParams["temperature"].(type) {
+	case float64: // the common case: a JSON number from options/task_args
+		g.Temperature = float32(v)
+	case float32:
+		g.Temperature = v
+	case int:
+		g.Temperature = float32(v)
 	}
 	g.OutputSchema = ParseOutputSchema(taskParams["output_keys"])
 	return nil
@@ -98,7 +121,7 @@ func (g *GeminiInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer
 		Properties: g.responseProperties(),
 		Required:   g.requiredKeys(),
 	}
-	temp := float32(0.1)
+	temp := g.Temperature
 	model.Temperature = &temp
 
 	var metrics domain.Metrics

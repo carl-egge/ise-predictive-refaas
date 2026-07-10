@@ -35,6 +35,14 @@ type LLMConverter struct {
 	// maxExamples caps how many test cases {{ .tests }} renders
 	// (task_args "max_test_examples", default defaultTestExamples).
 	maxExamples int
+	// retryTemperature, when set (task_args "retry_temperature"), replaces
+	// "temperature" in the params handed to Prepare on any attempt after the
+	// first (ConversionRequest.CurrentAttempt > 1) - an opt-in sampling bump
+	// so a resampled retry of a near-greedy model actually explores a
+	// different completion instead of reproducing the same wrong output
+	// (self-consistency, Wang et al. arXiv:2203.11171). nil means unset: no
+	// override, taskParams passed through unchanged as before.
+	retryTemperature *float64
 	// taskParams is this task's merged params (pipeline-wide options plus
 	// this task's own task_args, minus "prompt"/"reader"/"mode"). It is
 	// handed to the LLM client's Prepare on every Apply call — distinct
@@ -48,6 +56,23 @@ func (cc *LLMConverter) TaskParams() map[string]interface{} {
 	out := make(map[string]interface{})
 	maps.Copy(out, cc.taskParams)
 	return out
+}
+
+// paramsForAttempt returns the params to hand to Client.Prepare for this
+// call: cc.taskParams unchanged, unless retry_temperature is configured and
+// this is a resample-style retry (attempt > 1), in which case it returns a
+// fresh copy with "temperature" overridden. cc.taskParams itself is never
+// mutated - it's a long-lived map reused on every future attempt and every
+// future request this converter processes, so bumping it in place would leak
+// the retry temperature into the next unrelated first attempt too.
+func (cc *LLMConverter) paramsForAttempt(attempt int) map[string]interface{} {
+	if cc.retryTemperature == nil || attempt <= 1 {
+		return cc.taskParams
+	}
+	params := make(map[string]interface{}, len(cc.taskParams)+1)
+	maps.Copy(params, cc.taskParams)
+	params["temperature"] = *cc.retryTemperature
+	return params
 }
 
 // ReaderFactory returns a concrete PackageReader by name.
@@ -110,20 +135,31 @@ func NewLLMConverter(taskParams map[string]interface{}) pipeline.Converter {
 		}
 	}
 
+	var retryTemperature *float64
+	switch v := taskParams["retry_temperature"].(type) {
+	case float64:
+		retryTemperature = &v
+	case int:
+		f := float64(v)
+		retryTemperature = &f
+	}
+
 	// converter-level config keys must not leak into the connectors' API
 	// params (see Client.Prepare)
 	delete(taskParams, "prompt")
 	delete(taskParams, "reader")
 	delete(taskParams, "mode")
 	delete(taskParams, "max_test_examples")
+	delete(taskParams, "retry_temperature")
 
 	log.Debugf("creating LLM converter with params: %v", taskParams)
 	return &LLMConverter{
-		template:    promptTmpl,
-		reader:      reader,
-		mode:        mode,
-		maxExamples: maxExamples,
-		taskParams:  taskParams,
+		template:         promptTmpl,
+		reader:           reader,
+		mode:             mode,
+		maxExamples:      maxExamples,
+		retryTemperature: retryTemperature,
+		taskParams:       taskParams,
 	}
 }
 
@@ -178,7 +214,7 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 	}
 
 	client := runner.LLMClient()
-	if err := client.Prepare(cc.taskParams); err != nil {
+	if err := client.Prepare(cc.paramsForAttempt(code.CurrentAttempt)); err != nil {
 		return domain.NewLLMError(fmt.Errorf("failed to configure LLMClient: %+v", err))
 	}
 

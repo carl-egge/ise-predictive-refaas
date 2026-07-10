@@ -28,6 +28,13 @@ type ConversionRequest struct {
 	// calls and chatlogs to their stage. Transient bookkeeping, not part of
 	// the JSON shape.
 	CurrentTask string `json:"-"`
+	// CurrentAttempt is the 1-based execution attempt number of the task
+	// currently running for this request (maintained by the pipeline's retry
+	// loop); e.g. 2 on the first retry. Lets a converter distinguish a fresh
+	// attempt from a resample-style retry - see LLMConverter's opt-in
+	// retry_temperature in internal/translator. Transient bookkeeping, not
+	// part of the JSON shape.
+	CurrentAttempt int `json:"-"`
 }
 
 // AddError appends err to the request error list when non-nil.
