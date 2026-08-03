@@ -22,6 +22,10 @@ import (
 // a hardcoded port and has no shutdown hook, so it can't be started per-test)
 // and waits until it is accepting connections before running the tests.
 func TestMain(m *testing.M) {
+	// Don't let the run log write archive files into the package directory:
+	// these tests reconfigure the service, which records a boundary marker.
+	os.Setenv("RUN_LOG_DIR", "off")
+
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- service.MakeConverterService()
@@ -150,14 +154,29 @@ func TestStopEndpoint(t *testing.T) {
 	}
 }
 
-// uploadEmptyJob posts an empty (but valid) zip to / and returns the job uuid
-// from the response body.
+// uploadEmptyJob posts a minimal but valid package to / and returns the job
+// uuid from the response body. It has to carry a source file and a fixture:
+// uploadHandler now validates packages up front ([C6]), so a truly empty zip
+// is rejected with 400 rather than queued.
 func uploadEmptyJob(t *testing.T) string {
 	t.Helper()
 
 	var zipBuf bytes.Buffer
-	if err := zip.NewWriter(&zipBuf).Close(); err != nil {
-		t.Fatalf("failed to build empty test zip: %v", err)
+	zw := zip.NewWriter(&zipBuf)
+	for name, content := range map[string]string{
+		"main.py":      "def handler(event, context):\n    return {}",
+		"test/t1.json": `{"input":"{}","output":"{}"}`,
+	} {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("failed to create zip entry %s: %v", name, err)
+		}
+		if _, err := w.Write([]byte(content)); err != nil {
+			t.Fatalf("failed to write zip entry %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("failed to build test zip: %v", err)
 	}
 
 	var body bytes.Buffer

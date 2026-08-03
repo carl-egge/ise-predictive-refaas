@@ -102,6 +102,25 @@ func ReadFromReader(reader io.ReaderAt, size int64) (*domain.DeploymentPackage, 
 				return nil, err
 			}
 			dp.TestFiles[file.Name] = string(testFile)
+		} else if path.Base(file.Name) == domain.MetaFileName {
+			// The dataset ships per-function metadata next to main.py; it is
+			// the only signal that says which dataset element this artifact
+			// is. Checked after the test/ branch so a test/meta.json stays a
+			// fixture.
+			fileReader, err := file.Open()
+			if err != nil {
+				return nil, err
+			}
+			defer fileReader.Close()
+			metaFile, err := io.ReadAll(fileReader)
+			if err != nil {
+				return nil, err
+			}
+			meta, err := domain.ParseFunctionMeta(metaFile)
+			if err != nil {
+				return nil, fmt.Errorf("invalid %s: %w", file.Name, err)
+			}
+			dp.Meta = meta
 		} else if strings.HasSuffix(file.Name, ".env") {
 			fileReader, err := file.Open()
 			if err != nil {

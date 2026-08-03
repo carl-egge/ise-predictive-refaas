@@ -196,14 +196,26 @@ func MakeCodeConverter(ops *ConverterOptions) (*Runner, error) {
 	}, nil
 }
 
-// MakeConversionRequest creates a new ConversionRequest from a source package.
-func MakeConversionRequest(srcPkg *domain.DeploymentPackage) *domain.ConversionRequest {
+// MakeConversionRequest creates a new ConversionRequest from a source
+// package. sourceName is the artifact's name (the uploaded filename or the
+// path it was read from); together with the package's meta.json it resolves
+// the function identity recorded on the request's Metrics, which is what
+// makes a finished run attributable to a dataset element. Pass "" when there
+// is no meaningful name.
+func MakeConversionRequest(srcPkg *domain.DeploymentPackage, sourceName string) *domain.ConversionRequest {
+	id := uuid.New()
+	var meta *domain.FunctionMeta
+	if srcPkg != nil {
+		meta = srcPkg.Meta
+	}
 	return &domain.ConversionRequest{
-		Id:            uuid.New(),
+		Id:            id,
 		SourcePackage: srcPkg,
 		Metadata:      make(map[string]string),
 		Metrics: &domain.Metrics{
-			TestCases: make(map[string]bool),
+			TestCases:  make(map[string]bool),
+			FunctionID: domain.ResolveFunctionID(meta, sourceName, id),
+			Meta:       meta,
 		},
 	}
 }
@@ -273,7 +285,7 @@ func (cc *Runner) ConvertFromFileBest(sourceFile string) (*domain.ConversionRequ
 	dp.Suffix = "py"
 	log.Debugf("got deployment package: %s - %+v", sourceFile, dp)
 
-	req := MakeConversionRequest(dp)
+	req := MakeConversionRequest(dp, sourceFile)
 	if err := cc.Convert(context.Background(), req); err != nil {
 		return nil, err
 	}

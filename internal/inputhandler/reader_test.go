@@ -68,6 +68,87 @@ func TestReadFromBytesRejectsMultipleSources(t *testing.T) {
 	}
 }
 
+// TestReadFromBytesParsesMeta guards [H1]: the dataset ships per-function
+// metadata at the archive root, and it is the only signal saying which
+// dataset element an artifact is.
+func TestReadFromBytesParsesMeta(t *testing.T) {
+	data := buildZip(t, map[string]string{
+		"main.py":      "def handler(event, context):\n    return {}",
+		"test/t1.json": `{"input":"{}","output":"{}"}`,
+		"meta.json":    `{"bucket":"B","cc":7,"aws":true,"description":"demo"}`,
+	})
+
+	dp, err := ReadFromBytes(data)
+	if err != nil {
+		t.Fatalf("ReadFromBytes: %v", err)
+	}
+	if dp.Meta == nil {
+		t.Fatal("meta.json was not parsed")
+	}
+	if dp.Meta.Bucket != "B" || dp.Meta.CC != 7 || !dp.Meta.AWS {
+		t.Errorf("meta fields not parsed: %+v", dp.Meta)
+	}
+	if len(dp.Meta.Raw) == 0 {
+		t.Error("raw meta.json bytes should be preserved")
+	}
+	// meta.json must not be mistaken for a fixture or a source file
+	if len(dp.TestFiles) != 1 {
+		t.Errorf("TestFiles = %d, want 1 (meta.json is not a fixture)", len(dp.TestFiles))
+	}
+}
+
+// TestReadFromBytesWithoutMetaStillWorks: meta.json is required only for
+// benchmark runs, so an ad-hoc package without one must still convert.
+func TestReadFromBytesWithoutMetaStillWorks(t *testing.T) {
+	data := buildZip(t, map[string]string{
+		"main.py":      "def handler(event, context):\n    return {}",
+		"test/t1.json": `{"input":"{}","output":"{}"}`,
+	})
+
+	dp, err := ReadFromBytes(data)
+	if err != nil {
+		t.Fatalf("ReadFromBytes: %v", err)
+	}
+	if dp.Meta != nil {
+		t.Errorf("Meta should be nil when the archive has no meta.json, got %+v", dp.Meta)
+	}
+}
+
+// TestReadFromBytesRejectsCorruptMeta: a present-but-broken meta.json is a
+// packaging bug worth failing fast on.
+func TestReadFromBytesRejectsCorruptMeta(t *testing.T) {
+	data := buildZip(t, map[string]string{
+		"main.py":   "def handler(event, context):\n    return {}",
+		"meta.json": "{ this is not json",
+	})
+
+	if _, err := ReadFromBytes(data); err == nil {
+		t.Fatal("expected an error for a corrupt meta.json")
+	} else if !strings.Contains(err.Error(), "meta.json") {
+		t.Errorf("error should name the offending file, got: %v", err)
+	}
+}
+
+// TestReadFromBytesKeepsTestMetaAsFixture: only the archive-root meta.json is
+// metadata; a file named meta.json inside test/ stays a fixture.
+func TestReadFromBytesKeepsTestMetaAsFixture(t *testing.T) {
+	data := buildZip(t, map[string]string{
+		"main.py":        "def handler(event, context):\n    return {}",
+		"test/meta.json": `{"input":"{}","output":"{}"}`,
+	})
+
+	dp, err := ReadFromBytes(data)
+	if err != nil {
+		t.Fatalf("ReadFromBytes: %v", err)
+	}
+	if dp.Meta != nil {
+		t.Error("test/meta.json must not be treated as function metadata")
+	}
+	if _, ok := dp.TestFiles["test/meta.json"]; !ok {
+		t.Errorf("test/meta.json should remain a fixture, got %v", dp.TestFiles)
+	}
+}
+
 // TestReadFromBytesSkipsMacJunk verifies that macOS AppleDouble entries
 // neither clobber the root file nor count as a second source file.
 func TestReadFromBytesSkipsMacJunk(t *testing.T) {

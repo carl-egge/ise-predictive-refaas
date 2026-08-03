@@ -44,6 +44,12 @@ type ConverterService struct {
 	// the two locks cannot deadlock; a /reconfigure request simply waits for
 	// the in-flight conversion to finish.
 	runnerMu sync.Mutex
+	// runLog archives completed jobs to disk so a batch survives a crash, a
+	// restart or a /reconfigure. Nil when persistence is disabled.
+	runLog *runLog
+	// uploadPolicy controls how strictly uploads are validated; benchmark
+	// runs additionally require the dataset's meta.json.
+	uploadPolicy inputhandler.ValidateOptions
 }
 
 // jobStatus is the state of a job that hasn't finished yet.
@@ -78,9 +84,14 @@ func MakeConverterService() error {
 		metrics:      make(map[uuid.UUID]domain.Metrics),
 		cancels:      make(map[uuid.UUID]context.CancelFunc),
 		status:       make(map[uuid.UUID]jobStatus),
+		runLog:       newRunLog(),
+		uploadPolicy: inputhandler.BenchmarkValidateOptions(),
 	}
 
 	log.Infof("Starting converter service with options: %+v", options)
+	if sv.uploadPolicy.RequireMeta {
+		log.Infof("benchmark mode: uploads without %s will be rejected", domain.MetaFileName)
+	}
 
 	r := mux.NewRouter()
 	r.Path("/").Methods(http.MethodPost).HandlerFunc(sv.uploadHandler)
@@ -140,8 +151,28 @@ func (service *ConverterService) Start(ctx context.Context) {
 			service.metrics[request.Id] = *request.Metrics
 			service.results[request.Id] = request
 			service.mutex.Unlock()
+
+			// Archive completed translations immediately, so the batch
+			// survives a later crash, restart or /reconfigure. recordJob
+			// itself skips jobs that did not complete.
+			service.runLog.recordJob(request, service.llmClientName())
 		}
 	}
+}
+
+// llmClientName reports the LLM connector currently configured, for the run
+// log. Guarded by runnerMu because /reconfigure can swap the client.
+func (service *ConverterService) llmClientName() string {
+	service.runnerMu.Lock()
+	defer service.runnerMu.Unlock()
+	if service.converter == nil {
+		return ""
+	}
+	client := service.converter.LLMClient()
+	if client == nil {
+		return ""
+	}
+	return client.ClientName()
 }
 
 // metricsHandler returns JSON metrics for finished jobs.
@@ -267,7 +298,16 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	request := pipeline.MakeConversionRequest(dp)
+	// Reject unusable packages before the pipeline spends any LLM or build
+	// budget on them, and report every problem at once so a bad artifact
+	// takes one upload to diagnose rather than several.
+	if err := inputhandler.Validate(dp, service.uploadPolicy); err != nil {
+		log.Warnf("rejecting upload %q: %v", fileHeader.Filename, err)
+		http.Error(w, fmt.Sprintf("Invalid package: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	request := pipeline.MakeConversionRequest(dp, fileHeader.Filename)
 
 	jobCtx, cancel := context.WithCancel(context.Background())
 	service.mutex.Lock()
@@ -347,5 +387,11 @@ func (service *ConverterService) reconfigure(w http.ResponseWriter, r *http.Requ
 		outputhandler.WriteHTTPError(w, err)
 		return
 	}
+
+	// This wipes the in-memory metrics, so mark the boundary in the run log:
+	// records before and after it were produced by different configurations.
+	// Called after runnerMu is released - llmClientName takes it too.
+	service.runLog.recordReconfigure(service.llmClientName(), "pipeline reconfigured; in-memory metrics cleared")
+
 	w.WriteHeader(http.StatusCreated)
 }

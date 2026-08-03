@@ -81,7 +81,7 @@ The codebase follows Standard Go Project Layout with a thin entrypoint and inter
 
 | Endpoint | Method | Request | Response | Description |
 |:---|:---|:---|:---|:---|
-| `/` | POST | Multipart form with field `file` (`.zip`, max 50MB) | `201 Created` + job UUID in the response body<br/>Errors: `400`, `415`, `500` | Upload a serverless function `.zip` for conversion. |
+| `/` | POST | Multipart form with field `file` (`.zip`, max 50MB) | `201 Created` + job UUID in the response body<br/>Errors: `400` (unreadable or invalid package — no source file, no `test/` fixtures, unparseable fixture, or missing `meta.json` in benchmark mode), `415`, `503` (queue full), `500` | Upload a serverless function `.zip` for conversion. The package is validated up front, so a doomed job never spends LLM budget. |
 | `/{uuid}` | HEAD | - | `200 OK` if job exists<br/>`404 Not Found` if job unknown | Check if a submitted conversion job exists. |
 | `/{uuid}` | GET | - | `200 OK` + Converted `.zip` file if completed<br/>`406 Not Acceptable` if not completed<br/>`404 Not Found` if unknown<br/>`500 Internal Server Error` on error | Download the converted serverless function package by UUID. |
 | `/stop/{uuid}` | POST | - | `202 Accepted` if the job was queued or running<br/>`404 Not Found` if unknown or already finished | Cancel a queued or in-progress conversion so it stops spending further build/test/LLM resources. |
@@ -231,6 +231,8 @@ This will start the service running on port 8080. However, for isolation, it is 
 | `FLOCI_ENABLED` | `false` | Enables the optional `flociTester` pipeline stage (`true`/`1`); see [Optional: Floci integration testing](#optional-floci-integration-testing). |
 | `FLOCI_ENDPOINT` | `http://localhost:4566` | Endpoint of the Floci AWS emulator, when enabled. |
 | `FLOCI_REGION` | `us-east-1` | AWS region used for the Floci-backed Lambda deployment, when enabled. |
+| `RUN_LOG_DIR` | `runs` | Directory for the append-only JSONL run log of completed jobs; `off` (or empty) disables persistence. |
+| `REQUIRE_META` | `false` | Benchmark mode (`true`/`1`): reject uploads without a `meta.json`, so no benchmark result ends up unattributable to a dataset element. |
 
 ---
 

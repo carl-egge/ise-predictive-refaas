@@ -36,7 +36,7 @@
 - [x] [C3] Deterministic `go.mod`; LLM returns only `main.go`
 - [ ] [C4] Deterministic Go post-processing gate (package clause, parse, goimports)
 - [ ] [C5] Detect repair-loop stagnation and change strategy
-- [ ] [C6] Validate uploads and fixtures before spending LLM tokens
+- [x] [C6] Validate uploads and fixtures before spending LLM tokens
 - [x] [C7] Deterministic and complete test context for prompts
 - [ ] [C8] Python feature pre-scan feeding the translate prompt
 - [ ] [C9] Support multi-file Python inputs (currently rejected at upload)
@@ -73,9 +73,9 @@
 - [ ] [G5] Experiment: continued LLM conversation across stages
 
 **H. Evaluation** (energy study — see [evaluation/EVALUATION.md](evaluation/EVALUATION.md) and [evaluation/EVALUATION_DATASET.md](evaluation/EVALUATION_DATASET.md))
-- [ ] [H1] Ingest `meta.json` and record function identity + grouping metadata per job **(P0 — blocks per-function `N*` and all per-bucket reporting)**
+- [x] [H1] Ingest `meta.json` and record function identity + grouping metadata per job **(P0 — blocks per-function `N*` and all per-bucket reporting)**
 - [ ] [H1a] Emit a per-function result summary (outcome + failure kind) alongside the metrics
-- [ ] [H2] Persist run metrics to disk as jobs complete **(P0 — a batch currently survives neither a crash, a restart, nor a `/reconfigure`)**
+- [x] [H2] Persist run metrics to disk as jobs complete **(P0 — a batch currently survives neither a crash, a restart, nor a `/reconfigure`)**
 - [ ] [H3] Record the model per stage for per-model energy coefficients
 - [ ] [H4] Energy-model script over the run logs, constants in one config file
 - [ ] [H5] Account for or bound local compute energy (build/test/Floci)
@@ -382,13 +382,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Reflexion-style loops only help when feedback changes behavior (Shinn et al., *Reflexion*, arXiv:2303.11366); detecting identical outcomes converts guaranteed-wasted attempts into an early exit or a differentiated retry.
 - Architecture impact: Local | Effort: S–M | Priority: P1
 
-### [ ] [C6] Validate uploads and fixtures before spending any LLM tokens
+### [x] [C6] Validate uploads and fixtures before spending any LLM tokens
 - Category: Feature
 - Affected component(s): `internal/service/service.go` (`uploadHandler`), `internal/inputhandler/reader.go`
 - Problem / current state: An upload with no `.py` file, no `test/` fixtures, or unparseable fixture JSON is accepted; the failure surfaces stages later (or worse, with zero tests `goTester` passes vacuously and the job "succeeds" with no behavioral validation). Fixture-format problems are only discoverable at comparison time.
 - Proposed change: At upload: require exactly one root source file and ≥1 test fixture; parse every fixture against the unified fixture schema from [C10] (which covers both the black-box and the Floci dialect); when strategy is `json`, verify `Output` parses as JSON and does **not** contain a top-level `"response"` wrapper. Canonical format confirmed by maintainer (2026-07-04): expected output = the Python handler's return object, as in the current `examples/paper/f1–f14` fixtures; the inconsistent files under `examples/output/2026-*` stem from an outdated test runner and can be ignored. Return 400 with a per-file error list. This is also where [C10]'s "floci required but disabled" rejection belongs, and where **a missing `meta.json` must be rejected when the benchmark/strict flag is set** ([H1]) — the dataset guarantees one per artifact, so its absence in a benchmark run means a mispackaged or wrong-source upload, and translating it would spend the full LLM budget on a result nobody can attribute afterwards. Outside strict mode `meta.json` stays optional so ad-hoc uploads, the bundled `examples/input/*.zip` and the upload tests keep working.
 - Why: Fail-fast saves the full LLM/build budget of a doomed run and prevents vacuous "successes" from polluting success-rate numbers.
 - Architecture impact: Local | Effort: M | Priority: P1 (the `meta.json` check is **P0 for the benchmark run** — see [H1])
+- Status: **Implemented 2026-07-05.** `inputhandler.Validate(pkg, opts)` runs in `uploadHandler` before anything is queued: requires a root source file and ≥1 fixture, parses every fixture through `internal/fixture` (so a malformed one surfaces here, not at comparison time), and requires `meta.json` when `opts.RequireMeta` is set. All problems are collected into one `*ValidationError` and returned as a single `400`, so a bad artifact takes one upload to diagnose. Benchmark mode comes from `REQUIRE_META=true|1` via `BenchmarkValidateOptions()`. Two parts of the original spec were deliberately **not** implemented: the `{"response": …}` wrapper check (a handler may legitimately return that key, so a hard rejection would be wrong — the canonical format is enforced by the dataset instead), and [C10]'s "floci required but disabled" rejection, which needs C10's routing to exist first. Tests: `internal/inputhandler/validate_test.go`. Note `cmd/refaas/main_test.go`'s upload helper now sends a minimal *valid* package — an empty zip is correctly rejected now.
 
 ### [x] [C7] Deterministic and complete test context for prompts
 - Category: Feature
@@ -670,7 +671,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 > and 40 infrastructure failures that look like translation defects; and **no test expects an
 > error**, so any unhandled error is unambiguously a failure.
 
-### [ ] [H1] Ingest `meta.json` and record function identity + grouping metadata on every job
+### [x] [H1] Ingest `meta.json` and record function identity + grouping metadata on every job
 - Category: Evaluation
 - Affected component(s): `internal/inputhandler/reader.go` (currently ignores `meta.json`), `internal/service/service.go` (`uploadHandler` validates `fileHeader.Filename` and then discards it), `internal/pipeline/runner.go` (`MakeConversionRequest`), `internal/domain/types.go`
 - Problem / current state: `GET /metrics` returns `{job-uuid: Metrics}` and nothing anywhere links a job to *which* function it translated. Both identity signals are currently thrown away: the uploaded filename is dropped after the `.zip` suffix check, and the dataset's `meta.json` matches none of `ReadFromReader`'s three branches (`.py`/`.go` → root, `test/` → fixtures, `.env` → env), so it is silently ignored. A batch over the 95-function `evaluation_set` therefore produces 95 anonymous metric blocks.
@@ -678,6 +679,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - **`meta.json` is required for benchmark runs** (maintainer decision, 2026-07-05): an artifact without one produces an unattributable result, which is worth nothing after hours of LLM spend — so it must be rejected at upload rather than discovered in the analysis. Gate it behind a strict/benchmark switch (an env-configured flag in the `FLOCI_ENABLED`/`LLM_CALL_INTERVAL` idiom, e.g. `REQUIRE_META=true`, resolved in `defaults.go`) rather than making it unconditional: the existing `examples/input/*.zip`, the README's curl example, and the service/`cmd` upload tests all ship without a `meta.json`, and ad-hoc dev uploads must keep working. Enabled for the benchmark run, every artifact carries one by construction. The rejection itself belongs in [C6]'s validation gate; parsing and plumbing belong here.
 - Why this improves the evaluation: `N* = E_translation / (E_py − E_go)` is defined *per function* and the headline result is its distribution across the set, so identity is load-bearing; and the dataset's intended reporting axes — pass rate per complexity bucket A/B/C/D+, and AWS vs. non-AWS (EVALUATION_DATASET.md §8–§9) — are computable only if `bucket`/`cc`/`aws` travel with the metrics. None of it is reconstructable after the fact once the server has moved on. Based on reasoning; no external source needed.
 - Architecture impact: Local | Effort: S–M | Priority: **P0** (blocks the primary result and every grouped result)
+- Status: **Implemented 2026-07-05.** `domain.FunctionMeta` + `ParseFunctionMeta` (new `internal/domain/meta.go`) model the documented fields and keep the verbatim bytes in `Raw`; `inputhandler.ReadFromReader` parses an archive-root `meta.json` (checked *after* the `test/` branch, so `test/meta.json` stays a fixture) and errors on a present-but-corrupt one. `domain.ResolveFunctionID` picks identity in the agreed order — `meta.Name`/`meta.ID` → artifact filename stem → `job-<uuid8>` — and `pipeline.MakeConversionRequest(pkg, sourceName)` (signature extended; both call sites updated) records `FunctionID` and `Meta` on `Metrics`, so `/metrics` and the run log are both attributable. Robustness rule worth keeping: invalid JSON fails the upload, but a field whose *type* we guessed wrong does not — typed fields degrade and `Raw` still carries everything, since the dataset owns that schema. Tests: `internal/domain/meta_test.go`, four new cases in `internal/inputhandler/reader_test.go`.
 
 ### [ ] [H1a] Emit a per-function result summary alongside the energy metrics
 - Category: Evaluation
@@ -687,13 +689,15 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why this improves the evaluation: it separates "translation defect" from "infrastructure/packaging failure", which the dataset explicitly asks to report apart; without it a Floci outage and a genuine semantic divergence are indistinguishable in the results table. Based on reasoning; no external source needed.
 - Architecture impact: Local | Effort: S | Priority: P1
 
-### [ ] [H2] Persist run metrics to disk as jobs complete (never lose a batch to an error)
+### [x] [H2] Persist run metrics to disk as jobs complete (never lose a batch to an error)
 - Category: Evaluation
 - Affected component(s): `internal/service/service.go` (in-memory `results`/`metrics` maps; `reconfigure` wipes both by design), `scripts/store-metrics.sh`
 - Problem / current state: metrics exist **only in memory**, and there are at least four ways to lose them — a process crash or panic, a restart, a `/reconfigure` (which clears both maps deliberately), and simply never getting around to running `store-metrics.sh`, which is a manual `curl` of the whole map *after the fact*. A 95-function batch is hours of LLM time and real energy spend; losing it to any of these means paying for it twice. There is also no record of *which* configuration produced a given dump, so two runs cannot be told apart afterwards.
 - Proposed change (maintainer request, 2026-07-05 — **metrics must be durable against any error**): append one JSON object per finished job to a run log (e.g. `runs/<run-id>.jsonl`) at the moment the worker finishes that job, containing job id, function id and dataset metadata ([H1]), completion status, per-test outcomes ([H1a]) and the full `Metrics` including `per_task`. Write it *append-only and immediately* — a job's record must survive whatever happens to the next job. Add a run header (or sibling file) capturing the active pipeline config, LLM client, model, `LLM_CALL_INTERVAL` and the git commit. Keep `/metrics` unchanged for live inspection, and keep writing the in-memory map so nothing downstream breaks. Worth considering: flush partial metrics for a job that dies mid-pipeline, since a crashed job's tokens were still spent.
 - Why this improves the evaluation: replaces EVALUATION.md's JSONL/`CallRecord` item with the minimum that actually makes the artifact durable and self-describing — a thesis artifact must stay interpretable without the server that produced it, and an energy measurement that can be erased by a stray `/reconfigure` is not a measurement. Based on reasoning; no external source needed.
 - Architecture impact: Local | Effort: M | Priority: **P0** (every un-persisted batch is a re-run at full energy cost)
+- Status: **Implemented 2026-07-05.** `internal/service/runlog.go` appends one JSON object per finished job to `runs/run-<ts>.jsonl` (`RUN_LOG_DIR`; `off`/empty disables), opening/writing/closing per record so a job's line survives whatever happens to the next one. Records carry job id, function id, LLM client and the full `Metrics` including `per_task` and the dataset `meta`; the file is created lazily and opens with a `run_start` header, and `/reconfigure` appends a boundary marker so records from different configurations are distinguishable. **Only completed jobs are persisted** (maintainer decision) — the guard lives in `recordJob` itself, not only at the call site, so no future caller can bypass it; failures stay visible via `/metrics` and the logs. Write failures are logged, never fatal: losing the archive is bad, failing conversions because a disk filled would be worse. `runs/` is gitignored. Tests: `internal/service/runlog_test.go` (completed vs. incomplete, single header, append across jobs, reconfigure boundary, disabled mode); race-clean.
+- Deferred: the run header does not yet capture the pipeline config/git commit ([H3] adds the model per stage, which is the more load-bearing half); partial metrics for a job that dies mid-pipeline are not flushed, which follows from the completed-only rule.
 
 ### [ ] [H3] Record the model per stage for per-model energy coefficients
 - Category: Evaluation

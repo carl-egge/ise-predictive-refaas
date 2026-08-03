@@ -69,6 +69,10 @@ type DeploymentPackage struct {
 	BuildCmd   []string
 	Env        []string
 	Suffix     string
+	// Meta is the dataset's per-function metadata (meta.json at the archive
+	// root), when the uploaded artifact carried one. Nil for hand-made
+	// packages; required only for benchmark runs (see inputhandler.Validate).
+	Meta *FunctionMeta
 }
 
 // Copy produces a shallow copy of the package maps and slices to be used as a
@@ -90,11 +94,22 @@ func (dp *DeploymentPackage) Copy() *DeploymentPackage {
 		BuildCmd:   cmdCopy,
 		Suffix:     dp.Suffix,
 		Env:        envCopy,
+		// Meta describes the source function and is never mutated by a
+		// pipeline stage, so the snapshot shares the pointer deliberately.
+		Meta: dp.Meta,
 	}
 }
 
 // Metrics collects timing and diagnostic information for a conversion run.
 type Metrics struct {
+	// FunctionID says which dataset element this run translated (see
+	// ResolveFunctionID). Without it a metrics dump is a set of anonymous
+	// blocks and no per-function result can be computed.
+	FunctionID string `json:"function_id,omitempty"`
+	// Meta carries the dataset's grouping metadata for that function, so a
+	// finished run can be broken down by complexity bucket and AWS usage.
+	Meta *FunctionMeta `json:"meta,omitempty"`
+
 	StartTime time.Time
 	EndTime   time.Time
 
