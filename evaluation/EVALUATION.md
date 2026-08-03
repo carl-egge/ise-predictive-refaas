@@ -40,7 +40,7 @@ method (absolute accuracy) into a demonstrated non-issue.
 | LLM provider | GWDG SAIA / Chat AI (`https://chat-ai.academiccloud.de/v1`) |
 | Model | `devstral-2-123b-instruct-2512` (dense, 123B parameters) |
 | Serving stack | vLLM 0.22.x |
-| Evaluation set | ~100 Python serverless functions |
+| Evaluation set | **95** curated Python serverless functions (`evaluation_set`, 392 tests) + the legacy **14** paper functions (`function_set`, 41 tests) — see [EVALUATION_DATASET.md](EVALUATION_DATASET.md); report the two separately, `function_set` expectations were never executed |
 | Pipeline | Go, multiple LLM calls per translation |
 | Signals available | `prompt_tokens`, `completion_tokens` (read directly from the OpenAI-compatible `usage` object by `internal/llmconnector/chatai.go` — no `total − prompt` subtraction needed) |
 
@@ -248,13 +248,22 @@ Requirements from the original draft, checked against the code:
 
 ### Remaining gaps (tracked in `TODO.md` section H)
 
-1. **Function identity is not recorded** — metrics are keyed by job UUID only;
-   the uploaded filename is validated and then discarded, so a metrics dump
-   cannot be attributed to f1…f100. Blocks per-function `N*`. → [H1]
-2. **Metrics are not persisted** — they live in an in-memory map, are wiped by
-   `/reconfigure`, and are lost on restart; `scripts/store-metrics.sh` is a
-   manual `curl` of the whole map. A ~100-function batch would lose everything
-   to one crash or one reconfigure. → [H2]
+1. **Function identity and dataset metadata are not recorded** — metrics are
+   keyed by job UUID only. Both available signals are discarded: the uploaded
+   filename after its `.zip` check, and the artifact's `meta.json`, which
+   matches none of the zip reader's branches and is silently ignored. So a
+   metrics dump cannot be attributed to f1…f95, and the `bucket`/`cc`/`aws`
+   fields needed for the per-bucket and AWS-vs-non-AWS reporting never reach
+   the results. Blocks per-function `N*` and every grouped result. → [H1]
+
+   For the benchmark run `meta.json` is **required**: an upload without one is
+   rejected before any LLM call rather than producing an unattributable result
+   hours later. It stays optional outside benchmark mode so ad-hoc uploads
+   continue to work. → [H1] + [C6]
+2. **Metrics are not persisted** — they live in an in-memory map that a crash,
+   a restart, or a `/reconfigure` erases; `scripts/store-metrics.sh` is a
+   manual `curl` of the whole map after the fact. A 95-function batch is hours
+   of LLM time and real energy spend that any of those events destroys. → [H2]
 3. **The model is not recorded per stage** — energy coefficients are
    per-model, and pipelines may set `model_name` per task. → [H3]
 
@@ -299,9 +308,16 @@ Python-side equivalent of the existing Go harness.
   Go's advantage is largest, and it matters disproportionately in serverless.
 - Apply the **same PUE** to both sides so facility overhead does not skew the
   ratio.
-- Report the **distribution of `N*` across all 100 functions**, not only the
+- Report the **distribution of `N*` across all 95 functions**, not only the
   mean. Some functions will pay back immediately, some may never. That
   distribution is a more interesting result than a single average.
+- Group it the way the dataset intends (EVALUATION_DATASET.md §8–§9): by
+  **complexity bucket** (A ≤5, B ≤10, C ≤20, D+ >20 — 25/25/25/20 functions)
+  and by **AWS vs. non-AWS** (58 vs. 37). Both axes come from `meta.json` and
+  are only available if [H1] carries them into the metrics record. Note the
+  Python baseline needs the third-party packages the originals used — `boto3`
+  (58 functions), `python-dateutil` (18), `requests` (4) — while the Go side
+  needs none of them; that asymmetry is real and belongs in the write-up.
 
 ---
 
@@ -390,9 +406,22 @@ Write this section. Items to cover:
 - Single model, single provider, single hardware generation. If any run mixes
   models across stages, per-stage coefficients must be applied — a run-level
   average would be wrong.
-- Evaluation set of 100 functions not necessarily representative — and the
-  current `examples/paper/f1–f14` set in particular is *not* representative of
-  the final set: none of those functions exercises the Floci/side-effect route.
+- Evaluation set of 95 functions not necessarily representative of serverless
+  Python at large — it is a curated slice of `the-stack`, biased toward
+  functions that are self-contained, deterministic and fast enough to validate
+  (>10 s candidates were rejected). The legacy `function_set` (f1–f14) is
+  additionally *unverified* — its expectations were never executed — and
+  exercises no side-effect route at all, so failures there mean "investigate",
+  not "translation defect".
+- Six `evaluation_set` functions contain external HTTP/SMTP call sites that no
+  test exercises, so a wrong translation of `requests.post(...)` passes the
+  benchmark — do not claim HTTP-integration fidelity (EVALUATION_DATASET.md
+  gotcha 5).
+- 27 tests across 14 functions use `outputMode: "shape"` (types only, no
+  values), so they cannot catch a value regression; exclude or mark them when
+  claiming value-level equivalence.
+- Tolerant matching is subset matching: a Go translation that returns *more*
+  than the Python original still passes.
 - Go/Python runtime measurements taken on one hardware platform.
 - Retry-driven variance: because the number of LLM calls depends on how many
   repair attempts a function needs, per-function energy is heavy-tailed.
@@ -474,8 +503,9 @@ Code-side work, tracked in `TODO.md`:
 
 | Item | What |
 |---|---|
-| [H1] | Record the function/dataset identity per job (blocks per-function `N*`) |
-| [H2] | Persist run metrics to disk as they complete (replaces the JSONL/`CallRecord` item) |
+| [H1] | Ingest `meta.json`; record function identity + grouping metadata (blocks per-function `N*` and per-bucket reporting) |
+| [H1a] | Persist per-test outcome and failure kind, so packaging failures are separable from behavioural ones |
+| [H2] | Persist run metrics to disk as they complete, durable against any error (replaces the JSONL/`CallRecord` item) |
 | [H3] | Record the model per stage, for per-model coefficients |
 | [H4] | Energy-model script over the run logs, constants in one config file |
 | [H5] | Account for or bound local compute energy (build/test/Floci) |
