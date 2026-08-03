@@ -76,7 +76,7 @@
 - [x] [H1] Ingest `meta.json` and record function identity + grouping metadata per job **(P0 — blocks per-function `N*` and all per-bucket reporting)**
 - [ ] [H1a] Emit a per-function result summary (outcome + failure kind) alongside the metrics
 - [x] [H2] Persist run metrics to disk as jobs complete **(P0 — a batch currently survives neither a crash, a restart, nor a `/reconfigure`)**
-- [ ] [H3] Record the model per stage for per-model energy coefficients
+- [x] [H3] Record the model per stage for per-model energy coefficients
 - [ ] [H4] Energy-model script over the run logs, constants in one config file
 - [ ] [H5] Account for or bound local compute energy (build/test/Floci)
 - [ ] [H6] Go vs. Python runtime measurement harness reusing the fixture payloads
@@ -699,13 +699,15 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Status: **Implemented 2026-07-05.** `internal/service/runlog.go` appends one JSON object per finished job to `runs/run-<ts>.jsonl` (`RUN_LOG_DIR`; `off`/empty disables), opening/writing/closing per record so a job's line survives whatever happens to the next one. Records carry job id, function id, LLM client and the full `Metrics` including `per_task` and the dataset `meta`; the file is created lazily and opens with a `run_start` header, and `/reconfigure` appends a boundary marker so records from different configurations are distinguishable. **Only completed jobs are persisted** (maintainer decision) — the guard lives in `recordJob` itself, not only at the call site, so no future caller can bypass it; failures stay visible via `/metrics` and the logs. Write failures are logged, never fatal: losing the archive is bad, failing conversions because a disk filled would be worse. `runs/` is gitignored. Tests: `internal/service/runlog_test.go` (completed vs. incomplete, single header, append across jobs, reconfigure boundary, disabled mode); race-clean.
 - Deferred: the run header does not yet capture the pipeline config/git commit ([H3] adds the model per stage, which is the more load-bearing half); partial metrics for a job that dies mid-pipeline are not flushed, which follows from the completed-only rule.
 
-### [ ] [H3] Record the model per stage for per-model energy coefficients
+### [x] [H3] Record the model per stage for per-model energy coefficients
 - Category: Evaluation
 - Affected component(s): `internal/domain/types.go` (`TaskMetrics`), `internal/translator/translator.go` (already resolves the model name for the chatlog label), `internal/llmconnector`
 - Problem / current state: `TaskMetrics` records tokens but not which model produced them. Every stage may override `model_name` via `task_args`, and `e_in`/`e_out` are derived from a specific model's parameter count and weight bytes — so a mixed-model run cannot be costed, and a run-level average would be quietly wrong.
 - Proposed change: add the resolved model name to `TaskMetrics` (populated in `RecordLLMCall`, where the translator already has the value); make sure Gemini's `GEMINI_MODEL` key resolves too, given the existing `model_name`/`GEMINI_MODEL` inconsistency.
 - Why this improves the evaluation: lets the energy script pick the right coefficients per stage instead of assuming a single model, and documents post hoc which model produced which result. Based on the coefficient derivation in EVALUATION.md §3 (both coefficients are functions of `n_params` and weight bytes); no external source needed.
 - Architecture impact: Local | Effort: S | Priority: P1
+- Status: **Implemented 2026-07-05.** The model is reported by the **connector**, not inferred from task params: each `InvokeLLM` sets `Model` on the `domain.Metrics` it returns (before any error path, so a truncated response — which did consume tokens — is still costable), and `RecordLLMCall` carries it into `TaskMetrics.Model`. This is what makes a Gemini stage attributable at all: Gemini resolves `GEMINI_MODEL`, so the translator's `taskParams["model_name"]` never names it. Bonus fix from the same change: Gemini chatlogs were being written as `..._unknown-model_...` and now carry the real model. `AddMetric` deliberately does **not** aggregate `Model` — the request-level metrics span every stage, so a single name there would be misleading. A stage that somehow saw two models joins them with `,` rather than dropping one, since its tokens then can't be costed with one coefficient pair. Tests: `internal/domain/metrics_test.go`, `TestConnectorsReportModel` in `internal/llmconnector/connector_local_test.go`, and end-to-end attribution through a stub client in `internal/translator/attribution_test.go`.
+- Deliberately **not** done: unifying Gemini onto `model_name`. `default.yaml` and `default.json` set `options.model_name` pipeline-wide for Ollama/ChatAI, so making Gemini honour that key would silently send it `qwen2.5-coder:3b` the moment someone switched `LLMClient` to `gemini` while keeping the same options block. `GEMINI_MODEL` stays Gemini's override key; a regression test pins this.
 
 ### [ ] [H4] Energy-model script over the run logs
 - Category: Evaluation

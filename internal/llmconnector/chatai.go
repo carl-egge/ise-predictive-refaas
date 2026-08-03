@@ -142,6 +142,9 @@ type chatCompletionResponse struct {
 // returns the textual response along with timing/token metrics.
 func (cc *ChatAIInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer) (string, domain.Metrics, error) {
 	var metrics domain.Metrics
+	// Report the model on every returned Metrics, including error paths (see
+	// the equivalent note in ollama.go).
+	metrics.Model = cc.ModelName
 	if cc.client == nil {
 		return "", metrics, fmt.Errorf("LLM client not initialized")
 	}
@@ -209,6 +212,9 @@ func (cc *ChatAIInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffe
 // truncated/empty generations are not.
 func (cc *ChatAIInvocationClient) invokeOnce(ctx context.Context, payload []byte) (string, domain.Metrics, bool, error) {
 	var metrics domain.Metrics
+	// the retry loop replaces the caller's metrics with these, so carry the
+	// model here too
+	metrics.Model = cc.ModelName
 
 	deadline, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()

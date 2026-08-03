@@ -145,6 +145,10 @@ func (llm *OllamaInvocationClient) Prepare(taskParams map[string]interface{}) er
 // with timing metrics.
 func (llm *OllamaInvocationClient) InvokeLLM(runner context.Context, buf bytes.Buffer) (string, domain.Metrics, error) {
 	var metrics domain.Metrics
+	// Report the model on every returned Metrics, including error paths: a
+	// truncated response still consumed tokens and is still attributed to a
+	// stage, so its energy has to be costed with the right coefficients.
+	metrics.Model = llm.ModelName
 	if llm.client == nil {
 		return "", metrics, fmt.Errorf("LLM client not initialized")
 	}

@@ -111,6 +111,91 @@ func TestOllamaInvokeLLMDetectsTruncation(t *testing.T) {
 	}
 }
 
+// TestConnectorsReportModel guards [H3]: the connector is the authoritative
+// source of which model served a call (the translator's task params are not -
+// Gemini reads GEMINI_MODEL, not model_name), and the model must be reported
+// on error paths too, since a truncated response still consumed tokens that
+// get attributed to a stage.
+func TestConnectorsReportModel(t *testing.T) {
+	t.Run("ollama success and truncation", func(t *testing.T) {
+		for _, tc := range []struct{ name, doneReason string }{
+			{"success", "stop"},
+			{"truncated", "length"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				server := fakeOllama(t, `{"main.go":"package main"}`, tc.doneReason)
+				defer server.Close()
+
+				llm := &OllamaInvocationClient{}
+				if err := llm.Configure(map[string]interface{}{"OLLAMA_API_URL": server.URL}); err != nil {
+					t.Fatalf("Configure: %v", err)
+				}
+				if err := llm.Prepare(map[string]interface{}{"model_name": "qwen2.5-coder:3b"}); err != nil {
+					t.Fatalf("Prepare: %v", err)
+				}
+
+				var buf bytes.Buffer
+				buf.WriteString("prompt")
+				_, metrics, _ := llm.InvokeLLM(context.Background(), buf)
+				if metrics.Model != "qwen2.5-coder:3b" {
+					t.Errorf("Model = %q, want the prepared model", metrics.Model)
+				}
+			})
+		}
+	})
+
+	t.Run("chatai success and truncation", func(t *testing.T) {
+		for _, tc := range []struct{ name, finishReason string }{
+			{"success", "stop"},
+			{"truncated", "length"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				server := fakeChatAI(t, `{"main.go":"package main"}`, tc.finishReason)
+				defer server.Close()
+
+				cc := &ChatAIInvocationClient{}
+				if err := cc.Configure(map[string]interface{}{
+					"ACADEMIC_CLOUD_ENDPOINT": server.URL,
+					"ACADEMIC_CLOUD_API_KEY":  "k",
+				}); err != nil {
+					t.Fatalf("Configure: %v", err)
+				}
+				if err := cc.Prepare(map[string]interface{}{"model_name": "devstral-2-123b"}); err != nil {
+					t.Fatalf("Prepare: %v", err)
+				}
+
+				var buf bytes.Buffer
+				buf.WriteString("prompt")
+				_, metrics, _ := cc.InvokeLLM(context.Background(), buf)
+				if metrics.Model != "devstral-2-123b" {
+					t.Errorf("Model = %q, want the prepared model", metrics.Model)
+				}
+			})
+		}
+	})
+
+	t.Run("gemini resolves GEMINI_MODEL", func(t *testing.T) {
+		// Gemini's model comes from its own key, never from model_name; only
+		// the connector can report it. Prepare must not adopt model_name
+		// either, or an Ollama-configured pipeline switched to Gemini would
+		// send it an Ollama model name.
+		g := &GeminiInvocationClient{}
+		g.ModelName = "gemini-2.5-flash"
+		if err := g.Prepare(map[string]interface{}{"model_name": "qwen2.5-coder:3b"}); err != nil {
+			t.Fatalf("Prepare: %v", err)
+		}
+		if g.ModelName != "gemini-2.5-flash" {
+			t.Errorf("model_name must not override the Gemini model, got %q", g.ModelName)
+		}
+		if err := g.Prepare(map[string]interface{}{"GEMINI_MODEL": "gemini-2.5-pro"}); err != nil {
+			t.Fatalf("Prepare: %v", err)
+		}
+		if g.ModelName != "gemini-2.5-pro" {
+			t.Errorf("GEMINI_MODEL should override, got %q", g.ModelName)
+		}
+	})
+}
+
 func TestOllamaInvokeLLMHappyPath(t *testing.T) {
 	server := fakeOllama(t, `{"main.go": "package main"}`, "stop")
 	defer server.Close()

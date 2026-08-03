@@ -125,6 +125,10 @@ func (g *GeminiInvocationClient) InvokeLLM(ctx context.Context, buf bytes.Buffer
 	model.Temperature = &temp
 
 	var metrics domain.Metrics
+	// Gemini resolves its model from GEMINI_MODEL rather than model_name (see
+	// Configure/Prepare), so reporting it here is what keeps a Gemini stage
+	// attributable at all - the translator's task params never name it.
+	metrics.Model = g.ModelName
 
 	// Transient failures (connection errors, 429/5xx) are retried here with
 	// backoff instead of consuming a task-level retry or triggering an LLM

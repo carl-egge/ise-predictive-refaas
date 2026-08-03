@@ -232,9 +232,13 @@ func (cc *LLMConverter) Apply(runner *pipeline.Runner, code *domain.ConversionRe
 		return domain.NewLLMError(fmt.Errorf("LLM invocation failed: %w", err))
 	}
 
-	// model_name is not set for every backend (Gemini uses GEMINI_MODEL), so
-	// don't panic the task over a missing chatlog label.
-	modelName, _ := cc.taskParams["model_name"].(string)
+	// Prefer the model the connector reports actually using: model_name is
+	// not the key every backend reads (Gemini resolves GEMINI_MODEL), so the
+	// task params alone would label a Gemini chatlog "unknown-model".
+	modelName := metrics.Model
+	if modelName == "" {
+		modelName, _ = cc.taskParams["model_name"].(string)
+	}
 	if modelName == "" {
 		modelName = "unknown-model"
 	}

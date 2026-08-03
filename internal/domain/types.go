@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"maps"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -122,6 +123,12 @@ type Metrics struct {
 	ConversionPromptTokenCount int `json:"conversion_prompt_token_count"`
 	ConversionEvalTokenCount   int `json:"conversion_eval_token_count"`
 
+	// Model is the model that produced one LLM call, set by the connector on
+	// the per-call Metrics it returns. It is deliberately not aggregated into
+	// the request-level Metrics by AddMetric: a pipeline may use a different
+	// model per stage, so the meaningful place for it is PerTask below.
+	Model string `json:"model,omitempty"`
+
 	BuildTime time.Duration `json:"build_time"`
 	TestTime  time.Duration `json:"test_time"`
 
@@ -146,6 +153,17 @@ type TaskMetrics struct {
 	LLMCalls     int           `json:"llm_calls"`
 	PromptTokens int           `json:"prompt_tokens"`
 	EvalTokens   int           `json:"eval_tokens"`
+	// Model names the model whose coefficients apply to this stage's tokens.
+	// A pipeline may set model_name per task, and energy per token is derived
+	// from a specific model's parameter count and weight bytes, so costing a
+	// mixed-model run needs this per stage - a run-level average would be
+	// quietly wrong (see evaluation/EVALUATION.md).
+	//
+	// A task compiles its params once, so in practice this is a single name.
+	// Should a stage ever see two different models, they are joined with ","
+	// rather than silently dropped: that stage's tokens then cannot be costed
+	// with one coefficient pair, and the analysis must see that.
+	Model string `json:"model,omitempty"`
 }
 
 // taskMetrics returns (creating if needed) the per-task entry for id.
@@ -174,12 +192,34 @@ func (m *Metrics) RecordTaskAttempt(id string, d time.Duration, success bool) {
 	}
 }
 
-// RecordLLMCall attributes one LLM invocation's token usage to a task.
+// RecordLLMCall attributes one LLM invocation's token usage - and the model
+// that produced it - to a task.
 func (m *Metrics) RecordLLMCall(id string, mm Metrics) {
 	tm := m.taskMetrics(id)
 	tm.LLMCalls++
 	tm.PromptTokens += mm.ConversionPromptTokenCount
 	tm.EvalTokens += mm.ConversionEvalTokenCount
+	tm.recordModel(mm.Model)
+}
+
+// recordModel notes which model served a task's call. Normally every call in
+// a task uses the same model, so this is a plain assignment; a second,
+// different name is appended rather than dropped so the analysis can tell the
+// stage apart from a single-model one (see TaskMetrics.Model).
+func (tm *TaskMetrics) recordModel(model string) {
+	if model == "" || tm.Model == model {
+		return
+	}
+	if tm.Model == "" {
+		tm.Model = model
+		return
+	}
+	for _, known := range strings.Split(tm.Model, ",") {
+		if known == model {
+			return
+		}
+	}
+	tm.Model += "," + model
 }
 
 // AddMetric aggregates another Metrics instance into this one.
