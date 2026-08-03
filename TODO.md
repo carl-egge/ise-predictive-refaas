@@ -72,6 +72,15 @@
 - [ ] [G4] Reuse the Go module cache across builds and jobs
 - [ ] [G5] Experiment: continued LLM conversation across stages
 
+**H. Evaluation** (energy study — see [evaluation/EVALUATION.md](evaluation/EVALUATION.md))
+- [ ] [H1] Record the function/dataset identity per job **(P0 — blocks per-function `N*`)**
+- [ ] [H2] Persist run metrics to disk as jobs complete **(P0 — a batch currently survives neither a restart nor a `/reconfigure`)**
+- [ ] [H3] Record the model per stage for per-model energy coefficients
+- [ ] [H4] Energy-model script over the run logs, constants in one config file
+- [ ] [H5] Account for or bound local compute energy (build/test/Floci)
+- [ ] [H6] Go vs. Python runtime measurement harness reusing the fixture payloads
+- [ ] [H7] Verify token accounting across connector-internal retries
+
 ---
 
 > Produced by a full read of the orchestration (`internal/pipeline`), all prompt templates and
@@ -613,6 +622,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Proposed change: Add a documented "lean" pipeline config without `cleaner` (or with `summary` only, per [D5]) and A/B the f1–f14 set against the default chain once [B5] instrumentation exists.
 - Why: If documentation doesn't lift success rate, removing it is a pure ~30–50% token saving per run; either outcome improves tokens-per-successful-translation.
 - Architecture impact: None (config + experiment) | Effort: S–M | Priority: P2
+- Note: the measurement is now a subtraction over `per_task` ([B5]) — the `root`/cleaner task's token column *is* its cost, and [H4]'s script converts it to energy directly. Worth folding into the energy study's per-stage breakdown rather than running as a separate experiment.
 
 ### [ ] [G4] Reuse the Go module cache across builds and jobs
 - Category: Efficiency
@@ -631,12 +641,82 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local (state on the LLM client, keyed per request; the `Client` interface and four-stage pipeline design stay unchanged)
 - Estimated effort: M
 - Priority: P2 (blocked on [B5])
+- Note: the token-economy half of this experiment is measurable once [H2] persists run metrics — compare tokens-per-*successful*-translation between the conversation mode and `default.json`, not raw token totals.
+
+---
+
+## H. Evaluation (energy study)
+
+> Derived 2026-07-05 from [evaluation/EVALUATION.md](evaluation/EVALUATION.md), after checking that
+> document's assumptions against the implementation. Three of its original
+> instrumentation TODOs were already satisfied by [B5] and are closed there;
+> the proposed per-call `CallRecord` struct was dropped as unnecessary (the
+> energy model is linear in token counts, so the existing per-stage
+> aggregates give an identical pipeline total and per-stage breakdown). The
+> items below are the gaps that remain. Analysis and thesis-writing tasks
+> stay in EVALUATION.md — only code-side work is tracked here.
+
+### [ ] [H1] Record the function/dataset identity on every job
+- Category: Evaluation
+- Affected component(s): `internal/service/service.go` (`uploadHandler` validates `fileHeader.Filename` and then discards it), `internal/pipeline/runner.go` (`MakeConversionRequest`), `internal/domain/types.go`
+- Problem / current state: `GET /metrics` returns `{job-uuid: Metrics}` and nothing anywhere links a job to *which* function it translated. The uploaded filename is the only identity signal available and it is dropped after the `.zip` suffix check. A batch over ~100 functions therefore produces 100 anonymous metric blocks.
+- Proposed change: carry the upload's filename stem (e.g. `f13`) onto `ConversionRequest` and into the metrics record, with an explicit override (a `function_id` multipart field or header) for batch drivers that don't encode identity in the filename.
+- Why this improves the evaluation: `N* = E_translation / (E_py − E_go)` is defined *per function*, and the headline result is its distribution across the set — without identity neither is computable, and no post-hoc reconstruction is possible once the server has moved on. Based on reasoning; no external source needed.
+- Architecture impact: Local | Effort: S | Priority: **P0** (blocks the primary result)
+
+### [ ] [H2] Persist run metrics to disk as jobs complete
+- Category: Evaluation
+- Affected component(s): `internal/service/service.go` (in-memory `results`/`metrics` maps; `reconfigure` wipes both by design), `scripts/store-metrics.sh`
+- Problem / current state: metrics exist only in memory. A restart loses them, `/reconfigure` deliberately clears them, and `store-metrics.sh` is a manual `curl` of the whole map *after the fact*. A ~100-function batch is hours of LLM time that one crash — or one forgotten reconfigure between configs — destroys entirely. There is also no record of *which* configuration produced a given dump, so two runs cannot be told apart afterwards.
+- Proposed change: append one JSON object per finished job to a run log (e.g. `runs/<run-id>.jsonl`) at the point where the worker finishes a job, containing job id, function id ([H1]), completion status and the full `Metrics` including `per_task`; write a run header (or a sibling file) capturing the active pipeline config, LLM client, model, `LLM_CALL_INTERVAL` and the git commit. Keep `/metrics` unchanged for live inspection.
+- Why this improves the evaluation: replaces EVALUATION.md's JSONL/`CallRecord` item with the minimum that actually makes the artifact durable and self-describing — a thesis artifact must stay interpretable without the server that produced it. Based on reasoning; no external source needed.
+- Architecture impact: Local | Effort: M | Priority: **P0** (every un-persisted batch is a re-run)
+
+### [ ] [H3] Record the model per stage for per-model energy coefficients
+- Category: Evaluation
+- Affected component(s): `internal/domain/types.go` (`TaskMetrics`), `internal/translator/translator.go` (already resolves the model name for the chatlog label), `internal/llmconnector`
+- Problem / current state: `TaskMetrics` records tokens but not which model produced them. Every stage may override `model_name` via `task_args`, and `e_in`/`e_out` are derived from a specific model's parameter count and weight bytes — so a mixed-model run cannot be costed, and a run-level average would be quietly wrong.
+- Proposed change: add the resolved model name to `TaskMetrics` (populated in `RecordLLMCall`, where the translator already has the value); make sure Gemini's `GEMINI_MODEL` key resolves too, given the existing `model_name`/`GEMINI_MODEL` inconsistency.
+- Why this improves the evaluation: lets the energy script pick the right coefficients per stage instead of assuming a single model, and documents post hoc which model produced which result. Based on the coefficient derivation in EVALUATION.md §3 (both coefficients are functions of `n_params` and weight bytes); no external source needed.
+- Architecture impact: Local | Effort: S | Priority: P1
+
+### [ ] [H4] Energy-model script over the run logs
+- Category: Evaluation
+- Affected component(s): new tooling under `evaluation/` (never in the service path); consumes [H2]'s run logs
+- Problem / current state: EVALUATION.md §3–§4 define the formulas and constants, but nothing computes them; the numbers would otherwise be assembled by hand per run.
+- Proposed change: a standalone script that reads the run logs and emits energy per run, per stage and per function, plus `N*` once runtime data ([H6]) exists — with every constant from §4 in **one config file**, so both the pending GWDG reply and the §8 sensitivity sweep (`B` ∈ [8,128], BF16→FP8, MFU, PUE) are config edits rather than code edits.
+- Why this improves the evaluation: the model is pure post-processing over recorded token counts, so keeping it outside the pipeline prevents experimental assumptions from leaking into production code and lets the sensitivity table be regenerated on demand. Based on reasoning; no external source needed.
+- Architecture impact: None (separate tool) | Effort: M | Priority: P1 (after [H1]/[H2])
+
+### [ ] [H5] Account for or bound the pipeline's local compute energy
+- Category: Evaluation
+- Affected component(s): `internal/builder` (durations already recorded per task via `TaskMetrics.Duration`), `internal/floci`, evaluation tooling
+- Problem / current state: `E_translation` counts LLM inference only, but each build attempt runs `go mod init`/`go mod tidy` and `go build`, each test round runs one `./fn` process per fixture, and the Floci route additionally starts emulator containers — all multiplied by every repair iteration. This energy is currently invisible to the model.
+- Proposed change: decide and document one of: (a) measure a representative build/test round with `perf stat` and scale it by the already-recorded per-task durations, or (b) declare it an excluded term with an order-of-magnitude bound in threats to validity. Do not leave it silently unmodelled.
+- Why this improves the evaluation: an energy claim that omits a component of its own pipeline invites the obvious examiner question; the durations needed to bound it are already being recorded, so closing it is cheap. Based on reasoning; no external source needed.
+- Architecture impact: None (analysis) | Effort: S (bound) / M (measure) | Priority: P1
+
+### [ ] [H6] Go vs. Python runtime measurement harness reusing the fixture payloads
+- Category: Evaluation
+- Affected component(s): new tooling under `evaluation/`; reuses `internal/fixture` payloads and the envelope of `internal/builder/test_handler.txt`
+- Problem / current state: EVALUATION.md §6 requires methodologically symmetric measurement of both versions; nothing exists yet. The Go side already has its harness (JSON event on stdin → `handle` → `{"response": …}` on stdout); the Python side has no equivalent, and cold start is not separated from steady state anywhere.
+- Proposed change: a Python harness mirroring the Go one exactly, plus a driver that runs both over the *same* fixture payloads on the same machine under `perf stat -e power/energy-pkg/,power/energy-ram/`, measuring cold start (one process per invocation) separately from steady state (N invocations in one process), applying the same PUE to both sides.
+- Why this improves the evaluation: reusing the canonical fixtures guarantees both sides see identical inputs through identical envelopes by construction, which is precisely the symmetry the comparison depends on — and it means the harness needs no new test data. Based on reasoning; no external source needed.
+- Architecture impact: None (separate tool) | Effort: M | Priority: P1
+
+### [ ] [H7] Verify token accounting across connector-internal retries
+- Category: Evaluation
+- Affected component(s): `internal/llmconnector/chatai.go` (the [F2] retry loop assigns `metrics = m` per attempt), `ollama.go`, `gemini.go`
+- Problem / current state: transient failures are retried *inside* `InvokeLLM`, and the loop overwrites the metrics of the previous attempt rather than accumulating. In practice a rate-limited or 5xx attempt generates nothing and reports no usage, so nothing is lost today — but the energy figures rest on that assumption and it is untested. (The adjacent case is already correct: a truncated `finish_reason=length` response *does* consume tokens, and `RecordLLMCall` runs before the error check, so it is counted.)
+- Proposed change: add a fake-backend test asserting that a retried-then-successful call reports only the successful attempt's usage, and that a truncated response's tokens are still counted; switch overwrite → accumulate if any backend is found to report usage on a failed attempt.
+- Why this improves the evaluation: a cheap guard on the one place where the energy accounting could silently under-count, in code that already has fake-backend test infrastructure. Based on reasoning; no external source needed.
+- Architecture impact: Local | Effort: S | Priority: P2
 
 ---
 
 ## Open questions
 
-1. **Failure-mode distribution is unmeasured.** Still open (2026-07-04) — blocked on [B5], which the maintainer raised to **P0** for exactly this reason. `Metrics` records only aggregate `build_error`/`test_error` counts; implement [B5] and run f1–f14 once before re-prioritizing C-items against each other.
+1. **Failure-mode distribution is unmeasured.** [B5] has landed, so the instrumentation now exists (`per_task` gives executions/failures/tokens per stage) — what is missing is the *run*. Do a full f1–f14 pass and read the per-task failure and token distribution before re-prioritizing the remaining C-items. For that run to be attributable and durable, do [H1]+[H2] first; the same run then doubles as the pilot for the energy study.
 2. **Does a continued conversation across stages beat fresh-context repair?** (new, maintainer 2026-07-04) — keeping translate → fix → align in one multi-turn conversation might improve repair quality but grows the context every turn. To be evaluated empirically for translation success rate *and* tokens-per-success; see [G5]. Blocked on [B5] for measurement.
 
 ## Resolved questions (answered by maintainer, 2026-07-04)
