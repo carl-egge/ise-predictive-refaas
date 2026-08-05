@@ -84,6 +84,11 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 	startTime := time.Now()
 	ctx := runner
 	pkg := request.WorkingPackage
+	// Resolved once per run: every test case executes against the emulator
+	// endpoint, never against real AWS ([C11]). Populated even when the Floci
+	// backend is off, in which case it points at an unreachable local address
+	// so an AWS call fails fast instead of leaving the SDK to find a real one.
+	awsEndpoint, awsRegion := runner.FlociEndpoint(), runner.FlociRegion()
 	failures := make([]domain.TestFailure, 0)
 	log.Debugf("Running GoPackageTester with %d tests", len(pkg.TestFiles))
 	// Parse per file (rather than fixture.FromPackage) so one broken fixture
@@ -109,7 +114,7 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 			log.Warnf("test case %q declares setup/sideEffects, which goTester cannot execute; only the payload/expectedOutput half is validated here (use the flociTester stage for side-effect assertions)", tc.Name)
 		}
 
-		if failure := cc.doTest(ctx, runner.WorkingDir(), tc, pkg.Env); failure != nil {
+		if failure := cc.doTest(ctx, runner.WorkingDir(), tc, pkg.Env, awsEndpoint, awsRegion); failure != nil {
 			failures = append(failures, *failure)
 			log.Debugf("test %s failed (%s)", tc.Name, failure.Kind)
 			continue
@@ -144,7 +149,7 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 // doTest runs one test case and returns nil on success, or the captured
 // failure evidence (input, expected vs. actual output, stderr) so repair
 // stages can see what actually went wrong instead of just a count.
-func (cc *GoPackageTester) doTest(ctx context.Context, dir string, tc fixture.TestCase, pkgEnv []string) *domain.TestFailure {
+func (cc *GoPackageTester) doTest(ctx context.Context, dir string, tc fixture.TestCase, pkgEnv []string, awsEndpoint, awsRegion string) *domain.TestFailure {
 	timeout := cc.testTimeout
 	if timeout <= 0 {
 		timeout = defaultTestTimeout
@@ -175,7 +180,9 @@ func (cc *GoPackageTester) doTest(ctx context.Context, dir string, tc fixture.Te
 	cmd.Dir = dir
 	// Package-level env first, the fixture's own entries last: exec.Cmd keeps
 	// the last value for duplicate keys, so per-test overrides win.
-	cmd.Env = append(append(os.Environ(), pkgEnv...), tc.Env...)
+	// Never the raw host environment: a translated function that calls AWS
+	// must resolve to the emulator, never to a real account ([C11]).
+	cmd.Env = TestExecutionEnv(os.Environ(), pkgEnv, tc.Env, awsEndpoint, awsRegion)
 	payload := string(tc.Payload)
 	if strings.TrimSpace(payload) == "" {
 		payload = "{}" // same default event the Floci route invokes with

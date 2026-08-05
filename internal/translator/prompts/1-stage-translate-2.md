@@ -5,6 +5,7 @@ Translate the following Python AWS Lambda function to Go. Preserve the exact beh
 - The handler receives the invocation event as raw JSON: `func handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyResponse, error)`. Parse the fields you need from `event` yourself.
 - The response is compared field by field against the Python function's return value: `StatusCode` must match the Python `statusCode`, and `Body` must be a **JSON-encoded string** — build it with `json.Marshal` and convert with `string(...)`. Never use `fmt.Sprintf("%v", ...)` for the body: it prints Go map syntax (`map[result:3]`), not JSON.
 - Mirror the Python function's error branches: where Python returns an error dict with a non-200 statusCode (or raises an exception), return the same statusCode and body. Return a Go `error` only for genuinely unhandled failures.
+- **AWS clients must honour the endpoint override.** The function is tested against a local AWS emulator, so every AWS SDK client must use the endpoint in `AWS_ENDPOINT_URL` when that variable is set (and path-style addressing for S3), exactly as the Python original does with `boto3.client(..., endpoint_url=os.getenv("AWS_ENDPOINT_URL"))`. A client that hardcodes its configuration talks to the wrong place and fails every test.
 
 ## Requirements
 1. **Handler Signature**: Use `func handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyResponse, error)`.

@@ -39,12 +39,37 @@ func deployLambda(ctx context.Context, c *Clients, name string, zipBytes []byte)
 			PackageType:  lambdatypes.PackageTypeZip,
 			Code:         &lambdatypes.FunctionCode{ZipFile: zipBytes},
 			Timeout:      aws.Int32(30),
+			Environment:  &lambdatypes.Environment{Variables: lambdaEnv(c.Region)},
 		}); err != nil {
 			return fmt.Errorf("floci: creating lambda %q: %w", name, err)
 		}
 	}
 
 	return waitActive(ctx, c, name)
+}
+
+// lambdaEnv is the environment the deployed function runs with ([C11]).
+//
+// It deliberately sets credentials and region but **not** AWS_ENDPOINT_URL:
+// the function runs inside the emulator's own network, where the emulator
+// injects the endpoint that is reachable from there - a value this process
+// cannot know (its own endpoint is typically a host-side address). Overriding
+// it here would point the function at an unreachable host and break every
+// side-effect assertion.
+//
+// The credentials are dummy on purpose: they are what the emulator expects,
+// and they mean that a translated function which somehow escaped the endpoint
+// override still cannot authenticate against a real AWS account.
+func lambdaEnv(region string) map[string]string {
+	return map[string]string{
+		"AWS_ACCESS_KEY_ID":         "test",
+		"AWS_SECRET_ACCESS_KEY":     "test",
+		"AWS_SESSION_TOKEN":         "test",
+		"AWS_REGION":                region,
+		"AWS_DEFAULT_REGION":        region,
+		"AWS_S3_FORCE_PATH_STYLE":   "true",
+		"AWS_EC2_METADATA_DISABLED": "true",
+	}
 }
 
 func functionExists(ctx context.Context, c *Clients, name string) (bool, error) {

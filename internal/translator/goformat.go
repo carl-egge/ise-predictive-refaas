@@ -3,6 +3,7 @@ package translator
 import (
 	"go/parser"
 	"go/token"
+	"strings"
 
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/tools/imports"
@@ -34,6 +35,7 @@ func postProcessGoSource(source string) string {
 	}
 
 	fixed := ensureMainPackage(source)
+	warnIfAWSEndpointIgnored(fixed)
 
 	// goimports also gofmts, so the file the model sees on a later repair
 	// round is normalized rather than however the model happened to indent.
@@ -45,6 +47,41 @@ func postProcessGoSource(source string) string {
 		return fixed
 	}
 	return string(formatted)
+}
+
+// awsEndpointMarkers are the ways a Go translation can legitimately honour
+// the emulator endpoint: reading it from the environment itself (the AWS SDK
+// v1 style, which never consults AWS_ENDPOINT_URL on its own) or letting the
+// v2 SDK resolve it, which it does when the config is loaded from the
+// environment or a base endpoint is set explicitly.
+var awsEndpointMarkers = []string{
+	"AWS_ENDPOINT_URL",
+	"BaseEndpoint",
+	"WithBaseEndpoint",
+	"EndpointResolver",
+	"LoadDefaultConfig",
+}
+
+// warnIfAWSEndpointIgnored flags a translation that constructs AWS SDK
+// clients without any sign of endpoint resolution ([C11]).
+//
+// This is diagnostic only, never a failure: the SDK v2 resolves
+// AWS_ENDPOINT_URL from the environment on its own, so the absence of these
+// markers is suggestive rather than conclusive, and the actual containment is
+// the execution environment (builder.TestExecutionEnv strips host credentials
+// and forces the emulator endpoint). What the warning buys is a cheap heads-up
+// that this particular function would likely fail against the emulator - and
+// would have been a leakage risk without that containment.
+func warnIfAWSEndpointIgnored(source string) {
+	if !strings.Contains(source, "github.com/aws/aws-sdk-go") {
+		return // no AWS SDK (note: aws-lambda-go is a different module)
+	}
+	for _, marker := range awsEndpointMarkers {
+		if strings.Contains(source, marker) {
+			return
+		}
+	}
+	log.Warnf("translated code constructs AWS SDK clients with no visible endpoint resolution; it will be run against the emulator endpoint via the environment, but a client that hardcodes its configuration may not honour it")
 }
 
 // ensureMainPackage guarantees the file opens with "package main".

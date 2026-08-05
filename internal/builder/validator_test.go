@@ -230,6 +230,55 @@ func buildFn(t *testing.T, dir string) {
 	}
 }
 
+// TestGoPackageTesterIsolatesAWSEnv is the end-to-end half of [C11]: the
+// program under test must actually observe the emulator endpoint and dummy
+// credentials, with the host's real AWS variables gone. The fixture asserts
+// on what the process itself reports seeing.
+func TestGoPackageTesterIsolatesAWSEnv(t *testing.T) {
+	dir := writeRunnablePackage(t, `package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+func main() {
+	out, _ := json.Marshal(map[string]string{
+		"endpoint": os.Getenv("AWS_ENDPOINT_URL"),
+		"key":      os.Getenv("AWS_ACCESS_KEY_ID"),
+		"profile":  os.Getenv("AWS_PROFILE"),
+	})
+	fmt.Println(string(out))
+}
+`)
+	buildFn(t, dir)
+
+	// a real credential in the host environment of this test process
+	t.Setenv("AWS_PROFILE", "production")
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAREALCREDENTIAL")
+
+	runner := pipeline.NewRunner(context.Background(), nil, nil)
+	runner.SetWorkingDir(dir)
+	tester := NewGoPackageTester(map[string]interface{}{})
+
+	req := &domain.ConversionRequest{
+		CurrentTask: "tester",
+		WorkingPackage: &domain.DeploymentPackage{
+			RootFile: "package main",
+			TestFiles: map[string]string{
+				// the expectation *is* the assertion: harness endpoint and
+				// dummy key present, host profile gone
+				"test/t1.json": `{"payload":{},"expectedOutput":{"endpoint":"http://localhost:4566","key":"test","profile":""}}`,
+			},
+		},
+	}
+
+	if err := tester.Apply(runner, req); err != nil {
+		t.Fatalf("the translated program did not observe the isolated AWS environment: %v", err)
+	}
+}
+
 // TestGoPackageTesterTimesOutHangingPrograms guards the F1 behavior: a
 // translated infinite loop must fail its test with a timeout kind instead
 // of hanging the single worker goroutine indefinitely. The package is

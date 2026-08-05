@@ -53,6 +53,20 @@ func (cc *Runner) FlociEnabled() bool {
 	return cc.floci.Enabled
 }
 
+// FlociEndpoint returns the AWS endpoint translated functions must resolve to
+// ([C11]). It is populated even when the backend is disabled (default
+// http://localhost:4566), which is deliberate: pointing a test run at an
+// unreachable emulator makes an AWS call fail fast and locally, whereas
+// leaving it unset would let the SDK fall back to real AWS.
+func (cc *Runner) FlociEndpoint() string {
+	return cc.floci.Endpoint
+}
+
+// FlociRegion returns the AWS region used for test execution and deployment.
+func (cc *Runner) FlociRegion() string {
+	return cc.floci.Region
+}
+
 // WorkingDir returns the current working directory used for builds/tests.
 func (cc *Runner) WorkingDir() string {
 	return cc.workingDir

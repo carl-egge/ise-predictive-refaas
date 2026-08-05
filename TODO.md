@@ -41,7 +41,7 @@
 - [ ] [C8] Python feature pre-scan feeding the translate prompt
 - [~] [C9] ~~Support multi-file Python inputs~~ — **dropped**, single-file is the contract
 - [x] [C10] Unified fixture schema + per-job validation routing (goTester vs. flociTester)
-- [ ] [C11] Prevent AWS leakage: always resolve to the Floci harness
+- [x] [C11] Prevent AWS leakage: always resolve to the Floci harness
 - [x] [C12] Unify the two test JSON shapes into one canonical fixture schema
 
 **D. Prompts**
@@ -439,7 +439,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Estimated effort: M
 - Priority: P1
 
-### [ ] [C11] Prevent AWS leakage: generated code must always resolve to the Floci harness, never real AWS
+### [x] [C11] Prevent AWS leakage: generated code must always resolve to the Floci harness, never real AWS
 - Category: Feature / Fault Tolerance
 - Affected component(s): `internal/builder/validator.go` (goTester exec env), `internal/floci` (deploy env), `internal/translator/prompts/1-stage-translate-*.md`, optionally a small deterministic post-generation check
 - Problem / current state: Input functions scraped from AWS examples call real AWS services. During `goTester` runs (`go run .` with full host network) or Floci-deployed runs, generated Go code that does not honor an endpoint override can silently contact production AWS endpoints — real side effects, cost, and non-reproducible test outcomes. Nothing currently guards against this.
@@ -448,6 +448,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local
 - Estimated effort: M
 - Priority: P1
+- Status: **Implemented 2026-07-05**, all three parts.
+  1. **Execution environment** (`internal/builder/awsenv.go`, `TestExecutionEnv`): every test run gets a purpose-built environment instead of the raw host one. Host `AWS_*` variables are **stripped wholesale** — a developer's or CI runner's ambient credentials (including `AWS_PROFILE`, which can name a role to assume) are the one thing that could turn a translated `PutObject` into a real write. Endpoint, dummy credentials and `AWS_EC2_METADATA_DISABLED` are then forced *last* so neither the package `.env` nor a fixture can override them, while region and S3 path-style are defaults a fixture may legitimately pin (the dataset has a function deriving its region from the invoked ARN). Endpoint/region come from `Runner.FlociEndpoint()`/`FlociRegion()`, new accessors that avoid a `builder`→`floci` dependency.
+  2. **Prompts**: both translate prompts now state that AWS clients must honour `AWS_ENDPOINT_URL` (and path-style S3), mirroring what the Python originals do with `boto3.client(..., endpoint_url=...)`. This matters most for AWS SDK **v1**, which never consults that variable on its own.
+  3. **Deterministic check** (`warnIfAWSEndpointIgnored`): flags a translation that imports an AWS SDK with no visible endpoint resolution. Deliberately a **warning, not a failure** — SDK v2 resolves `AWS_ENDPOINT_URL` from the environment by itself, so the absence of markers is suggestive, not conclusive, and a hard failure would produce false positives on correct code. Containment is part 1's job; this is the heads-up that a given function would likely fail against the emulator anyway.
+- **Fail-closed detail found by the end-to-end test**: a `Runner` built through `NewRunner` carries an empty Floci config, which would have injected an *empty* `AWS_ENDPOINT_URL` — worse than none, since the SDK then resolves the real AWS endpoint. `TestExecutionEnv` therefore supplies its own endpoint/region fallbacks rather than trusting the caller to be configured.
+- **Floci route**: the deployed Lambda now gets dummy credentials, region and metadata-disable via `lambdaEnv`, but deliberately **not** `AWS_ENDPOINT_URL` — the function runs inside the emulator's network, where the emulator injects the endpoint reachable from *there*; overriding it with this process's host-side address would break every side-effect assertion.
+- Residual risk, documented in code: a translation that ignores the endpoint override entirely can still *attempt* an outbound connection to real AWS. With dummy credentials it cannot authenticate, so no data is read or written; preventing the connection attempt itself would need network isolation (out of scope). Fixture-declared external HTTP APIs (f9/f10) are unaffected by design.
+- Tests: `internal/builder/awsenv_test.go` (credential stripping, forced endpoint, overridable region, fail-closed fallback, no slice aliasing between cases) and `TestGoPackageTesterIsolatesAWSEnv`, which runs a real program that reports the env it observes and asserts the host's `AWS_PROFILE`/key are gone.
 
 ### [x] [C12] Unify the two test JSON shapes into one canonical fixture schema
 - Category: Feature
