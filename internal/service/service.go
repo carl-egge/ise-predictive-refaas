@@ -160,6 +160,21 @@ func (service *ConverterService) Start(ctx context.Context) {
 	}
 }
 
+// validateOptions resolves the upload-admission policy for the current
+// request. Floci availability is read from the runner rather than the
+// environment because /reconfigure can turn the backend on or off at runtime,
+// and a job must be admitted against the configuration that will actually
+// run it.
+func (service *ConverterService) validateOptions() inputhandler.ValidateOptions {
+	opts := service.uploadPolicy
+	service.runnerMu.Lock()
+	defer service.runnerMu.Unlock()
+	if service.converter != nil {
+		opts.FlociEnabled = service.converter.FlociEnabled()
+	}
+	return opts
+}
+
 // llmClientName reports the LLM connector currently configured, for the run
 // log. Guarded by runnerMu because /reconfigure can swap the client.
 func (service *ConverterService) llmClientName() string {
@@ -301,7 +316,7 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 	// Reject unusable packages before the pipeline spends any LLM or build
 	// budget on them, and report every problem at once so a bad artifact
 	// takes one upload to diagnose rather than several.
-	if err := inputhandler.Validate(dp, service.uploadPolicy); err != nil {
+	if err := inputhandler.Validate(dp, service.validateOptions()); err != nil {
 		log.Warnf("rejecting upload %q: %v", fileHeader.Filename, err)
 		http.Error(w, fmt.Sprintf("Invalid package: %v", err), http.StatusBadRequest)
 		return

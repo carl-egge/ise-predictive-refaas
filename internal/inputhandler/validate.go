@@ -18,6 +18,11 @@ type ValidateOptions struct {
 	// a dataset element afterwards. Off by default so ad-hoc uploads, the
 	// bundled examples/input/*.zip and the README's curl example keep working.
 	RequireMeta bool
+	// FlociEnabled reports whether the Floci-backed validation route is
+	// available. Fixtures declaring setup/sideEffects can only be validated
+	// through it, so an upload carrying them is rejected when it is off - see
+	// the routing matrix in [C10].
+	FlociEnabled bool
 }
 
 // BenchmarkValidateOptions reads the upload-admission policy from the
@@ -74,10 +79,25 @@ func Validate(dp *domain.DeploymentPackage, opts ValidateOptions) error {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	cases := make([]fixture.TestCase, 0, len(names))
 	for _, name := range names {
-		if _, err := fixture.Parse(name, []byte(dp.TestFiles[name])); err != nil {
+		tc, err := fixture.Parse(name, []byte(dp.TestFiles[name]))
+		if err != nil {
 			problems = append(problems, fmt.Sprintf("invalid test fixture %s: %v", name, err))
+			continue
 		}
+		cases = append(cases, tc)
+	}
+
+	// A function whose fixtures assert AWS state can only be validated by the
+	// Floci route. Translating it with that route unavailable would burn the
+	// full LLM budget and then either validate nothing or fail for
+	// infrastructure reasons indistinguishable from a translation defect - so
+	// refuse the job here instead ([C10]).
+	if !opts.FlociEnabled && fixture.RequiresFloci(cases) {
+		problems = append(problems, fmt.Sprintf(
+			"fixtures declare setup/sideEffects (%s), which only the Floci validation route can execute, but the Floci backend is disabled: start it and set FLOCI_ENABLED=true, or upload a function whose tests assert only the response",
+			strings.Join(flociCaseNames(cases), ", ")))
 	}
 
 	if opts.RequireMeta && dp.Meta == nil {
@@ -90,4 +110,16 @@ func Validate(dp *domain.DeploymentPackage, opts ValidateOptions) error {
 		return &ValidationError{Problems: problems}
 	}
 	return nil
+}
+
+// flociCaseNames lists the cases that need the Floci route, so the rejection
+// says which fixtures caused it rather than just that some did.
+func flociCaseNames(cases []fixture.TestCase) []string {
+	names := make([]string, 0, len(cases))
+	for _, tc := range cases {
+		if tc.HasSideEffects() {
+			names = append(names, tc.Name)
+		}
+	}
+	return names
 }

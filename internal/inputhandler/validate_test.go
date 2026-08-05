@@ -108,6 +108,44 @@ func TestValidateMetaRequirement(t *testing.T) {
 	}
 }
 
+// TestValidateBlocksFlociFixturesWhenDisabled guards the [C10] admission
+// rule: a function whose fixtures assert AWS state cannot be validated with
+// the Floci route off, so it must be refused before the pipeline spends the
+// full LLM budget on a result that could only be vacuous or an
+// infrastructure failure.
+func TestValidateBlocksFlociFixturesWhenDisabled(t *testing.T) {
+	pkg := validPackage()
+	pkg.TestFiles["test/t2.json"] = `{"name":"store-message","payload":{"bucket":"audit"},
+		"setup":[{"type":"s3.bucket","bucket":"audit"}],
+		"sideEffects":[{"type":"s3.objectExists","bucket":"audit","key":"m1.json"}]}`
+
+	err := Validate(pkg, ValidateOptions{FlociEnabled: false})
+	if err == nil {
+		t.Fatal("expected side-effect fixtures to be rejected while floci is disabled")
+	}
+	if !strings.Contains(err.Error(), "FLOCI_ENABLED") {
+		t.Errorf("error should say how to enable the route, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "store-message") {
+		t.Errorf("error should name the offending fixture, got: %v", err)
+	}
+
+	if err := Validate(pkg, ValidateOptions{FlociEnabled: true}); err != nil {
+		t.Fatalf("the same package must be accepted when floci is enabled: %v", err)
+	}
+}
+
+// TestValidateAllowsPureFixturesWithFlociOff: the common case must not be
+// affected - including the canonical schema's empty setup/sideEffects blocks.
+func TestValidateAllowsPureFixturesWithFlociOff(t *testing.T) {
+	pkg := validPackage()
+	pkg.TestFiles["test/t2.json"] = `{"payload":{},"expectedOutput":{},"setup":[],"sideEffects":[]}`
+
+	if err := Validate(pkg, ValidateOptions{FlociEnabled: false}); err != nil {
+		t.Fatalf("empty setup/sideEffects must not require the floci route: %v", err)
+	}
+}
+
 func TestBenchmarkValidateOptionsFromEnv(t *testing.T) {
 	for _, v := range []string{"true", "TRUE", "1"} {
 		t.Setenv("REQUIRE_META", v)

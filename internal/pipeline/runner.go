@@ -20,6 +20,12 @@ type Runner struct {
 	client     llmconnector.Client
 	pipeline   *Pipeline
 	workingDir string
+	// floci is the Floci backend configuration this Runner was built or
+	// reconfigured with. Held here so callers can ask whether the
+	// side-effect validation route is available (see FlociEnabled) without
+	// importing internal/floci, which stays an optional, blank-imported
+	// dependency.
+	floci FlociConfig
 }
 
 // NewRunner returns a Runner with the provided context, pipeline, and LLM client.
@@ -37,6 +43,14 @@ func NewRunner(ctx context.Context, pipe *Pipeline, client llmconnector.Client) 
 // LLMClient returns the LLM connector for this runner.
 func (cc *Runner) LLMClient() llmconnector.Client {
 	return cc.client
+}
+
+// FlociEnabled reports whether the Floci-backed validation route is turned
+// on for this Runner. Fixtures that assert AWS side effects can only be
+// validated when it is; see the routing in TestRouterConverter and the
+// upload-time check in inputhandler.Validate.
+func (cc *Runner) FlociEnabled() bool {
+	return cc.floci.Enabled
 }
 
 // WorkingDir returns the current working directory used for builds/tests.
@@ -193,6 +207,7 @@ func MakeCodeConverter(ops *ConverterOptions) (*Runner, error) {
 		Context:  context.Background(),
 		pipeline: pipeline,
 		client:   apiClient,
+		floci:    ops.Floci,
 	}, nil
 }
 
@@ -256,6 +271,7 @@ func (cc *Runner) Reconfigure(ops *ConverterOptions) error {
 		cc.workingDir = ""
 		cc.pipeline = ops.CompiledPipeline
 		cc.client = apiClient
+		cc.floci = ops.Floci
 		return nil
 	}
 
@@ -271,6 +287,7 @@ func (cc *Runner) Reconfigure(ops *ConverterOptions) error {
 	cc.workingDir = ""
 	cc.pipeline = pipeline
 	cc.client = apiClient
+	cc.floci = ops.Floci
 
 	return nil
 }

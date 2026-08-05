@@ -88,6 +88,25 @@ func (tc TestCase) HasSideEffects() bool {
 	return len(tc.Setup) > 0 || len(tc.SideEffects) > 0
 }
 
+// RequiresFloci reports whether a function's fixtures need the Floci harness
+// to be validated at all - i.e. whether any case asserts AWS state rather
+// than just a response.
+//
+// This is the classification the pipeline routes on ([C10]): a function whose
+// cases only carry payload/expectedOutput is fully validated by the black-box
+// goTester, while one that provisions resources or asserts side effects can
+// only be validated by deploying it into the emulator. Note that the
+// canonical schema declares empty setup/sideEffects arrays for pure
+// functions, which HasSideEffects correctly reads as "no side effects".
+func RequiresFloci(cases []TestCase) bool {
+	for _, tc := range cases {
+		if tc.HasSideEffects() {
+			return true
+		}
+	}
+	return false
+}
+
 // Assertion is a single declarative setup action or side-effect check. The Type
 // selects the registered handler; Spec carries the full object so the handler
 // can decode whatever extra fields it needs (bucket, key, table, ...).

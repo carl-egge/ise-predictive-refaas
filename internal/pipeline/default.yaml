@@ -30,7 +30,7 @@ tasks:
     next:
       - "tester"
   - id: "tester"
-    task: "goTester"
+    task: "testRouter"
     canApply: "canCompile"
     maxRetryCount: 2
     recovery: "testRecovery"

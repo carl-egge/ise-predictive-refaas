@@ -42,7 +42,7 @@
     },
     {
       "id": "goTester",
-      "task": "goTester",
+      "task": "testRouter",
       "canApply": "canCompile",
       "maxRetryCount": 5,
       "recovery": "testRecovery"

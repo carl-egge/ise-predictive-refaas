@@ -40,7 +40,7 @@
 - [x] [C7] Deterministic and complete test context for prompts
 - [ ] [C8] Python feature pre-scan feeding the translate prompt
 - [~] [C9] ~~Support multi-file Python inputs~~ — **dropped**, single-file is the contract
-- [ ] [C10] Unified fixture schema + per-job validation routing (goTester vs. flociTester)
+- [x] [C10] Unified fixture schema + per-job validation routing (goTester vs. flociTester)
 - [ ] [C11] Prevent AWS leakage: always resolve to the Floci harness
 - [x] [C12] Unify the two test JSON shapes into one canonical fixture schema
 
@@ -421,13 +421,20 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local | Effort: M | Priority: P2
 - **DROPPED 2026-07-05 (maintainer decision): will not be implemented.** Single-file input is the contract — the dataset pipeline already inlines repo-local imports, so every artifact ships one self-contained `main.py` (EVALUATION_DATASET.md §2). The [A17] rejection stays as the guard: a multi-source upload fails fast with a clear error rather than being silently mistranslated from a fragment. Nothing further to do here; leaving the item for the record.
 
-### [ ] [C10] Unified test-fixture schema and per-job validation routing (goTester vs. flociTester)
+### [x] [C10] Unified test-fixture schema and per-job validation routing (goTester vs. flociTester)
 - Category: Feature
 - Affected component(s): `internal/domain/types.go` (`TestFile`, incl. the declared-but-unused `Services` field), `internal/floci/testcase.go` (`parsePackageTestCase` already shape-detects both dialects — reuse it), `internal/builder/validator.go`, `internal/service/service.go` (job admission), pipeline configs
 - Problem / current state: Two validation paths exist (black-box `goTester` and the Floci integration stage) with two fixture dialects, but nothing routes a job to the right one. Today a side-effecting function can be "validated" by `goTester` alone (meaningless — side effects unchecked), and a Floci-dependent job can run with Floci disabled and silently skip its only real validation (`flociTester` is a no-op when disabled).
 - Proposed change (maintainer-specified decision matrix, 2026-07-04): (1) Document **one** fixture schema covering both kinds: plain `input`/`output` for pure functions; `payload`/`expectedOutput`/`setup`/`sideEffects` for side-effecting ones (formalize the shape detection that `floci.parsePackageTestCase` already implements; decide whether `TestFile.Services` is consumed by it or removed). (2) At job start, classify the upload: *floci-required* iff any fixture declares `setup`/`sideEffects`. (3) Route per job: Floci enabled + required → `flociTester` validates; Floci enabled + not required → standard `goTester`; **Floci disabled + required → block the translation with a clear error before any LLM call**; Floci disabled + not required → standard `goTester`. `FLOCI_ENABLED` remains the single switch for whether the Floci service runs at all.
 - Why: Ensures every translation is validated by the strongest harness its fixtures demand and turns the current silent no-op into an explicit contract — a prerequisite for the thesis goal of validating side-effecting workloads. Maintainer requirement; no external source needed.
 - Dataset urgency (2026-07-05): **40 of the 95 `evaluation_set` functions declare `setup` resources** and 13 assert `sideEffects` (EVALUATION_DATASET.md §3, gotcha 4). Without this routing, running the benchmark with Floci down yields 40 functions failing for infrastructure reasons that are indistinguishable from translation defects — so the "block when Floci is required but disabled" branch is what protects the headline result, not a nicety.
+- Status: **Implemented 2026-07-05.** Part (1), the unified schema, landed earlier as [C12]; this completes the routing.
+  - **Classification**: `fixture.RequiresFloci(cases)` — true iff any case declares `setup`/`sideEffects`. It builds on the existing `TestCase.HasSideEffects()` (`len() > 0`), so the canonical schema's *empty* `setup: []`/`sideEffects: []` blocks correctly classify a pure function as black-box, and legacy `input`/`output` fixtures keep working through `fixture.Parse`'s lowering.
+  - **Routing**: a new `testRouter` converter (`internal/pipeline/testrouter.go`) resolves both testers *by name through the converter registry*, so the pipeline package imports neither `internal/builder` nor `internal/floci` and the Floci integration stays an optional blank import. It runs exactly one tester per job. Notably `goTester` must **not** also run for a Floci job: it would drive the AWS SDK with no emulator behind it, producing infrastructure failures that look like translation defects — and risking real-AWS calls ([C11]).
+  - **Never a silent pass**: if a job needs the Floci route while the backend is disabled, or `flociTester` isn't registered in the binary, the router returns a hard error instead of skipping. (`flociTester` on its own still no-ops when disabled, which is what made a vacuous success possible before.)
+  - **Admission** (`inputhandler.Validate`): the same classification rejects such uploads with a `400` naming the offending fixtures, before any LLM call. Floci availability is read per request from the new `Runner.FlociEnabled()` rather than from the environment, so a `/reconfigure` that toggles `floci.enabled` is respected immediately.
+  - **Config**: `default.json` and `default.yaml` now use `testRouter` (task ids unchanged); `goTester`/`flociTester` remain valid task names for existing configs, so nothing external breaks.
+  - Tests: `internal/pipeline/testrouter_test.go` covers all four rows of the matrix plus the legacy/empty-blocks schema variants, the not-linked-in case, and registry resolution; `internal/inputhandler/validate_test.go` covers the admission block.
 - Architecture impact: Local (a routing decision in job admission + existing converters; no pipeline redesign — both testers already exist as registered stages)
 - Estimated effort: M
 - Priority: P1
