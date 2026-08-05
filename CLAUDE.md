@@ -15,6 +15,7 @@ This is a research codebase (thesis project). The two open problems it's built a
 ```sh
 go build ./...                 # build everything
 go run ./cmd/refaas             # run the service locally (listens on :8080)
+go run ./cmd/energy runs/*.jsonl   # energy report over archived runs (add -sweep/-json)
 gofmt -l .                      # check formatting; run `gofmt -w <file>` on changed files
 go vet ./...
 ```
@@ -38,6 +39,10 @@ Helper scripts (`scripts/`):
 The system is pipeline-centric: a conversion run is a sequence of configurable, retryable stages wired together at startup (or at runtime via `/reconfigure`), not a single LLM call.
 
 ```
+cmd/energy/            analysis tool: run logs -> energy per translation/stage/function,
+                       sensitivity sweep, break-even N*. Never runs during a conversion;
+                       all constants in evaluation/energy.config.json (no compiled-in
+                       fallback, so the thesis constants table has one source of truth).
 cmd/refaas/main.go
   -> internal/service       HTTP API, job queue, background worker, metrics, reconfigure
        -> internal/pipeline Runner: holds compiled Pipeline + LLM Client, executes ConversionRequests

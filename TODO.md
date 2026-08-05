@@ -77,7 +77,7 @@
 - [x] [H1a] Emit a per-function result summary (outcome + failure kind) alongside the metrics
 - [x] [H2] Persist run metrics to disk as jobs complete **(P0 — a batch currently survives neither a crash, a restart, nor a `/reconfigure`)**
 - [x] [H3] Record the model per stage for per-model energy coefficients
-- [ ] [H4] Energy-model script over the run logs, constants in one config file
+- [x] [H4] Energy-model script over the run logs, constants in one config file
 - [ ] [H5] Account for or bound local compute energy (build/test/Floci)
 - [ ] [H6] Go vs. Python runtime measurement harness reusing the fixture payloads
 - [ ] [H7] Verify token accounting across connector-internal retries
@@ -748,13 +748,27 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Status: **Implemented 2026-07-05.** The model is reported by the **connector**, not inferred from task params: each `InvokeLLM` sets `Model` on the `domain.Metrics` it returns (before any error path, so a truncated response — which did consume tokens — is still costable), and `RecordLLMCall` carries it into `TaskMetrics.Model`. This is what makes a Gemini stage attributable at all: Gemini resolves `GEMINI_MODEL`, so the translator's `taskParams["model_name"]` never names it. Bonus fix from the same change: Gemini chatlogs were being written as `..._unknown-model_...` and now carry the real model. `AddMetric` deliberately does **not** aggregate `Model` — the request-level metrics span every stage, so a single name there would be misleading. A stage that somehow saw two models joins them with `,` rather than dropping one, since its tokens then can't be costed with one coefficient pair. Tests: `internal/domain/metrics_test.go`, `TestConnectorsReportModel` in `internal/llmconnector/connector_local_test.go`, and end-to-end attribution through a stub client in `internal/translator/attribution_test.go`.
 - Deliberately **not** done: unifying Gemini onto `model_name`. `default.yaml` and `default.json` set `options.model_name` pipeline-wide for Ollama/ChatAI, so making Gemini honour that key would silently send it `qwen2.5-coder:3b` the moment someone switched `LLMClient` to `gemini` while keeping the same options block. `GEMINI_MODEL` stays Gemini's override key; a regression test pins this.
 
-### [ ] [H4] Energy-model script over the run logs
+### [x] [H4] Energy-model script over the run logs
 - Category: Evaluation
 - Affected component(s): new tooling under `evaluation/` (never in the service path); consumes [H2]'s run logs
 - Problem / current state: EVALUATION.md §3–§4 define the formulas and constants, but nothing computes them; the numbers would otherwise be assembled by hand per run.
 - Proposed change: a standalone script that reads the run logs and emits energy per run, per stage and per function, plus `N*` once runtime data ([H6]) exists — with every constant from §4 in **one config file**, so both the pending GWDG reply and the §8 sensitivity sweep (`B` ∈ [8,128], BF16→FP8, MFU, PUE) are config edits rather than code edits.
 - Why this improves the evaluation: the model is pure post-processing over recorded token counts, so keeping it outside the pipeline prevents experimental assumptions from leaking into production code and lets the sensitivity table be regenerated on demand. Based on reasoning; no external source needed.
 - Architecture impact: None (separate tool) | Effort: M | Priority: P1 (after [H1]/[H2])
+- Status: **Implemented 2026-07-05** as `cmd/energy` (Go, so it reuses `domain.Metrics` for decoding; nothing in it runs during a conversion). Usage:
+  ```sh
+  go run ./cmd/energy runs/run-*.jsonl              # report
+  go run ./cmd/energy -sweep runs/run-*.jsonl       # + section 8 sensitivity table
+  go run ./cmd/energy -json runs/run-*.jsonl        # machine-readable, for plotting
+  go run ./cmd/energy -runtime evaluation/runtime.json runs/run-*.jsonl   # + N*
+  ```
+  - **Constants live only in `evaluation/energy.config.json`** — there is deliberately no compiled-in fallback, so the thesis constants table has one source of truth and the GWDG reply is a config edit. The config is validated on load, and a missing `models._default` entry is a hard error because it is what stops a run using an unlisted model from being costed as *zero*.
+  - **Verified against the document, not just itself**: the tests assert the derived coefficients reproduce EVALUATION.md §3's published figures (e_in ≈ 0.41 J/token, e_out ≈ 2.6 J/token at B=32, prefill ≈ 4,900 tok/s, decode step ≈ 41 ms), the whole e_out-vs-B table, and the §3 worked example (5 calls × 6,000/1,500 tokens ⇒ ≈ 33 kJ ≈ 9.3 Wh). A separate test loads the shipped config so a typo in it fails the build rather than silently changing every number in the thesis.
+  - Reports: total/mean/median energy and CO₂e, **per-stage breakdown with the repair share** (repair stages named in the config rather than hardcoded), and the dataset's two reporting axes — per complexity bucket and AWS vs non-AWS — plus passed/failed/shape-only test counts per group from [H1a]'s outcomes.
+  - `-sweep` re-costs the *same measured token counts* under varied assumptions (B, BF16→FP8, MFU, PUE), which is the honest form of the §8 table: only the coefficients are assumptions, the tokens are facts.
+  - `N*` is computed when `-runtime` supplies measured per-invocation energies ([H6]); functions where Go is not faster are reported as "never pays back" rather than silently dropped, and functions without a measurement are listed as missing. Until [H6] exists the tool says so instead of inventing numbers.
+  - Models seen in a run log but absent from the config are costed on the default **and named in the report** as an assumption; stages from pre-[H3] records with no model are surfaced as `(unrecorded)`.
+  - A malformed run-log line is a hard error with `file:line`, not a skip: quietly costing fewer translations than actually ran would understate the total.
 
 ### [ ] [H5] Account for or bound the pipeline's local compute energy
 - Category: Evaluation

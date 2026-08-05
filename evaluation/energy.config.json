@@ -1,0 +1,63 @@
+{
+  "_comment": [
+    "Constants for the energy model of EVALUATION.md section 4, in one place so",
+    "the pending GWDG reply and the section 8 sensitivity sweep are config edits",
+    "rather than code edits. Every value replaced by GWDG data should have its",
+    "source changed from 'assumed' to 'gwdg' and be marked as such in the thesis",
+    "constants table.",
+    "Consumed by: go run ./cmd/energy"
+  ],
+
+  "hardware": {
+    "_source": "KISSKI inference platform page + NVIDIA H100 PCIe datasheet (assumed)",
+    "gpus_per_node": 4,
+    "peak_flops_per_gpu": 7.56e14,
+    "model_flop_utilization": 0.4,
+    "hbm_bandwidth_bytes_per_second": 2.0e12,
+    "achieved_bandwidth_fraction": 0.75,
+    "node_power_watts": 2000
+  },
+
+  "models": {
+    "_default": {
+      "_comment": "Applied to any model in the run log without its own entry.",
+      "parameters": 1.23e11,
+      "bytes_per_parameter": 2,
+      "_source": "devstral-2-123b-instruct-2512 model card; BF16 assumed - verify"
+    },
+    "devstral-2-123b-instruct-2512": {
+      "parameters": 1.23e11,
+      "bytes_per_parameter": 2
+    }
+  },
+
+  "serving": {
+    "_comment": "Concurrency is the single largest unknown; see section 8.",
+    "concurrency": 32
+  },
+
+  "facility": {
+    "pue": 1.05,
+    "grid_co2e_grams_per_kwh": 363,
+    "_source": "GWDG press release 4/2021 (Emmy, 2021 - replace with GWDG reply); Umweltbundesamt"
+  },
+
+  "analysis": {
+    "_comment": [
+      "repair_stages lists the pipeline task ids whose energy is repair rather",
+      "than first-pass translation, so the tool can report the repair share",
+      "without hardcoding task names it cannot know.",
+      "They must match the task ids of the pipeline that produced the run log",
+      "(default.json)."
+    ],
+    "repair_stages": ["gollmRecovery", "testRecovery", "testRecoveryBuild"]
+  },
+
+  "sensitivity": {
+    "_comment": "Ranges swept by -sweep to produce the section 8 table.",
+    "concurrency": [8, 16, 32, 64, 128],
+    "bytes_per_parameter": [2, 1],
+    "model_flop_utilization": [0.3, 0.4, 0.5],
+    "pue": [1.03, 1.05, 1.2]
+  }
+}

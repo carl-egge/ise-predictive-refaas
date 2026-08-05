@@ -166,6 +166,12 @@ Range over `B` ∈ [8, 128]: roughly **4–20 Wh per translation**.
 Provisional until GWDG replies. Any value replaced by GWDG data should be
 marked as such in the thesis constants table.
 
+> **These values live in [`energy.config.json`](energy.config.json)**, which
+> `go run ./cmd/energy` reads. The tool has no compiled-in fallback, so that
+> file is the single source of truth: update it when GWDG replies, and every
+> figure recomputes. The table below documents the same values with their
+> provenance for the write-up.
+
 | Parameter | Symbol | Default | Source |
 |---|---|---|---|
 | GPUs per node | `n_gpu` | 4 | KISSKI inference platform page |
@@ -507,7 +513,7 @@ Code-side work, tracked in `TODO.md`:
 | [H1a] | Persist per-test outcome and failure kind, so packaging failures are separable from behavioural ones |
 | [H2] | Persist run metrics to disk as they complete, durable against any error (replaces the JSONL/`CallRecord` item) |
 | [H3] | Record the model per stage, for per-model coefficients |
-| [H4] | Energy-model script over the run logs, constants in one config file |
+| ~~[H4]~~ | ~~Energy-model script over the run logs~~ — **done**: `go run ./cmd/energy runs/*.jsonl`, constants in `evaluation/energy.config.json` |
 | [H5] | Account for or bound local compute energy (build/test/Floci) |
 | [H6] | Go vs. Python runtime measurement harness reusing the fixture payloads |
 | [H7] | Verify token accounting across connector-internal retries |
@@ -522,11 +528,11 @@ Resolved while writing this revision:
 - ~~Add `CallRecord` and JSONL logging~~ — superseded: per-stage aggregates
   are mathematically sufficient (see section 5); the real gaps are [H1]/[H2].
 
-**Analysis** (no code, run after the experiment)
-- [ ] Compute average energy per translation and the per-stage breakdown
-- [ ] Report the share of energy spent on retries / the repair loop
-- [ ] Compute `N*` per function; plot the distribution across all ~100
-- [ ] Build the sensitivity table of Section 8
+**Analysis** (run after the experiment; the tooling exists, the numbers do not)
+- [ ] Compute average energy per translation and the per-stage breakdown — `go run ./cmd/energy runs/*.jsonl`
+- [ ] Report the share of energy spent on retries / the repair loop — same command; keep `analysis.repair_stages` in the config in step with the pipeline's task ids
+- [ ] Compute `N*` per function; plot the distribution across all ~95 — needs [H6]'s measurements, then `-runtime`; `-json` feeds the plot
+- [ ] Build the sensitivity table of Section 8 — `-sweep` emits it directly
 - [ ] Run the method-validation comparison of Section 7
 
 **Thesis text**
