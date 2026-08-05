@@ -68,16 +68,37 @@ type TestCase struct {
 	Env []string `json:"env,omitempty"`
 }
 
+// The outputMode vocabulary. These strings are part of the contract with the
+// external dataset pipeline - renaming one requires a re-vendor there.
+const (
+	OutputModeTolerant = "tolerant"
+	OutputModeStrict   = "strict"
+	OutputModeShape    = "shape"
+)
+
 // CompareMode maps the declarative OutputMode onto the shared comparator's
 // mode, defaulting to the historical tolerant behavior.
 func (tc TestCase) CompareMode() compare.Mode {
 	switch tc.OutputMode {
-	case "strict":
+	case OutputModeStrict:
 		return compare.Strict
-	case "shape":
+	case OutputModeShape:
 		return compare.ShapeOnly
 	default:
 		return compare.Tolerant
+	}
+}
+
+// OutputModeName returns the comparison mode as a stable string, resolving
+// the empty default to "tolerant". Recorded per test outcome so an analysis
+// can exclude the type-only "shape" cases when claiming value-level
+// equivalence, as the dataset advises.
+func (tc TestCase) OutputModeName() string {
+	switch tc.OutputMode {
+	case OutputModeStrict, OutputModeShape, OutputModeTolerant:
+		return tc.OutputMode
+	default:
+		return OutputModeTolerant
 	}
 }
 
@@ -254,7 +275,7 @@ func Parse(name string, raw []byte) (TestCase, error) {
 	if tf.UndeterministicResults {
 		// non-deterministic fixtures are compared by structure and value
 		// types only
-		tc.OutputMode = "shape"
+		tc.OutputMode = OutputModeShape
 	}
 	return tc, nil
 }

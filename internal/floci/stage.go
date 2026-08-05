@@ -83,11 +83,29 @@ func (t *FlociTester) Apply(runner *pipeline.Runner, req *domain.ConversionReque
 
 	failed := 0
 	for _, tc := range cases {
-		if err := t.runCase(ctx, clients, tc); err != nil {
+		kind, err := t.runCase(ctx, clients, tc)
+		if err != nil {
 			failed++
-			log.Errorf("floci: test case %q failed: %v", tc.Name, err)
+			log.Errorf("floci: test case %q failed (%s): %v", tc.Name, kind, err)
 			req.AddError(fmt.Errorf("floci case %q: %w", tc.Name, err))
+			if req.Metrics != nil {
+				req.Metrics.RecordTestOutcome(domain.TestOutcome{
+					Name:       tc.Name,
+					Kind:       kind,
+					OutputMode: tc.OutputModeName(),
+					Route:      routeFlociTester,
+					Detail:     err.Error(),
+				})
+			}
 			continue
+		}
+		if req.Metrics != nil {
+			req.Metrics.RecordTestOutcome(domain.TestOutcome{
+				Name:       tc.Name,
+				Passed:     true,
+				OutputMode: tc.OutputModeName(),
+				Route:      routeFlociTester,
+			})
 		}
 		log.Debugf("floci: test case %q passed", tc.Name)
 	}
@@ -108,11 +126,22 @@ func (t *FlociTester) loadCases(pkg *domain.DeploymentPackage) ([]TestCase, erro
 	return TestCasesFromPackage(pkg)
 }
 
-// runCase executes one test case end to end.
-func (t *FlociTester) runCase(ctx context.Context, clients *Clients, tc TestCase) error {
+// routeFlociTester labels outcomes this stage produced.
+const routeFlociTester = "flociTester"
+
+// runCase executes one test case end to end, returning the kind of failure
+// alongside the error.
+//
+// The kind is what makes a run interpretable afterwards: a failed setup is an
+// infrastructure problem, an unhandled error or an output mismatch is a
+// behavioural divergence, and a failed side-effect assertion says the
+// function responded plausibly but did not leave the AWS state the original
+// produced. Collapsing all four into "failed" would make the results table
+// unreadable.
+func (t *FlociTester) runCase(ctx context.Context, clients *Clients, tc TestCase) (string, error) {
 	for _, action := range tc.Setup {
 		if err := runSetup(ctx, clients, action); err != nil {
-			return err
+			return domain.TestFailureSetup, err
 		}
 	}
 
@@ -122,17 +151,17 @@ func (t *FlociTester) runCase(ctx context.Context, clients *Clients, tc TestCase
 	}
 	resp, err := invoke(ctx, clients, t.functionName, payload)
 	if err != nil {
-		return err
+		return domain.TestFailureError, err
 	}
 
 	if err := matchOutput(tc.ExpectedOutput, resp, tc.CompareMode()); err != nil {
-		return err
+		return domain.TestFailureMismatch, err
 	}
 
 	for _, effect := range tc.SideEffects {
 		if err := runChecker(ctx, clients, effect); err != nil {
-			return err
+			return domain.TestFailureSideEffect, err
 		}
 	}
-	return nil
+	return "", nil
 }

@@ -139,10 +139,61 @@ type Metrics struct {
 	TestCases map[string]bool `json:"test_cases"`
 	Issues    []string        `json:"issues"`
 
+	// TestOutcomes records how each test case ended, in execution order.
+	// TestCases above is the same information reduced to pass/fail and is
+	// kept for existing consumers of /metrics; this is the form the
+	// evaluation needs, because a bare "false" cannot distinguish a genuine
+	// behavioural divergence from an infrastructure failure - a distinction
+	// the dataset's reading guide asks to report separately.
+	TestOutcomes []TestOutcome `json:"test_outcomes,omitempty"`
+
 	// PerTask breaks the run down by pipeline task id: attempts, failures,
 	// wall-clock time and LLM token spend per stage. This is what makes
 	// "which stage exhausts its retries" and "tokens per stage" answerable.
 	PerTask map[string]*TaskMetrics `json:"per_task,omitempty"`
+}
+
+// TestOutcome is the per-case result the evaluation reads ([H1a]).
+//
+// The dataset's reading guide interprets each failure kind differently - an
+// output mismatch is a real behavioural divergence, a failed side-effect
+// assertion says the AWS state diverged, and a setup failure or a packaging
+// problem is infrastructure that must be reported apart from translation
+// quality. The pipeline already classifies all of these while repairing
+// ([C1]); recording the classification here is what stops it being flattened
+// back into a bare pass/fail by the time a run is analysed.
+type TestOutcome struct {
+	Name   string `json:"name"`
+	Passed bool   `json:"passed"`
+	// Kind is one of the TestFailure* constants; empty when the case passed.
+	Kind string `json:"kind,omitempty"`
+	// OutputMode is the comparison the case was judged under. Cases in
+	// "shape" mode compare types only, so they cannot evidence value-level
+	// equivalence and the dataset advises excluding them from such claims -
+	// which is only possible if the mode is recorded per case.
+	OutputMode string `json:"output_mode,omitempty"`
+	// Route names the harness that produced this outcome ("goTester" or
+	// "flociTester"), since the two validate different things.
+	Route string `json:"route,omitempty"`
+	// Detail is a short human-readable reason, truncated.
+	Detail string `json:"detail,omitempty"`
+}
+
+// maxOutcomeDetail keeps a run-log line readable; the full evidence lives in
+// TestingError.Failures and the chatlogs.
+const maxOutcomeDetail = 500
+
+// RecordTestOutcome appends a per-case result and keeps the legacy
+// TestCases map in sync, so existing /metrics consumers keep working.
+func (m *Metrics) RecordTestOutcome(o TestOutcome) {
+	if len(o.Detail) > maxOutcomeDetail {
+		o.Detail = o.Detail[:maxOutcomeDetail] + "... [truncated]"
+	}
+	m.TestOutcomes = append(m.TestOutcomes, o)
+	if m.TestCases == nil {
+		m.TestCases = make(map[string]bool)
+	}
+	m.TestCases[o.Name] = o.Passed
 }
 
 // TaskMetrics aggregates one pipeline task's activity across a request.

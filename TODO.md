@@ -74,7 +74,7 @@
 
 **H. Evaluation** (energy study — see [evaluation/EVALUATION.md](evaluation/EVALUATION.md) and [evaluation/EVALUATION_DATASET.md](evaluation/EVALUATION_DATASET.md))
 - [x] [H1] Ingest `meta.json` and record function identity + grouping metadata per job **(P0 — blocks per-function `N*` and all per-bucket reporting)**
-- [ ] [H1a] Emit a per-function result summary (outcome + failure kind) alongside the metrics
+- [x] [H1a] Emit a per-function result summary (outcome + failure kind) alongside the metrics
 - [x] [H2] Persist run metrics to disk as jobs complete **(P0 — a batch currently survives neither a crash, a restart, nor a `/reconfigure`)**
 - [x] [H3] Record the model per stage for per-model energy coefficients
 - [ ] [H4] Energy-model script over the run logs, constants in one config file
@@ -679,6 +679,20 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 > items below are the gaps that remain. Analysis and thesis-writing tasks
 > stay in EVALUATION.md — only code-side work is tracked here.
 >
+> **Self-contained run-log records** (maintainer note, 2026-07-05): the `meta.json` information should
+> already sit on the metrics at upload time, so the final JSONL run log carries everything needed
+> for analysis without joining against the artifacts. **This is already how [H1] works** —
+> `pipeline.MakeConversionRequest` resolves `FunctionID` and attaches the parsed `Meta` (including
+> the verbatim `Raw` bytes) to `Metrics` the moment the upload is read, and [H2]'s job record embeds
+> that whole `Metrics` object. A run-log line therefore already contains function id, bucket, cc,
+> lloc, aws, imports, description and provenance alongside the per-stage tokens; `runlog_test.go`
+> asserts the grouping metadata survives into the record. Two caveats worth remembering when
+> analysing: (a) `Metrics.Meta` is nil for uploads without a `meta.json` (only benchmark mode
+> requires one — [C6]), and (b) **only completed jobs are persisted**, so functions that never
+> built successfully are absent from the run log entirely and their pass-rate denominator has to
+> come from `/metrics` or the logs. If that denominator matters for the thesis numbers, revisit the
+> completed-only rule in [H2] before the batch run rather than after.
+>
 > **Dataset** ([evaluation/EVALUATION_DATASET.md](evaluation/EVALUATION_DATASET.md), from the
 > `ise-dataset-pipeline` repo): `evaluation_set` = 95 functions / 392 tests, expectations
 > *recorded from the real Python function* and validated over 10 deterministic runs;
@@ -701,13 +715,18 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local | Effort: S–M | Priority: **P0** (blocks the primary result and every grouped result)
 - Status: **Implemented 2026-07-05.** `domain.FunctionMeta` + `ParseFunctionMeta` (new `internal/domain/meta.go`) model the documented fields and keep the verbatim bytes in `Raw`; `inputhandler.ReadFromReader` parses an archive-root `meta.json` (checked *after* the `test/` branch, so `test/meta.json` stays a fixture) and errors on a present-but-corrupt one. `domain.ResolveFunctionID` picks identity in the agreed order — `meta.Name`/`meta.ID` → artifact filename stem → `job-<uuid8>` — and `pipeline.MakeConversionRequest(pkg, sourceName)` (signature extended; both call sites updated) records `FunctionID` and `Meta` on `Metrics`, so `/metrics` and the run log are both attributable. Robustness rule worth keeping: invalid JSON fails the upload, but a field whose *type* we guessed wrong does not — typed fields degrade and `Raw` still carries everything, since the dataset owns that schema. Tests: `internal/domain/meta_test.go`, four new cases in `internal/inputhandler/reader_test.go`.
 
-### [ ] [H1a] Emit a per-function result summary alongside the energy metrics
+### [x] [H1a] Emit a per-function result summary alongside the energy metrics
 - Category: Evaluation
 - Affected component(s): the [H2] run log; `internal/domain` (`Metrics.TestCases`, `BuildError`, `TestError`, `Issues` already exist)
 - Problem / current state: the dataset's reading guide (EVALUATION_DATASET.md §5) distinguishes outcomes that the current metrics blur together: a build/packaging failure ("report separately"), an output mismatch, an unhandled error, and a failed side-effect assertion are all just counters plus free-text `Issues` today. `TestCases map[string]bool` gives per-test pass/fail but not *why*, even though the [C1] failure evidence (`domain.TestFailure.Kind`: mismatch / execution error / timeout / invalid fixture) already classifies it.
 - Proposed change: persist the per-test outcome *with its failure kind* in the run log, and mark the 27 `shape`-mode tests (14 functions) distinctly so value-level equivalence claims can exclude them as the dataset advises. No new measurement — just don't discard the classification that [C1] already produces.
 - Why this improves the evaluation: it separates "translation defect" from "infrastructure/packaging failure", which the dataset explicitly asks to report apart; without it a Floci outage and a genuine semantic divergence are indistinguishable in the results table. Based on reasoning; no external source needed.
 - Architecture impact: Local | Effort: S | Priority: P1
+- Status: **Implemented 2026-07-05.** `domain.TestOutcome` (name, passed, kind, output mode, route, truncated detail) is appended per case via `Metrics.RecordTestOutcome`, which also keeps the legacy `TestCases map[string]bool` in sync so existing `/metrics` consumers and the archived `examples/metrics/*.json` shape keep working. Two failure kinds were added for the distinctions the dataset's reading guide draws: `TestFailureSetup` (infrastructure — the case never ran) and `TestFailureSideEffect` (the function responded plausibly but did not leave the AWS state the original produced).
+  - `goTester` records pass and fail alike, reusing the classification [C1] already produces; `flociTester` previously recorded **nothing at all**, and now classifies per phase — its `runCase` returns the failure kind alongside the error (setup / execution error / output mismatch / side-effect mismatch).
+  - Each outcome carries `Route` (`goTester` vs `flociTester`), which matters now that [C10] routes per job, and `OutputMode` normalized via the new `fixture.TestCase.OutputModeName()` — so the 27 `shape`-mode tests can be excluded when claiming value-level equivalence, as the dataset advises. The `outputMode` vocabulary also got named constants (`OutputModeTolerant`/`Strict`/`Shape`) instead of literals scattered across three call sites, since those strings are a contract with the dataset pipeline.
+  - Everything flows into [H2]'s run log unchanged, because the job record embeds `Metrics`; `runlog_test.go` now asserts the outcomes, their classification and the per-stage model all survive into the archived line.
+- Not addressed (needs a decision, see the Section H preamble): a function that never builds is not `Completed`, so it is absent from the run log entirely — the "whole function fails to build → report separately" row of the dataset guide has to be sourced from `/metrics` or the logs unless the completed-only rule changes.
 
 ### [x] [H2] Persist run metrics to disk as jobs complete (never lose a batch to an error)
 - Category: Evaluation

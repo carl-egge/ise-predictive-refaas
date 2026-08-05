@@ -13,6 +13,14 @@ const (
 	// TestFailureTimeout: the program exceeded the per-test time limit
 	// (typically an infinite loop or a blocking call without a timeout).
 	TestFailureTimeout = "test timeout"
+	// TestFailureSetup: a declarative setup action could not be applied, so
+	// the case never ran. An infrastructure problem, not a translation
+	// defect - it must not be counted as one.
+	TestFailureSetup = "setup failed"
+	// TestFailureSideEffect: the function responded acceptably but did not
+	// leave the AWS state the original produced. Only the Floci route can
+	// observe this.
+	TestFailureSideEffect = "side-effect mismatch"
 )
 
 // TestFailure captures the evidence of one failing test case in the form a

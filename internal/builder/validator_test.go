@@ -179,6 +179,73 @@ func TestGoPackageTesterRequiresWorkingDir(t *testing.T) {
 	}
 }
 
+// TestGoPackageTesterRecordsOutcomes guards [H1a]: each case's result is
+// persisted with the classification the repair loop already produces, plus
+// the comparison mode - a "shape" case compares types only and so cannot
+// evidence value-level equivalence, which the analysis has to be able to see.
+func TestGoPackageTesterRecordsOutcomes(t *testing.T) {
+	dir := writeRunnablePackage(t, `package main
+
+import "fmt"
+
+func main() { fmt.Println(`+"`"+`{"foo": 1}`+"`"+`) }
+`)
+	buildFn(t, dir)
+	runner := pipeline.NewRunner(context.Background(), nil, nil)
+	runner.SetWorkingDir(dir)
+	tester := NewGoPackageTester(map[string]interface{}{})
+
+	req := &domain.ConversionRequest{
+		Metrics: &domain.Metrics{TestCases: map[string]bool{}},
+		WorkingPackage: &domain.DeploymentPackage{
+			RootFile: "package main",
+			TestFiles: map[string]string{
+				// passes: the shape matches, values are ignored
+				"test/t1.json": `{"name":"shape-pass","payload":{},"expectedOutput":{"foo":99},"outputMode":"shape"}`,
+				// fails: value mismatch under the default tolerant mode
+				"test/t2.json": `{"name":"value-fail","payload":{},"expectedOutput":{"foo":2}}`,
+				// fails to parse at all
+				"test/t3.json": `{not json`,
+			},
+		},
+	}
+
+	if err := tester.Apply(runner, req); err == nil {
+		t.Fatal("expected the run to fail")
+	}
+
+	byName := map[string]domain.TestOutcome{}
+	for _, o := range req.Metrics.TestOutcomes {
+		byName[o.Name] = o
+	}
+	if len(byName) != 3 {
+		t.Fatalf("expected an outcome per fixture, got %+v", req.Metrics.TestOutcomes)
+	}
+
+	if pass := byName["shape-pass"]; !pass.Passed || pass.OutputMode != "shape" {
+		t.Errorf("shape case outcome = %+v, want passed with its mode recorded", pass)
+	}
+	if fail := byName["value-fail"]; fail.Passed || fail.Kind != domain.TestFailureMismatch {
+		t.Errorf("value case outcome = %+v, want a mismatch failure", fail)
+	} else if fail.OutputMode != "tolerant" {
+		t.Errorf("default mode should be recorded explicitly, got %q", fail.OutputMode)
+	} else if fail.Detail == "" {
+		t.Error("a mismatch should carry the divergence detail")
+	}
+	if broken := byName["test/t3.json"]; broken.Kind != domain.TestFailureFixture {
+		t.Errorf("unparseable fixture outcome = %+v, want an invalid-fixture kind", broken)
+	}
+	for _, o := range req.Metrics.TestOutcomes {
+		if o.Route != routeGoTester {
+			t.Errorf("outcome %q not labelled with its route: %+v", o.Name, o)
+		}
+	}
+	// the legacy compact view stays correct
+	if !req.Metrics.TestCases["shape-pass"] || req.Metrics.TestCases["value-fail"] {
+		t.Errorf("legacy TestCases map out of sync: %v", req.Metrics.TestCases)
+	}
+}
+
 // TestGoPackageTesterCollectsCrashEvidence verifies a non-zero exit is
 // reported as an execution error with the captured stderr.
 func TestGoPackageTesterCollectsCrashEvidence(t *testing.T) {

@@ -59,7 +59,11 @@ func completedJob(functionID string) *domain.ConversionRequest {
 			ConversionEvalTokenCount:   340,
 			Meta:                       &domain.FunctionMeta{Bucket: "C", CC: 14, AWS: true},
 			PerTask: map[string]*domain.TaskMetrics{
-				"convert": {Executions: 1, LLMCalls: 1, PromptTokens: 1200, EvalTokens: 340},
+				"convert": {Executions: 1, LLMCalls: 1, PromptTokens: 1200, EvalTokens: 340, Model: "devstral-2-123b"},
+			},
+			TestOutcomes: []domain.TestOutcome{
+				{Name: "t1", Passed: true, OutputMode: "tolerant", Route: "goTester"},
+				{Name: "t2", Kind: domain.TestFailureSideEffect, OutputMode: "shape", Route: "flociTester", Detail: "object missing"},
 			},
 		},
 	}
@@ -97,6 +101,18 @@ func TestRunLogRecordsCompletedJob(t *testing.T) {
 	}
 	if rec.Metrics.Meta == nil || rec.Metrics.Meta.Bucket != "C" {
 		t.Errorf("grouping metadata missing from the archived record: %+v", rec.Metrics.Meta)
+	}
+	// [H1a]: per-case outcomes must survive into the artifact with their
+	// failure kind and comparison mode, or a results table cannot separate a
+	// behavioural divergence from an infrastructure failure afterwards.
+	if len(rec.Metrics.TestOutcomes) != 2 {
+		t.Fatalf("per-test outcomes missing from the archived record: %+v", rec.Metrics.TestOutcomes)
+	}
+	if got := rec.Metrics.TestOutcomes[1]; got.Kind != domain.TestFailureSideEffect || got.OutputMode != "shape" || got.Route != "flociTester" {
+		t.Errorf("outcome classification not preserved: %+v", got)
+	}
+	if rec.Metrics.PerTask["convert"].Model != "devstral-2-123b" {
+		t.Errorf("per-stage model missing from the archived record: %+v", rec.Metrics.PerTask["convert"])
 	}
 	if rec.Timestamp.IsZero() || rec.Timestamp.Location() != time.UTC {
 		t.Errorf("timestamps must be set and in UTC, got %v", rec.Timestamp)

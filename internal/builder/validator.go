@@ -97,18 +97,20 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 		tc, err := fixture.Parse(fileName, []byte(pkg.TestFiles[fileName]))
 		if err != nil {
 			log.Debugf("failed to read test %s: %+v", fileName, err)
-			if request.Metrics != nil {
-				request.Metrics.TestCases[fileName] = false
-			}
 			failures = append(failures, domain.TestFailure{
 				Name:   fileName,
 				Kind:   domain.TestFailureFixture,
 				Stderr: truncateForFeedback(err.Error()),
 			})
+			if request.Metrics != nil {
+				request.Metrics.RecordTestOutcome(domain.TestOutcome{
+					Name:   fileName,
+					Kind:   domain.TestFailureFixture,
+					Route:  routeGoTester,
+					Detail: err.Error(),
+				})
+			}
 			continue
-		}
-		if request.Metrics != nil {
-			request.Metrics.TestCases[tc.Name] = false
 		}
 		if tc.HasSideEffects() {
 			log.Warnf("test case %q declares setup/sideEffects, which goTester cannot execute; only the payload/expectedOutput half is validated here (use the flociTester stage for side-effect assertions)", tc.Name)
@@ -116,11 +118,25 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 
 		if failure := cc.doTest(ctx, runner.WorkingDir(), tc, pkg.Env, awsEndpoint, awsRegion); failure != nil {
 			failures = append(failures, *failure)
+			if request.Metrics != nil {
+				request.Metrics.RecordTestOutcome(domain.TestOutcome{
+					Name:       tc.Name,
+					Kind:       failure.Kind,
+					OutputMode: tc.OutputModeName(),
+					Route:      routeGoTester,
+					Detail:     outcomeDetail(*failure),
+				})
+			}
 			log.Debugf("test %s failed (%s)", tc.Name, failure.Kind)
 			continue
 		}
 		if request.Metrics != nil {
-			request.Metrics.TestCases[tc.Name] = true
+			request.Metrics.RecordTestOutcome(domain.TestOutcome{
+				Name:       tc.Name,
+				Passed:     true,
+				OutputMode: tc.OutputModeName(),
+				Route:      routeGoTester,
+			})
 		}
 		log.Debugf("test %s succeeded ", tc.Name)
 	}
@@ -257,6 +273,20 @@ func validateHarnessOutput(expected json.RawMessage, stdout string, mode compare
 		return false, err.Error()
 	}
 	return true, ""
+}
+
+// routeGoTester labels outcomes this stage produced, so an analysis can tell
+// which harness validated a case (the two check different things).
+const routeGoTester = "goTester"
+
+// outcomeDetail picks the most useful one-line reason out of a failure: the
+// comparator's divergence path when there is one, otherwise the captured
+// stderr.
+func outcomeDetail(f domain.TestFailure) string {
+	if f.Detail != "" {
+		return f.Detail
+	}
+	return f.Stderr
 }
 
 // fileExists reports whether path exists as a regular file.
