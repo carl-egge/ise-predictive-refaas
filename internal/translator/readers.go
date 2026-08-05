@@ -221,7 +221,9 @@ func (gr GoJsonOllamaReader) MakeDeploymentFile(response string, original *domai
 	dp.BuildFiles = make(map[string]string)
 	for name, content := range files {
 		if strings.HasSuffix(name, ".go") && content != "" {
-			dp.BuildFiles[name] = content
+			// same deterministic repairs as the root file: an extra source
+			// file needs a package clause and valid imports just as much
+			dp.BuildFiles[name] = postProcessGoSource(content)
 			continue
 		}
 		log.Debugf("dropping unexpected response key %q (not a Go source file)", name)
@@ -237,7 +239,14 @@ func (gr GoJsonOllamaReader) MakeDeploymentFile(response string, original *domai
 }
 
 // prepareGoRootFile removes a main function when necessary so the converted
-// code can be used as a library entrypoint.
+// code can be used as a library entrypoint, then applies the deterministic
+// Go repairs of [C4] (package clause, imports) via postProcessGoSource.
+//
+// This lives in the reader rather than in a separate pipeline task so every
+// Go-producing stage - coder, coder2, fixer, realign - gets it automatically:
+// the fixer's own output can just as easily carry an unused import as the
+// translator's, and a stage that has to be wired into each config to help
+// would eventually be forgotten in one.
 func (gr GoJsonOllamaReader) prepareGoRootFile(file string) (string, error) {
 	if file == "" {
 		return "", fmt.Errorf("file is empty")
@@ -246,10 +255,12 @@ func (gr GoJsonOllamaReader) prepareGoRootFile(file string) (string, error) {
 	if gr.containsGoMainMethod(file) {
 		// log.Debugf("file %s contains main method", file)
 		log.Debugf("the existing main() method will be removed from the file")
-		return gr.removeGoMainMethod(file), nil
+		// goimports below also cleans up whatever imports that main() was
+		// the only user of.
+		return postProcessGoSource(gr.removeGoMainMethod(file)), nil
 	}
 
-	return file, nil
+	return postProcessGoSource(file), nil
 }
 
 func getContentByNode(content string, decl ast.Decl) string {

@@ -34,12 +34,12 @@
 - [x] [C1] Structured per-test failure evidence into the repair/align loop **(P0)**
 - [x] [C2] Fix the dev pipeline's test-failure dead-end (keep it short)
 - [x] [C3] Deterministic `go.mod`; LLM returns only `main.go`
-- [ ] [C4] Deterministic Go post-processing gate (package clause, parse, goimports)
-- [ ] [C5] Detect repair-loop stagnation and change strategy
+- [x] [C4] Deterministic Go post-processing (package clause, goimports)
+- [ ] [C5] Detect repair-loop stagnation (narrowed — see item)
 - [x] [C6] Validate uploads and fixtures before spending LLM tokens
 - [x] [C7] Deterministic and complete test context for prompts
 - [ ] [C8] Python feature pre-scan feeding the translate prompt
-- [ ] [C9] Support multi-file Python inputs (currently rejected at upload)
+- [~] [C9] ~~Support multi-file Python inputs~~ — **dropped**, single-file is the contract
 - [ ] [C10] Unified fixture schema + per-job validation routing (goTester vs. flociTester)
 - [ ] [C11] Prevent AWS leakage: always resolve to the Floci harness
 - [x] [C12] Unify the two test JSON shapes into one canonical fixture schema
@@ -366,21 +366,25 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local | Effort: S–M | Priority: **P0** (explicitly re-confirmed as highly desirable by maintainer, 2026-07-04)
 - Status: **Implemented 2026-07-04.** (1) `GoJsonOllamaReader` now discards `go.mod`/`go.sum` and every non-`.go` response key (absorbing [A15]'s pruning) and always sets `BuildCmd = ["go mod init example.com", "go mod tidy", "go build -o fn ."]`; additional non-empty `.go` sources are kept. (2) All LLM stage factories default to closed single-file `output_keys` (`main.go` for coder/coder2/fixer/realign, `main.py` for cleaner; still overridable per task), and all three connectors now emit the JSON Schema `required` list for non-nullable fields (`OutputSchema.RequiredKeys`) — so an empty `{}` no longer satisfies the schema. (3) All four active prompts (`1-stage-translate-1/-2.md`, `2-stage-repair.md`, `3-stage-align.md`) no longer show `go.mod` examples and state that dependencies are resolved automatically from imports. [A4]'s `isGoModFailure` build fallback is retained as defense-in-depth. Regression tests: `readers_test.go` (reader pruning + BuildCmd + factory schema defaults), `outputschema_test.go` (required keys). Note: `builder.go`'s injected `test_handler.go` still overwrites any same-named LLM key, unchanged.
 
-### [ ] [C4] Deterministic Go post-processing gate between `coder` and `goBuilder`
+### [x] [C4] Deterministic Go post-processing between `coder` and `goBuilder`
 - Category: Feature
 - Affected component(s): new converter (registered via `RegisterConverterFactory`) or extension of `GoJsonOllamaReader.prepareGoRootFile`
 - Problem / current state: Observed failures include `expected 'package', found 'import'` (LLM omitted the package clause) and missing/unused imports. Each such case costs a full build cycle plus an LLM fixer round-trip.
 - Proposed change: After parsing the LLM response: (1) prepend `package main` if the file lacks a package clause; (2) run `go/parser.ParseFile` and, on syntax error, fail the *convert* task's validation (retry re-samples the translator); (3) run `golang.org/x/tools/imports.Process` (goimports as a library) before the first build.
 - Why: Replaces LLM round-trips with exact, deterministic fixes for the two most mechanical failure classes; `imports.Process` requires no model capability — the key property for small-model deployments.
 - Architecture impact: Local (one new converter + one dependency) | Effort: M | Priority: P1
+- Status: **Implemented 2026-07-05**, with point (2) of the proposal deliberately **inverted** on maintainer instruction. `postProcessGoSource` (`internal/translator/goformat.go`) (a) inserts a missing `package main` — and renames a foreign package, which otherwise breaks the build as "found packages X and main" against the harness — and (b) runs goimports (`golang.org/x/tools/imports.Process`), which adds missing stdlib imports *and* removes unused ones (an unused import is a compile error in Go, so a single stray one was a guaranteed build failure). It gofmts too, so a later repair round sees normalized code. Dependency pinned to the `x/tools v0.30.0` already present as an indirect dep (plus `x/mod`): 6 lines of go.mod/go.sum, no transitive upgrades.
+- **Syntax errors do not re-sample the translator** (maintainer decision): source that still doesn't parse is returned *unchanged* and the stage does **not** fail. Resampling a broken generation tends to produce a differently broken one; instead the code proceeds to `goBuilder`, whose compiler diagnostic is both more precise than `go/parser`'s and already routed to the fixer as `{{ .issue }}` via [D3]'s `extractDiagnostics` — so no new plumbing was needed for that. The package clause is still added even to unparseable source, so the compiler reports the *real* syntax error instead of "expected 'package'".
+- Placement: in the reader (`GoJsonOllamaReader.prepareGoRootFile`, plus extra `.go` build files) rather than as a separate pipeline task, so every Go-producing stage — `coder`, `coder2`, `fixer`, `realign` — gets it automatically; the fixer's own output can carry an unused import just as easily as the translator's, and a task that must be wired into every config would eventually be missing from one. Tests: `internal/translator/goformat_test.go`.
 
-### [ ] [C5] Detect repair-loop stagnation and change strategy instead of re-spending tokens
+### [ ] [C5] Detect repair-loop stagnation (narrowed after [E3]; not superseded by it)
 - Category: Feature
 - Affected component(s): `internal/pipeline/pipeline.go` (retry loop) or `GolangBuilder`
 - Problem / current state: `metrics-20260701122938.json` shows the same `go.mod` error verbatim four times: the fixer's output didn't change the failing artifact, and the pipeline paid for each identical attempt.
-- Proposed change: Compare the current failure text with the previous attempt's; on an exact repeat, either abort early with a "no progress" error, or set `req.Metadata["stagnant"]` that the fixer prompt surfaces, and/or bump sampling temperature ([E3]).
+- Proposed change: Compare the current failure text with the previous attempt's; on an exact repeat, either abort early with a "no progress" error, or set `req.Metadata["stagnant"]` that the fixer prompt surfaces.
 - Why: Reflexion-style loops only help when feedback changes behavior (Shinn et al., *Reflexion*, arXiv:2303.11366); detecting identical outcomes converts guaranteed-wasted attempts into an early exit or a differentiated retry.
-- Architecture impact: Local | Effort: S–M | Priority: P1
+- Architecture impact: Local | Effort: S–M | Priority: P2 (downgraded — see below)
+- **Evaluated against [E3] (2026-07-05): keep, but narrowed.** [E3] varies sampling on *resample-style retries of the same task* (`CurrentAttempt > 1`), which does cover the `cleaner`/`coder` case this item also addressed — so the "bump sampling temperature" sub-item is now redundant and has been removed from the proposal above. It does **not** cover the loop the recorded waste actually came from: in a builder⇄fixer cycle the recovery task is invoked afresh per builder retry and, because `executeTask` breaks out of its loop *without* incrementing `RetryCount` on success, a recovery task that keeps succeeding always reports `CurrentAttempt == 1` — so E3's bump never fires for it. Two further caveats: `retry_temperature` is **opt-in and set in no shipped config** (`default.json`, `default.yaml` and `scripts/summary-pipeline.json` all lack it), so E3 is inert by default; and E3 makes attempts *differ*, it cannot stop a doomed loop early, which is the token-saving half of this item. Priority dropped to P2 because [C3] and [C4] eliminated the deterministic failure classes behind the observed instance — measure first ([B5] + [H2] now record per-stage failures durably) and implement only if a stagnant loop still shows up in the data.
 
 ### [x] [C6] Validate uploads and fixtures before spending any LLM tokens
 - Category: Feature
@@ -408,13 +412,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Injecting explicit API-mapping hints removes the hardest reasoning step (library equivalence) from the model's job — the "more structure, less reliance on large-model reasoning" tradeoff this pipeline needs at 30B scale.
 - Architecture impact: Local (fits the registry architecture by design) | Effort: M | Priority: P1
 
-### [ ] [C9] Support multi-file Python inputs (currently rejected at upload)
+### [~] [C9] Support multi-file Python inputs — DROPPED
 - Category: Feature
 - Affected component(s): `internal/inputhandler/reader.go`, prompts, `codeBlockGenerator`
 - Problem / current state: Uploads with more than one `.py`/`.go` root file are now **rejected with a clear error** ([A17], maintainer decision 2026-07-04) — the silent last-wins mistranslation mode is gone. What remains is actual *support*: scraped AWS function sets will contain multi-module functions that currently cannot be translated at all.
 - Proposed change: When needed (triggered by the scraped test sets), replace the rejection with minimal support: pick the root deterministically (the handler-containing file — `def lambda_handler`/`def handler` — else `main.py`, else lexically first), collect the remaining `.py` files into `BuildFiles` so they flow into `{{ .code }}`, and fix `codeBlockGenerator`'s fence language for non-Go build files (it currently hardcodes ```go).
 - Why: Expands the input domain the pipeline can be *correct* on; the fail-fast rejection already protects correctness, so this item is purely about coverage.
 - Architecture impact: Local | Effort: M | Priority: P2
+- **DROPPED 2026-07-05 (maintainer decision): will not be implemented.** Single-file input is the contract — the dataset pipeline already inlines repo-local imports, so every artifact ships one self-contained `main.py` (EVALUATION_DATASET.md §2). The [A17] rejection stays as the guard: a multi-source upload fails fast with a clear error rather than being silently mistranslated from a fragment. Nothing further to do here; leaving the item for the record.
 
 ### [ ] [C10] Unified test-fixture schema and per-job validation routing (goTester vs. flociTester)
 - Category: Feature
