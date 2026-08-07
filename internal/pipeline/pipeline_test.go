@@ -287,6 +287,64 @@ func TestExecuteTaskAbortsWhenCancelled(t *testing.T) {
 	}
 }
 
+// TestExecuteTaskSharedRecoveryGetsFreshBudgetPerInvocation pins a
+// non-obvious, easy-to-"fix"-into-a-bug property of the retry engine,
+// prompted by a real run (evaluation_set/f6 against
+// scripts/chatai-devstral-summary.json) that repeatedly logged
+// "running task (testRecovery) with (1 / 3) executions": a task whose
+// Execute succeeds via `break` never advances its own RetryCount (`break`
+// skips a for-loop's post-statement, unlike `continue`), so a task with no
+// Validation step keeps a fresh MaxRetryCount budget every time it is
+// invoked afresh - e.g. as a shared OnFailure target reached from a parent's
+// own repeated retries, exactly like testRecovery/gollmRecovery in
+// default.json.
+//
+// This is intentional, not a bug: default.json's "gollmRecovery" is shared
+// as the recovery target of BOTH "builder" and "testRecoveryBuild". If
+// RetryCount instead accumulated as a lifetime total across the whole
+// conversion, builder's own failures could exhaust gollmRecovery's budget
+// before testRecoveryBuild ever got a turn. The outer parent's own
+// MaxRetryCount (goTester's 5 in the real config) is what actually bounds
+// the total cost - see TODO.md [C5] for the (separate, still-open) concern
+// that this bound can still mean a lot of wasted LLM calls when recovery
+// keeps "succeeding" locally without fixing the real failure.
+func TestExecuteTaskSharedRecoveryGetsFreshBudgetPerInvocation(t *testing.T) {
+	recoveryRuns := 0
+	recovery := &funcConverter{fn: func(*Runner, *domain.ConversionRequest) error {
+		recoveryRuns++
+		return nil // "succeeds" every time, like realign producing buildable code
+	}}
+	recoveryTask := &ConversionTask{ID: "recover", Execute: recovery, MaxRetryCount: 3}
+
+	mainRuns := 0
+	failing := &funcConverter{fn: func(*Runner, *domain.ConversionRequest) error {
+		mainRuns++
+		return errors.New("test keeps failing") // recovery never actually fixes it
+	}}
+	main := &ConversionTask{ID: "main", Execute: failing, MaxRetryCount: 5, OnFailure: recoveryTask}
+
+	p := NewPipeline(main)
+	runner := NewRunner(context.Background(), p, nil)
+
+	err := p.Execute(runner, &domain.ConversionRequest{})
+	if err == nil {
+		t.Fatal("expected the task to fail once its own budget is exhausted")
+	}
+	// bounded by main's own MaxRetryCount, not infinite
+	if mainRuns != 5 {
+		t.Errorf("main ran %d times, want exactly 5 (its own MaxRetryCount)", mainRuns)
+	}
+	// recovery invoked once per main failure that still has budget left
+	// (main's last, 5th attempt fails without triggering another recovery
+	// call - see executeTask's `task.RetryCount+1 < task.MaxRetryCount` guard)
+	if recoveryRuns != 4 {
+		t.Errorf("recovery ran %d times, want 4 (once per main retry, not blocked by its own maxRetryCount=3 despite running more than 3 times total)", recoveryRuns)
+	}
+	if recoveryTask.RetryCount != 0 {
+		t.Errorf("recovery's own RetryCount = %d, want 0 (break-on-success never advances it, which is what lets a shared recovery target keep getting invoked)", recoveryTask.RetryCount)
+	}
+}
+
 // TestExecuteTaskRunsRecoveryForOrdinaryErrors is the counterpart: a normal
 // failure (e.g. a build error) still routes through the recovery task.
 func TestExecuteTaskRunsRecoveryForOrdinaryErrors(t *testing.T) {

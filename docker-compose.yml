@@ -21,6 +21,10 @@ services:
       - ./data:/app/data
       # Example Floci test cases referenced by examples/floci/pipeline-bundled.json.
       - ./examples:/app/examples
+      # Append-only JSONL run log of completed jobs (internal/service/runlog.go).
+      # Without this mount it's written inside the container's own ephemeral
+      # filesystem at /app/runs and is invisible on the host / lost on recreate.
+      - ./runs:/app/runs
     depends_on:
       - ollama
     networks:

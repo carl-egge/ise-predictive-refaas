@@ -3,6 +3,8 @@ chatlogs/
 /data/
 data
 /data/**
+/evaluation/evaluation_set/*
+/evaluation/function_set/*
 /examples/output/*
 /examples/metrics/*
 /docs/writing/*
