@@ -18,10 +18,14 @@ And have already produced the **current** Go version:
 {{ .failures }}
 
 # Task
-Fix the Go code so that each listed input produces exactly the expected output. Do not change behavior for inputs that are not listed. Pay attention to the exact response structure: status codes, field names, and the body being a JSON-encoded string.{{ else }}The current Go version failed testing against the original: {{ .issue }}
+{{ if .stagnant }}Your previous fix did not change the outcome — the exact same test failures occurred again. Do not repeat the same change. Reconsider your assumptions about the logic involved, and try a genuinely different fix this time.
+
+{{ end }}Fix the Go code so that each listed input produces exactly the expected output. Do not change behavior for inputs that are not listed. Pay attention to the exact response structure: status codes, field names, and the body being a JSON-encoded string.{{ else }}The current Go version failed testing against the original: {{ .issue }}
 
 # Task
-Compare both versions and correct any behavioral difference so that the Go code produces the same output as the Python original for the same input. Pay attention to the exact response structure: status codes, field names, and the body being a JSON-encoded string.{{ end }}
+{{ if .stagnant }}Your previous fix did not change the outcome — the exact same failure occurred again. Do not repeat the same change. Reconsider your assumptions about the logic involved, and try a genuinely different fix this time.
+
+{{ end }}Compare both versions and correct any behavioral difference so that the Go code produces the same output as the Python original for the same input. Pay attention to the exact response structure: status codes, field names, and the body being a JSON-encoded string.{{ end }}
 
 # Format Rules
 *Critical*:

@@ -246,6 +246,65 @@ func TestAlignPromptRendersFailureEvidence(t *testing.T) {
 	}
 }
 
+// TestRecoveryPromptsRenderStagnantNudge guards the prompt-facing half of
+// [C5]: both recovery-target prompts (fixer, align) must surface a
+// "try something different" instruction when {{ .stagnant }} is set, in
+// both branches of align's failures/issue conditional, and must stay silent
+// when it isn't set.
+func TestRecoveryPromptsRenderStagnantNudge(t *testing.T) {
+	fixer, ok := NewRePromptConverter(map[string]interface{}{"reader": "go"}).(*LLMConverter)
+	if !ok {
+		t.Fatal("NewRePromptConverter did not return an LLMConverter")
+	}
+	align, ok := NewAlignmentConverter(map[string]interface{}{"reader": "go"}).(*LLMConverter)
+	if !ok {
+		t.Fatal("NewAlignmentConverter did not return an LLMConverter")
+	}
+
+	const nudge = "did not change the outcome"
+
+	baseVars := func(stagnant bool) map[string]interface{} {
+		v := map[string]interface{}{
+			"code": "package main", "issue": "build failed", "original": "def handler(): ...",
+			"failures": "", "input": "", "output": "",
+		}
+		if stagnant {
+			v["stagnant"] = "true"
+		}
+		return v
+	}
+
+	render := func(t *testing.T, tmpl *LLMConverter, vars map[string]interface{}) string {
+		t.Helper()
+		var buf bytes.Buffer
+		if err := tmpl.template.Execute(&buf, vars); err != nil {
+			t.Fatalf("template execute: %v", err)
+		}
+		return buf.String()
+	}
+
+	if out := render(t, fixer, baseVars(false)); strings.Contains(out, nudge) {
+		t.Errorf("fixer prompt should not nudge when not stagnant:\n%s", out)
+	}
+	if out := render(t, fixer, baseVars(true)); !strings.Contains(out, nudge) {
+		t.Errorf("fixer prompt should nudge when stagnant:\n%s", out)
+	}
+
+	// align's issue-only branch (no .failures)
+	if out := render(t, align, baseVars(true)); !strings.Contains(out, nudge) {
+		t.Errorf("align prompt (issue branch) should nudge when stagnant:\n%s", out)
+	}
+	// align's failures branch
+	withFailures := baseVars(true)
+	withFailures["failures"] = "Test case \"t1\": mismatch"
+	if out := render(t, align, withFailures); !strings.Contains(out, nudge) {
+		t.Errorf("align prompt (failures branch) should nudge when stagnant:\n%s", out)
+	}
+	if out := render(t, align, baseVars(false)); strings.Contains(out, nudge) {
+		t.Errorf("align prompt should not nudge when not stagnant:\n%s", out)
+	}
+}
+
 // TestSortedTestCasesAndRenderExamples guards the C7 behavior: fixtures are
 // selected in deterministic lexical order (map iteration is randomized),
 // unparseable ones are skipped, and rendering respects the example limit.

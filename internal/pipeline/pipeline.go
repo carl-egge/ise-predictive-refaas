@@ -10,6 +10,19 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Stagnation-guard thresholds ([C5]): the number of consecutive times a task
+// must fail with byte-identical error text before executeTask flags it as
+// stagnant for the recovery prompt (2nd occurrence) or gives up on it
+// entirely instead of invoking recovery again (3rd occurrence). Small,
+// literal constants rather than task_args-configurable knobs: the behavior
+// they encode ("the same fix attempt twice in a row is a bad sign, three
+// times in a row means stop") is a property of LLM repair loops in general,
+// not something a specific pipeline config should need to tune per task.
+const (
+	stagnationFlagThreshold  = 2
+	stagnationAbortThreshold = 3
+)
+
 // ConversionTask represents a step in the pipeline, including retry behavior
 // and recovery links.
 type ConversionTask struct {
@@ -156,6 +169,36 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 				} else if task.OnFailure != nil {
 					originalErr := err
 					req.AddError(originalErr)
+
+					// Stagnation guard ([C5]): a recovery task that is
+					// itself succeeding (producing buildable code, say) but
+					// not fixing whatever makes THIS task keep failing looks
+					// identical to genuine progress from the retry loop's
+					// point of view - it only sees "recovery returned nil,
+					// continue". Comparing this failure's text against the
+					// last one is what actually detects that nothing
+					// changed.
+					repeats := req.RecordFailure(task.ID, originalErr.Error())
+					if repeats >= stagnationAbortThreshold {
+						log.Warnf("task (%s) failed with the same error %d times in a row; the recovery task isn't changing the outcome, aborting instead of spending another attempt on it", task.ID, repeats)
+						err = fmt.Errorf("repair loop for task (%s) made no progress after %d identical failures in a row, aborting: %w", task.ID, repeats, originalErr)
+						break
+					}
+					if req.Metadata == nil {
+						req.Metadata = make(map[string]string)
+					}
+					if repeats >= stagnationFlagThreshold {
+						// One nudge before giving up: tell the recovery
+						// prompt (via {{ .stagnant }}) that its last attempt
+						// didn't change the outcome, so it has a chance to
+						// try something other than a small variation of the
+						// same fix before the abort threshold above fires.
+						log.Debugf("task (%s) repeated the same failure; flagging stagnation for the recovery prompt", task.ID)
+						req.Metadata["stagnant"] = "true"
+					} else {
+						delete(req.Metadata, "stagnant")
+					}
+
 					log.Debugf("attempting to recover task (%s) before retrying", task.ID)
 					recoveryErr := p.executeTask(runner, req, task.OnFailure)
 					// the recovery task overwrote CurrentTask; restore it for

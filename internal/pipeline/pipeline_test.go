@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -319,7 +320,10 @@ func TestExecuteTaskSharedRecoveryGetsFreshBudgetPerInvocation(t *testing.T) {
 	mainRuns := 0
 	failing := &funcConverter{fn: func(*Runner, *domain.ConversionRequest) error {
 		mainRuns++
-		return errors.New("test keeps failing") // recovery never actually fixes it
+		// Varies per attempt so the [C5] stagnation guard (tested
+		// separately below) never fires here - this test is purely about
+		// budget sharing, not stagnation detection.
+		return fmt.Errorf("test keeps failing (attempt %d)", mainRuns)
 	}}
 	main := &ConversionTask{ID: "main", Execute: failing, MaxRetryCount: 5, OnFailure: recoveryTask}
 
@@ -342,6 +346,95 @@ func TestExecuteTaskSharedRecoveryGetsFreshBudgetPerInvocation(t *testing.T) {
 	}
 	if recoveryTask.RetryCount != 0 {
 		t.Errorf("recovery's own RetryCount = %d, want 0 (break-on-success never advances it, which is what lets a shared recovery target keep getting invoked)", recoveryTask.RetryCount)
+	}
+}
+
+// TestExecuteTaskStagnationAbortsBeforeExhaustingRetryBudget guards [C5]: the
+// exact scenario observed running evaluation_set/f6 against
+// scripts/chatai-devstral-summary.json, where a recovery task keeps
+// "succeeding" locally without ever changing the parent's failure. Without
+// the guard this would run until main's own MaxRetryCount (5 here); with it,
+// the loop must give up early once the same failure text has recurred
+// stagnationAbortThreshold times in a row, and it must flag {{ .stagnant }}
+// for the recovery prompt one occurrence before that.
+func TestExecuteTaskStagnationAbortsBeforeExhaustingRetryBudget(t *testing.T) {
+	recoveryRuns := 0
+	stagnantAtRun := map[int]bool{}
+	recovery := &funcConverter{fn: func(_ *Runner, req *domain.ConversionRequest) error {
+		recoveryRuns++
+		stagnantAtRun[recoveryRuns] = req.Metadata["stagnant"] == "true"
+		return nil
+	}}
+	recoveryTask := &ConversionTask{ID: "recover", Execute: recovery, MaxRetryCount: 3}
+
+	mainRuns := 0
+	failing := &funcConverter{fn: func(*Runner, *domain.ConversionRequest) error {
+		mainRuns++
+		return errors.New("identical failure every time") // never changes
+	}}
+	main := &ConversionTask{ID: "main", Execute: failing, MaxRetryCount: 5, OnFailure: recoveryTask}
+
+	p := NewPipeline(main)
+	runner := NewRunner(context.Background(), p, nil)
+
+	req := &domain.ConversionRequest{}
+	err := p.Execute(runner, req)
+	if err == nil {
+		t.Fatal("expected the task to fail")
+	}
+	if !strings.Contains(err.Error(), "no progress") {
+		t.Errorf("error should explain the stagnation abort, got: %v", err)
+	}
+
+	// aborts on the 3rd identical failure, i.e. after only 2 recovery calls -
+	// well before main's own budget of 5 would have been exhausted
+	if mainRuns != 3 {
+		t.Errorf("main ran %d times, want exactly 3 (aborted by the stagnation guard, not exhausting its own MaxRetryCount=5)", mainRuns)
+	}
+	if recoveryRuns != 2 {
+		t.Errorf("recovery ran %d times, want exactly 2 (one nudged attempt after the first repeat, then abort instead of a 3rd)", recoveryRuns)
+	}
+	if stagnantAtRun[1] {
+		t.Error("the first recovery call must not see the stagnant flag - nothing had repeated yet")
+	}
+	if !stagnantAtRun[2] {
+		t.Error("the second recovery call (after the first repeat) must see {{ .stagnant }} so the prompt can try something different")
+	}
+	if req.Metadata["stagnant"] != "true" {
+		t.Errorf("stagnant flag should still be set on the request after the abort, got metadata: %v", req.Metadata)
+	}
+}
+
+// TestExecuteTaskStagnationResetsOnDifferentFailure verifies genuine
+// per-attempt progress (a different failure text each time) never trips the
+// guard, however many times the parent retries.
+func TestExecuteTaskStagnationResetsOnDifferentFailure(t *testing.T) {
+	recoveryRuns := 0
+	recovery := &funcConverter{fn: func(*Runner, *domain.ConversionRequest) error {
+		recoveryRuns++
+		return nil
+	}}
+	recoveryTask := &ConversionTask{ID: "recover", Execute: recovery, MaxRetryCount: 3}
+
+	mainRuns := 0
+	failing := &funcConverter{fn: func(*Runner, *domain.ConversionRequest) error {
+		mainRuns++
+		return fmt.Errorf("a different failure each time: %d", mainRuns)
+	}}
+	main := &ConversionTask{ID: "main", Execute: failing, MaxRetryCount: 5, OnFailure: recoveryTask}
+
+	p := NewPipeline(main)
+	runner := NewRunner(context.Background(), p, nil)
+	req := &domain.ConversionRequest{}
+
+	if err := p.Execute(runner, req); err == nil {
+		t.Fatal("expected the task to fail")
+	}
+	if mainRuns != 5 {
+		t.Errorf("main ran %d times, want its full budget of 5 - a genuinely changing failure must never trigger the stagnation guard", mainRuns)
+	}
+	if req.Metadata["stagnant"] == "true" {
+		t.Error("stagnant flag must not be set when the failure text keeps changing")
 	}
 }
 

@@ -10,7 +10,9 @@ When compiling, the build failed with:
 ```
 
 # Task
-Resolve the listed errors. Please ensure that:
+{{ if .stagnant }}Your previous fix did not change the outcome — the exact same build error occurred again. Do not repeat the same change. Reconsider your assumptions about the types, imports, or structure involved, and try a genuinely different fix this time.
+
+{{ end }}Resolve the listed errors. Please ensure that:
 - Change only what is necessary to fix the listed errors; keep all other code exactly as it is.
 - Fix the first error first — later errors are often just consequences of it.
 - Pay special attention to the AWS Lambda context.

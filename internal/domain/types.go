@@ -36,6 +36,45 @@ type ConversionRequest struct {
 	// retry_temperature in internal/translator. Transient bookkeeping, not
 	// part of the JSON shape.
 	CurrentAttempt int `json:"-"`
+	// stagnation tracks, per pipeline task id, how many times in a row that
+	// task has failed with the exact same error text - the repair-loop
+	// stagnation guard ([C5]). Keyed by task id (not stored on the shared
+	// *pipeline.ConversionTask node, which is reused across every request
+	// compiled from the same pipeline) so it can't leak state between
+	// unrelated conversions.
+	stagnation map[string]stagnationEntry
+}
+
+// stagnationEntry is the per-task bookkeeping RecordFailure uses to detect a
+// repair loop making no progress.
+type stagnationEntry struct {
+	lastFailure string
+	repeats     int
+}
+
+// RecordFailure records that taskID just failed with failureText and reports
+// how many consecutive times (including this one) that exact text has now
+// been seen in a row for that task. A differing text resets the count to 1.
+//
+// This is deliberately a simple exact-text comparison rather than a fuzzy
+// one: goTester's TestingError summary and the fixer's formatted compiler
+// diagnostics ({{ .issue }}) are both stable summaries (test names/kinds,
+// numbered diagnostic lines) rather than raw values, so a truly stuck repair
+// loop reliably reproduces byte-identical text, while genuine progress
+// (different tests failing, a different compiler error) reliably does not.
+func (cr *ConversionRequest) RecordFailure(taskID, failureText string) int {
+	if cr.stagnation == nil {
+		cr.stagnation = make(map[string]stagnationEntry)
+	}
+	entry := cr.stagnation[taskID]
+	if entry.lastFailure == failureText {
+		entry.repeats++
+	} else {
+		entry.lastFailure = failureText
+		entry.repeats = 1
+	}
+	cr.stagnation[taskID] = entry
+	return entry.repeats
 }
 
 // AddError appends err to the request error list when non-nil.
