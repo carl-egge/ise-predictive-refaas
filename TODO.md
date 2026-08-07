@@ -617,6 +617,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Priority: P1
 - Status: **Implemented 2026-07-04.** `llmconnector.ConfigureThrottle` reads `LLM_CALL_INTERVAL` (duration string like "2s"/"500ms", or a bare JSON number = seconds; "0s"/empty disables) from `ConverterOptions.Args`; the env default is registered in `defaults.go` and re-read on every Runner build / `/reconfigure` like all other Args. `waitForCallSlot` reserves slots under a mutex (correct even with future concurrent callers) and is called before **every** attempt in all three connectors — retries count as calls too — with context-aware waiting so `/stop` isn't blocked by the throttle. Tests in `connector_local_test.go` (interval spacing, cancellation, disable, numeric form).
 
+### [ ] [F6] Stop logging API keys in plaintext at startup
+- Category: Fault Tolerance / Efficiency
+- Affected component(s): `internal/service/service.go`'s MakeConverterService has a line: log.Infof("Starting converter service with options: %+v", options) where options is a pipeline.ConverterOptions whose Args map holds connector credentials (ACADEMIC_CLOUD_API_KEY, GEMINI_API_KEY, etc., merged in via envDefaults()). This means every service startup and every /reconfigure logs live API keys in plaintext to whatever captures stdout (files, log aggregators, CI output).
+- Fix: redact secret-shaped keys before logging, e.g. add a small helper that copies the ConverterOptions and masks any Args key matching *API_KEY / *KEY / *_TOKEN (or maintain an explicit denylist: ACADEMIC_CLOUD_API_KEY, GEMINI_API_KEY) before passing to log.Infof. Apply the same treatment anywhere else ConverterOptions or Args get logged (grep for %+v.*options and Args in internal/service and internal/pipeline). Add a test asserting the log output never contains a real key value.
+- Architecture impact: Local
+- Estimated effort: S
+- Priority: P2
+
 ---
 
 ## G. Efficiency & token economy

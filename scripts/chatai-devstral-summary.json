@@ -1,0 +1,67 @@
+{
+  "LLMClient": "chatai",
+  "args": {
+    "LLM_CALL_INTERVAL": "1s"
+  },
+  "options": {
+    "model_name": "devstral-2-123b-instruct-2512",
+    "temperature": 0.1,
+    "top_p": 0.8
+  },
+  "floci": {
+    "enabled": true
+  },
+  "tasks": [
+    {
+      "id": "root",
+      "task": "summary",
+      "maxRetryCount": 2,
+      "next": ["convert"]
+    },
+    {
+      "id": "convert",
+      "task": "coder2",
+      "task_args": { "reader": "go" },
+      "maxRetryCount": 2,
+      "validation": "canCompile",
+      "next": ["builder"]
+    },
+    {
+      "id": "builder",
+      "task": "goBuilder",
+      "canApply": "canCompile",
+      "recovery": "gollmRecovery",
+      "maxRetryCount": 4,
+      "next": ["goTester"]
+    },
+    {
+      "id": "gollmRecovery",
+      "task": "fixer",
+      "canApply": "canCompile",
+      "task_args": { "reader": "go" },
+      "maxRetryCount": 6
+    },
+    {
+      "id": "goTester",
+      "task": "testRouter",
+      "canApply": "canCompile",
+      "maxRetryCount": 5,
+      "recovery": "testRecovery"
+    },
+    {
+      "id": "testRecovery",
+      "task": "realign",
+      "canApply": "canCompile",
+      "task_args": { "reader": "go" },
+      "maxRetryCount": 3,
+      "next": ["testRecoveryBuild"]
+    },
+    {
+      "id": "testRecoveryBuild",
+      "canApply": "canCompile",
+      "task": "goBuilder",
+      "recovery": "gollmRecovery",
+      "maxRetryCount": 3
+    }
+  ]
+}
