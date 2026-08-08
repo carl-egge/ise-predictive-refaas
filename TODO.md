@@ -20,6 +20,8 @@
 - [x] [A15] `BasicLLMDeploymentReader` nondeterministic "main" pick / empty content
 - [x] [A16] `Metrics.AddMetric` clobbers `StartTime` to the zero value
 - [x] [A17] Zip ingestion: last-`.py`-wins, macOS junk entries, CRLF `.env` parsing
+- [x] [A18] Test harness shares stdout with the translated function; any output corrupts the envelope **(P0)**
+- [ ] [A19] `Metrics.TestOutcomes` accumulates across retry rounds, inflating persisted test counts **(P0)**
 
 **B. Software quality**
 - [x] [B1] Unify the two output-comparison implementations (+ type-shape-only mode)
@@ -29,6 +31,8 @@
 - [x] [B5] Observability: chatlog correlation + per-stage metrics **(P0)**
 - [X] [B6] Documentation drift on prompt wiring and Floci examples
 - [X] [B7] `goTester` runs `go run .` in the service CWD when `WorkingDir` unset
+- [ ] [B8] `Metrics.Issues` records the same error once per recursion level
+- [ ] [B9] `go test ./...` is not green: a live, billable ChatAI test never skips
 
 **C. Pipeline features**
 - [x] [C1] Structured per-test failure evidence into the repair/align loop **(P0)**
@@ -82,6 +86,7 @@
 - [ ] [H5] Account for or bound local compute energy (build/test/Floci)
 - [ ] [H6] Go vs. Python runtime measurement harness reusing the fixture payloads
 - [ ] [H7] Verify token accounting across connector-internal retries
+- [ ] [H8] `cmd/energy` reports a coefficient assumption for stages that consumed no tokens
 
 ---
 
@@ -129,6 +134,15 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 > `internal/pipeline/pipeline_io_test.go`, and `internal/pipeline/pipeline_default_test.go`.
 > Verified with `go build ./...`, `go vet ./...`, `gofmt`, `go test ./...`, and
 > `go test -race` on the service + new tests.
+>
+> **Status 2026-08-07 (batch run `run-20260807-132133`):** [A1]–[A17] remain resolved, but the
+> first full `function_set` pass surfaced two new bugs. [A18] — the test harness shares stdout
+> with the translated function — fails correct translations *and* feeds the repair loop a defect
+> that does not exist, which is the most expensive possible failure mode now that realign is
+> ~48% of inference energy; **fixed and verified the same day** (pf13 and pf9 flip to fully
+> passing, pf10 gains a case). [A19] — per-test outcomes accumulate across retry rounds — writes
+> wrong test counts into the primary evaluation artifact and into `cmd/energy`'s grouped
+> reporting, and remains open. Both are P0.
 
 ### [x] [A1] Inverted pass/fail logic in `SimilarityValidation`
 - Category: Bug
@@ -268,6 +282,27 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: These are silent input corruptions that no downstream stage can recover from.
 - Architecture impact: Local | Effort: S | Priority: P2
 
+### [x] [A18] Test harness shares stdout with the translated function; any output corrupts the envelope
+- Category: Bug
+- Affected component(s): `internal/builder/test_handler.txt`, `internal/builder/validator.go` (`doTest`/`validateHarnessOutput`), `internal/fixture/output.go` (`MatchOutput`'s substring fallback), `internal/translator/prompts/1-stage-translate-1.md` and `-2.md`
+- Problem / current state: `test_handler.txt`'s `main` writes the `{"response": …}` / `{"error": …}` envelope with `fmt.Println` to stdout, and `doTest` judges `cmd.Stdout`. stdout is therefore a channel shared between the harness and the function under test, with nothing reserving it. A generated handler that prints anything — `fmt.Print*`, or a logger built as `log.New(os.Stdout, …)` — prepends its output to the envelope, `validateHarnessOutput`'s `json.Unmarshal` fails, and `MatchOutput` silently degrades to substring containment (`output %q does not contain expected %q`). That fallback then fails on formatting alone, because `json.dumps`'s `", "`/`": "` separators in the fixture never appear literally in `json.Marshal`'s compact output — even when the response is correct. (On the structured path this is a non-issue: `compare.normalize` decodes JSON-in-string, so key order and spacing already don't matter. The bug is entirely that the structured path is never reached.)
+- Evidence (run `run-20260807-132133`, 3 of the 6 failed functions): pf13 generated `var logger = log.New(os.Stdout, "", log.LstdFlags)` — a faithful rendering of the Python original's `logging` — returned a byte-correct `200` / `"Welcome to the Low Complexity Lambda Function!"`, and scored 0/1. pf9 and pf10 lost 1 and 2 cases the same way to `fmt.Printf` progress lines. On pf13 and pf10 the entire realign budget was then spent on a failure no code change could fix, until [C5] aborted the job. Note the model is not misbehaving: Python's `logging` writes to stderr, so a faithful translation of a logging function diverges only in the sink, and no prompt says the sink matters.
+- Proposed change: reserve stdout deterministically in the harness, in the same spirit as [C3]/[C4] — in `test_handler.txt`'s `main`, keep a copy of the real `os.Stdout`, assign `os.Stdout = os.Stderr` before calling `handle`, and write the envelope to the saved handle. That contains `fmt.Print*` and any logger that reads `os.Stdout` at construction time. As a second layer for a writer that captured the descriptor earlier, have `validateHarnessOutput` extract the last balanced JSON object from stdout instead of requiring the whole buffer to parse. Add a line to both translate prompts stating that stdout belongs to the harness and diagnostics must go to stderr — but not as the only guard.
+- Why: it converts correct translations into failures, and the failures it invents are indistinguishable to the repair loop from real ones, so they consume the most expensive stage in the pipeline before aborting. It is also a correctness trap for the 95-function `evaluation_set`, where logging functions are common.
+- Architecture impact: Local | Effort: S | Priority: **P0** (corrupts pass/fail in the direction that costs the most)
+- Status: **Implemented 2026-08-07.** Two layers in the harness, because the obvious single fix does not work. `test_handler.txt` saves the real stdout, assigns `os.Stdout = os.Stderr` before calling `handle`, and writes its envelope to the saved handle — which catches `fmt.Print*` (those resolve `os.Stdout` at call time) but **not** pf13's actual pattern: a package-level `var logger = log.New(os.Stdout, …)` is initialized before `main` runs and holds the original handle, so no reassignment inside `main` can reach it. The harness therefore also prints `harnessOutputMarker` (`__REFAAS_HARNESS_OUTPUT__`) immediately before the envelope, and `harnessEnvelope` in `validator.go` takes the text after the last occurrence. Behind the marker sits a brace-balanced, string-aware scan for the **last** top-level JSON object, which covers stdout with no marker at all (a package built by an older builder, this package's own hand-written test fixtures) and output printed *after* the envelope; it prefers the last object because the harness always writes the envelope last. Both are only candidates — the caller still unmarshals and falls back to the raw-text comparison, so a wrong guess degrades to the previous behavior instead of inventing a pass. Both translate prompts ([D1]'s pair) gained a one-line execution-contract rule sending diagnostics to stderr, as defence in depth rather than the guard.
+  - Verified against the three functions the bug broke, re-run on the same config as `run-20260807-132133`: **pf13 0/1 → 1/1** and **pf9 1/3 → 3/3**, both flipping from failed to `Completed`, each now finishing in 2 LLM calls instead of 4 (pf9's prompt tokens 7,140 → 2,256, since the phantom failure no longer summons realign). **pf10 1/3 → 2/3**: its t2 passes, and the remaining t3 failure now reaches the *structured* comparator (`output mismatch at body.temperature_celsius: expected … 5.32 …`) instead of the substring fallback — that one is the live-weather-API fixture, i.e. the `outputMode: tolerant` problem in open question 1, not this bug.
+  - Tests (`internal/builder/validator_test.go`): `TestHarnessEnvelopeExtraction` (marker, no marker, echoed event before the envelope, output after it, braces inside a JSON string body, non-JSON passthrough), `TestValidateHarnessOutputIgnoresFunctionStdout` (replays pf13's exact stdout, and asserts a genuine mismatch behind the same noise still fails), `TestGoPackageTesterToleratesStdoutLoggingFunction` (end-to-end through the real embedded harness with pf13's package-level logger) and `TestHarnessKeepsStdoutClean` (the redirect layer: function output lands on stderr as evidence, never on stdout).
+
+### [ ] [A19] `Metrics.TestOutcomes` accumulates across retry rounds, inflating persisted test counts
+- Category: Bug / Evaluation
+- Affected component(s): `internal/domain/types.go` (`RecordTestOutcome`), `internal/builder/validator.go` (`GoPackageTester.Apply`), `internal/floci/stage.go`, `cmd/energy/energy.go`
+- Problem / current state: `RecordTestOutcome` appends to `Metrics.TestOutcomes`, and nothing resets the slice between validation executions. A function validated over N test rounds therefore records N × (fixture count) outcomes, with the failed early rounds and the final state indistinguishable. The legacy `TestCases` map is unaffected (last-write-wins per name), so the two views of the same job disagree and only the deprecated one is right. `cmd/energy` counts passes straight off the slice (`energy.go:181`), so [H4]'s per-bucket and AWS/non-AWS "passed / failed" columns inherit the inflation.
+- Evidence (run `run-20260807-132133`): pf7 is archived as 9 passed / 10 outcomes where `test_cases` — and the truth — is 5/5; pf14 records 15 outcomes for 3 fixtures; pf13 records 0/3 for a single fixture. The energy report printed 29 passed / 1 failed for the eight completed jobs where the truth is 30/30.
+- Proposed change: reset `Metrics.TestOutcomes` at the start of each validation execution on both routes, so the slice always describes the last round. (The alternative — add a `Round` field and have every consumer select the max — spreads the fix across consumers and leaves the naive read wrong.) Assert it in `runlog_test.go` with a job whose first round fails and second passes.
+- Why: [H1a] exists so that per-test outcomes are readable from the archived run alone, without the server that produced it. As written, every function that needed a retry is recorded wrong, and the error is invisible unless you cross-check the legacy map. Every grouped pass-rate figure in the thesis is computed off this array.
+- Architecture impact: Local | Effort: S | Priority: **P0** (silently wrong numbers in the primary evaluation artifact)
+
 ---
 
 ## B. Software quality issues
@@ -334,6 +369,23 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Turns a bizarre, hard-to-diagnose behavior into an immediate config error.
 - Architecture impact: Local | Effort: S | Priority: P2
 - Status: **Implemented 2026-07-10.** `GoPackageTester.Apply` (`internal/builder/validator.go`) now checks `runner.WorkingDir() == ""` right after the working-package nil check and returns a config error naming the current task id and the missing `goBuilder` prerequisite, instead of silently falling through to `cmd.Dir = ""` (which runs `go run .`/`./fn` in the refaas process's own CWD). No change needed in `internal/pipeline/runner.go` - `WorkingDir()` already existed as the thing to check. Test: `TestGoPackageTesterRequiresWorkingDir`.
+
+### [ ] [B8] `Metrics.Issues` records the same error once per recursion level
+- Category: Code Quality / Evaluation
+- Affected component(s): `internal/pipeline/pipeline.go` (`executeTask`'s several `req.AddError` call sites), `internal/service/service.go` (`Issues` assembled from `request.Errors()`)
+- Problem / current state: `executeTask` calls `req.AddError` on the failed-attempt path *and* at each of its exits, and a task's error is then propagated up through the parent frames, which add it again. One abort therefore lands in the append-only error list several times over.
+- Evidence (run `run-20260807-132133`): pf13's `Issues` holds `1/1 tests failed: t1 (output mismatch)` three times — those three are genuine, one per attempt — followed by four byte-identical copies of `repair loop for task (goTester) made no progress after 3 identical failures in a row, aborting: …`, which is one event. pf12 and pf10 show the same shape. Reconstructing a job's real attempt history means de-duplicating by hand.
+- Proposed change: record an error once, where it is first observed, and let propagation carry it upward without re-adding; or de-duplicate consecutive identical entries inside `AddError`. Keep the distinct per-attempt failures — those *are* the history — and drop only the re-adds of the same wrapped error on the way up.
+- Why: `Issues` is the free-text half of the archived record, and for a job that never completes it is the only place the failure story survives at all ([H2] persists completed jobs only). Padding it with duplicates makes attempt counts unreadable both by eye and by script.
+- Architecture impact: Local | Effort: S | Priority: P2
+
+### [ ] [B9] `go test ./...` is not green: a live, billable ChatAI test never skips
+- Category: Code Quality
+- Affected component(s): `internal/llmconnector/chatai_test.go` (`TestChatAIInvocationClient_LiveInvokeLLM`), `internal/pipeline/defaults.go` (the `godotenv/autoload` blank import), `CLAUDE.md`
+- Problem / current state: the test skips only when `ACADEMIC_CLOUD_API_KEY` is unset — but `godotenv/autoload` loads `.env` into the process before any test runs, so in a working checkout the key is always set and the test always makes a real, billable call to `meta-llama-3.1-8b-instruct`. It is flaky by construction too: it asserts the reply contains `"pong"`, and on 2026-08-07 the model answered `{}` (2 completion tokens), failing the package. Every other package passes, so the whole suite's exit status is decided by an 8B model's phrasing. Separately, `CLAUDE.md` still states the repo has "no test suite to run (`go test ./...` will currently report 'no test files')", which has been untrue since [B2].
+- Proposed change: gate the live tests behind an explicit opt-in (`REFAAS_LIVE_LLM_TESTS=1`, or `testing.Short()` so a plain `go test ./...` skips them while `-run` still reaches them), keeping the existing key check as a second condition. Loosen the assertion to "non-empty and parses as JSON" so a small model's wording cannot fail the suite. Correct the `CLAUDE.md` sentence to describe the suite that now exists.
+- Why: a default `go test ./...` that spends money and fails for reasons unrelated to the change under test trains everyone to ignore it — and the contributor guide currently tells a new engineer or agent there is nothing to run, so the failure is never even seen.
+- Architecture impact: Local | Effort: S | Priority: P2
 
 ---
 
@@ -624,6 +676,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Category: Fault Tolerance / Efficiency
 - Affected component(s): `internal/service/service.go`'s MakeConverterService has a line: log.Infof("Starting converter service with options: %+v", options) where options is a pipeline.ConverterOptions whose Args map holds connector credentials (ACADEMIC_CLOUD_API_KEY, GEMINI_API_KEY, etc., merged in via envDefaults()). This means every service startup and every /reconfigure logs live API keys in plaintext to whatever captures stdout (files, log aggregators, CI output).
 - Fix: redact secret-shaped keys before logging, e.g. add a small helper that copies the ConverterOptions and masks any Args key matching *API_KEY / *KEY / *_TOKEN (or maintain an explicit denylist: ACADEMIC_CLOUD_API_KEY, GEMINI_API_KEY) before passing to log.Infof. Apply the same treatment anywhere else ConverterOptions or Args get logged (grep for %+v.*options and Args in internal/service and internal/pipeline). Add a test asserting the log output never contains a real key value.
+- Confirmed live 2026-08-07: the batch run's startup line logged both `ACADEMIC_CLOUD_API_KEY` and `GEMINI_API_KEY` in plaintext, and the `/reconfigure` that set up the run repeated it — see `runs/service-20260807-132133.log`, which is now an artifact of the evaluation and carries both keys.
 - Architecture impact: Local
 - Estimated effort: S
 - Priority: P2
@@ -805,11 +858,25 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why this improves the evaluation: a cheap guard on the one place where the energy accounting could silently under-count, in code that already has fake-backend test infrastructure. Based on reasoning; no external source needed.
 - Architecture impact: Local | Effort: S | Priority: P2
 
+### [ ] [H8] `cmd/energy` reports a coefficient assumption for stages that consumed no tokens
+- Category: Evaluation
+- Affected component(s): `cmd/energy/energy.go` (`ModelAssumed`), `cmd/energy/report.go` (the `assumed` set and the `WARNING:` line)
+- Problem / current state: `ModelAssumed` is set whenever a stage's model is missing from `evaluation/energy.config.json`, which includes the non-LLM stages (`builder`, `goTester`, `testRecoveryBuild`) that record no model and no tokens by design. Their zero tokens cost zero under any coefficients, but the report still prints `WARNING: costed with default coefficients (no config entry): (unrecorded)`.
+- Evidence (run `run-20260807-132133`): every stage that made LLM calls used `devstral-2-123b-instruct-2512`, which *is* in the config, so the run was fully costed with the intended coefficients — and the report carried the warning anyway, sourced entirely from the three token-free build/test stages.
+- Proposed change: set `ModelAssumed` only when the stage actually consumed something (`LLMCalls > 0`, or non-zero tokens). Keep the `(unrecorded)` label for the case it was written for — a stage that did make calls but reported no model, i.e. a pre-[H3] record.
+- Why this improves the evaluation: the warning is the tool's one signal that a number in the thesis rests on a substituted coefficient. Firing it on a run where nothing was substituted devalues it, and a reader has no way to tell a genuinely assumed coefficient from this noise.
+- Architecture impact: None (separate tool) | Effort: S | Priority: P2
+
 ---
 
 ## Open questions
 
 1. **Failure-mode distribution is unmeasured.** [B5] has landed, so the instrumentation now exists (`per_task` gives executions/failures/tokens per stage) — what is missing is the *run*. Do a full f1–f14 pass and read the per-task failure and token distribution before re-prioritizing the remaining C-items. For that run to be attributable and durable, do [H1]+[H2] first; the same run then doubles as the pilot for the energy study.
+   - **Answered 2026-08-07** by the first full `function_set` pass — run id `run-20260807-132133`, `default.json`'s task graph on chatai / `devstral-2-123b-instruct-2512`. Artifacts: `runs/run-20260807-132133.jsonl` (completed jobs), `examples/metrics/metrics-batch-20260807-132133.json` (all 14, failures included), `runs/service-20260807-132133.log`, `runs/batch-20260807-132133.csv`, `runs/packages-20260807-132133.zip`.
+   - Distribution: **14/14 built, zero build failures, `gollmRecovery` never executed** — [C3]/[C4] eliminated the build-repair failure class, and this run consequently exercised none of that half of the pipeline. All remaining failure is in validation: 8/14 jobs `Completed`, 32/41 tests passing on the final round. `testRecovery` (realign) is **48.3% of inference energy** over 15 executions that flipped 2 test outcomes; `root`/cleaner is a further ~18% with its contribution still unmeasured ([G3]).
+   - Of the 9 final-round test failures: **5 are fixture expectations no correct Go translation can satisfy** (CPython exception text in pf12/pf7, `datetime.now()` timestamps and live third-party API bodies under `outputMode: tolerant` in pf14/pf10/pf9 — consistent with EVALUATION.md's warning that `function_set` expectations were never executed; these want `shape` mode or exclusion), **3 are [A18]**, and 1 (pf8 t2, a recursive graph algorithm) is a genuine semantic divergence.
+   - The Floci route was **not** exercised: no `function_set` fixture declares `setup`/`sideEffects` and no function uses AWS, so `testRouter` sent all 14 to `goTester`. [C10]/[C11] stay unvalidated until the 95-function `evaluation_set` runs.
+   - Follow-ups this run raised: [A18], [A19], [B8], [B9], [H8], and the [H2] completed-only rule — the 6 failed jobs account for **86.9 kJ of the run's 127.3 kJ**, all of it absent from the run log. Section H's own preamble asked for that decision "before the batch run rather than after"; the batch says revisit it.
 2. **Does a continued conversation across stages beat fresh-context repair?** (new, maintainer 2026-07-04) — keeping translate → fix → align in one multi-turn conversation might improve repair quality but grows the context every turn. To be evaluated empirically for translation success rate *and* tokens-per-success; see [G5]. Blocked on [B5] for measurement.
 
 ## Resolved questions (answered by maintainer, 2026-07-04)

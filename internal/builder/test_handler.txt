@@ -1,0 +1,61 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"os"
+)
+
+// harnessOutputMarker separates anything the translated function wrote to
+// stdout from the harness's own response envelope, which follows the last
+// occurrence of this line. Keep it in sync with harnessOutputMarker in
+// internal/builder/validator.go.
+//
+// Why it exists: stdout is the channel this harness reports the response on,
+// but the translated function shares the process and can write to it too - a
+// faithful translation of a Python original that uses `logging` often does,
+// since Python sends log records to stderr while a Go translation may reach
+// for fmt.Println or log.New(os.Stdout, ...). Without a marker that output is
+// prepended to the envelope, the envelope no longer parses as JSON, and a
+// byte-correct response is reported as a mismatch ([A18]).
+const harnessOutputMarker = "__REFAAS_HARNESS_OUTPUT__"
+
+func main() {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		log.Fatalf("Failed to read input: %v", err)
+	}
+
+	// stdout belongs to the harness: point the os.Stdout handle at stderr for
+	// the duration of the call, so anything the function prints is captured as
+	// diagnostics instead of mixed into the response. This catches fmt.Print*
+	// and any logger constructed after this point; a writer that captured the
+	// original handle earlier (a package-level log.New(os.Stdout, ...), whose
+	// initialization runs before main) still writes to the real stdout, which
+	// is what the marker below is for.
+	stdout := os.Stdout
+	os.Stdout = os.Stderr
+
+	ctx := context.Background()
+	response, err := handle(ctx, json.RawMessage(input))
+
+	output := make(map[string]interface{})
+	if err != nil {
+		output["error"] = err.Error()
+	} else {
+		output["response"] = response
+	}
+
+	// log writes to stderr by default, so a failure here stays off the
+	// response channel like every other diagnostic.
+	outputJSON, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		log.Fatalf("Failed to marshal output: %v", err)
+	}
+
+	fmt.Fprintln(stdout, harnessOutputMarker)
+	fmt.Fprintln(stdout, string(outputJSON))
+}

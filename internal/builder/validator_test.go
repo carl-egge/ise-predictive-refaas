@@ -2,6 +2,7 @@ package builder
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -529,5 +530,194 @@ func main() {
 
 	if err := tester.Apply(runner, req); err != nil {
 		t.Fatalf("per-test env override must win over the package env, got: %v", err)
+	}
+}
+
+// --- [A18] stdout is the harness's channel, not the function's ---------------
+
+// writeHarnessPackage lays out a buildable package wired to the *real*
+// embedded harness (test_handler.txt), so these tests exercise the marker
+// contract end to end rather than a hand-written stand-in. The harness only
+// calls handle and marshals whatever it returns, so a local response type is
+// enough and the aws-lambda-go dependency is not needed here.
+func writeHarnessPackage(t *testing.T, mainSrc string) string {
+	t.Helper()
+	dir := writeRunnablePackage(t, mainSrc)
+	if err := os.WriteFile(filepath.Join(dir, "test_handler.go"), []byte(goTestHandler), 0o644); err != nil {
+		t.Fatalf("writing test_handler.go: %v", err)
+	}
+	return dir
+}
+
+// TestHarnessEnvelopeExtraction pins the two layers that keep function output
+// out of the response: the marker, and the balanced-object scan behind it.
+func TestHarnessEnvelopeExtraction(t *testing.T) {
+	envelope := `{"response":{"statusCode":200,"body":"{\"result\":3}"}}`
+	cases := []struct {
+		name   string
+		stdout string
+		want   string
+	}{
+		{
+			name:   "marker separates function output from the envelope",
+			stdout: "2026/08/07 15:35:19 called with event: {\"a\":1}" + harnessOutputMarker + envelope,
+			want:   envelope,
+		},
+		{
+			name:   "bare envelope without a marker is returned unchanged",
+			stdout: envelope,
+			want:   envelope,
+		},
+		{
+			name:   "no marker: the last top-level object wins over an echoed event",
+			stdout: `{"httpMethod":"GET"}` + envelope,
+			want:   envelope,
+		},
+		{
+			name:   "output printed after the envelope is dropped",
+			stdout: harnessOutputMarker + envelope + "goroutine finished",
+			want:   envelope,
+		},
+		{
+			// the envelope's Body is a JSON-encoded *string* full of braces;
+			// a naive depth count would end the object at the first inner "}"
+			name:   "braces inside a JSON string body do not confuse the scan",
+			stdout: "noise " + `{"response":{"body":"{\"nested\":{\"deep\":1}}"}}`,
+			want:   `{"response":{"body":"{\"nested\":{\"deep\":1}}"}}`,
+		},
+		{
+			name:   "output with no JSON at all is passed through for the text fallback",
+			stdout: "panic: something went wrong",
+			want:   "panic: something went wrong",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := harnessEnvelope(tc.stdout); got != tc.want {
+				t.Errorf("harnessEnvelope()\n got: %s\nwant: %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestValidateHarnessOutputIgnoresFunctionStdout reproduces the pf13 failure
+// from run-20260807-132133: the response was byte-correct and the case still
+// failed, because a log line shared the stream with the envelope and the
+// comparison fell back to substring containment.
+func TestValidateHarnessOutputIgnoresFunctionStdout(t *testing.T) {
+	expected := `{"statusCode": 200, "body": "\"Welcome to the Low Complexity Lambda Function!\""}`
+	polluted := `2026/08/07 15:35:19 Function handle called with event: {"httpMethod":"GET"}` +
+		harnessOutputMarker +
+		`{"response":{"statusCode":200,"headers":null,"body":"\"Welcome to the Low Complexity Lambda Function!\""}}`
+
+	if ok, reason := validateHarnessOutput([]byte(expected), polluted, compare.Tolerant); !ok {
+		t.Errorf("a correct response must pass despite the function's own stdout output, got: %s", reason)
+	}
+
+	// the guard must not swallow real divergences hidden behind the noise
+	wrong := `2026/08/07 15:35:19 chatter` + harnessOutputMarker +
+		`{"response":{"statusCode":500,"body":"\"Welcome to the Low Complexity Lambda Function!\""}}`
+	if ok, reason := validateHarnessOutput([]byte(expected), wrong, compare.Tolerant); ok {
+		t.Error("a genuine mismatch must still fail when the function also printed")
+	} else if !strings.Contains(reason, "statusCode") {
+		t.Errorf("mismatch reason should name the diverging path, got: %s", reason)
+	}
+}
+
+// TestGoPackageTesterToleratesStdoutLoggingFunction is the end-to-end form:
+// pf13's exact pattern - a package-level logger bound to os.Stdout, which is
+// initialized before main runs and so cannot be redirected by main - must
+// still produce a passing test.
+func TestGoPackageTesterToleratesStdoutLoggingFunction(t *testing.T) {
+	dir := writeHarnessPackage(t, `package main
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"os"
+)
+
+// initialized before main(): this logger holds the real stdout handle
+var logger = log.New(os.Stdout, "", log.LstdFlags)
+
+type response struct {
+	StatusCode int    `+"`"+`json:"statusCode"`+"`"+`
+	Body       string `+"`"+`json:"body"`+"`"+`
+}
+
+func handle(ctx context.Context, event json.RawMessage) (response, error) {
+	logger.Printf("Function handle called with event: %s", string(event))
+	return response{StatusCode: 200, Body: "\"Welcome\""}, nil
+}
+`)
+	buildFn(t, dir)
+	runner := pipeline.NewRunner(context.Background(), nil, nil)
+	runner.SetWorkingDir(dir)
+	tester := NewGoPackageTester(map[string]interface{}{})
+
+	req := &domain.ConversionRequest{
+		Metrics: &domain.Metrics{TestCases: map[string]bool{}},
+		WorkingPackage: &domain.DeploymentPackage{
+			RootFile: "package main",
+			TestFiles: map[string]string{
+				"test/t1.json": `{"name":"t1","payload":{"httpMethod":"GET"},"expectedOutput":{"statusCode":200,"body":"\"Welcome\""}}`,
+			},
+		},
+	}
+
+	if err := tester.Apply(runner, req); err != nil {
+		t.Fatalf("a correct handler that logs to stdout must pass, got: %v", err)
+	}
+	if !req.Metrics.TestCases["t1"] {
+		t.Errorf("outcome not recorded as passing: %+v", req.Metrics.TestOutcomes)
+	}
+}
+
+// TestHarnessKeepsStdoutClean checks the harness's first layer directly: a
+// function using fmt.Print* (which resolves os.Stdout at call time) has its
+// output moved to stderr, so it stays available as failure evidence without
+// ever reaching the response channel.
+func TestHarnessKeepsStdoutClean(t *testing.T) {
+	dir := writeHarnessPackage(t, `package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+)
+
+type response struct {
+	StatusCode int `+"`"+`json:"statusCode"`+"`"+`
+}
+
+func handle(ctx context.Context, event json.RawMessage) (response, error) {
+	fmt.Println("progress chatter from the function")
+	return response{StatusCode: 200}, nil
+}
+`)
+	buildFn(t, dir)
+
+	cmd := exec.Command(filepath.Join(dir, "fn"))
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader("{}")
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("running the harness: %v (stderr: %s)", err, stderr.String())
+	}
+
+	if strings.Contains(stdout.String(), "progress chatter") {
+		t.Errorf("function output must not reach stdout, got: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "progress chatter") {
+		t.Errorf("function output must be preserved on stderr as evidence, got: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), harnessOutputMarker) {
+		t.Errorf("harness must mark its envelope, got: %q", stdout.String())
+	}
+	if !json.Valid([]byte(harnessEnvelope(stdout.String()))) {
+		t.Errorf("extracted envelope must be valid JSON, got: %q", stdout.String())
 	}
 }

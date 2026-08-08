@@ -255,7 +255,7 @@ func validateHarnessOutput(expected json.RawMessage, stdout string, mode compare
 	if len(expected) == 0 {
 		return true, ""
 	}
-	actual := []byte(stdout)
+	actual := []byte(harnessEnvelope(stdout))
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(actual, &envelope); err == nil {
 		if errVal, ok := envelope["error"]; ok {
@@ -273,6 +273,80 @@ func validateHarnessOutput(expected json.RawMessage, stdout string, mode compare
 		return false, err.Error()
 	}
 	return true, ""
+}
+
+// harnessOutputMarker mirrors the constant in test_handler.txt: the harness
+// prints it immediately before its response envelope, so everything after the
+// last occurrence is the envelope and everything before it is output the
+// translated function wrote to stdout.
+const harnessOutputMarker = "__REFAAS_HARNESS_OUTPUT__"
+
+// harnessEnvelope isolates the harness's response envelope from anything the
+// translated function printed on the same stream ([A18]).
+//
+// Two layers, because neither alone is enough. The marker handles the normal
+// case exactly. The balanced-object scan behind it covers stdout that has no
+// marker at all - a package built by an older builder, a hand-written harness
+// (the fixtures in this package's own tests emit a bare envelope), or a
+// function that somehow prints *after* handle returned - and it prefers the
+// last top-level object because the harness always writes the envelope last.
+//
+// Whatever it returns is still only a candidate: the caller unmarshals it and
+// falls back to comparing the raw text, so a wrong guess degrades to the old
+// behavior rather than inventing a pass.
+func harnessEnvelope(stdout string) string {
+	candidate := stdout
+	if i := strings.LastIndex(candidate, harnessOutputMarker); i >= 0 {
+		candidate = candidate[i+len(harnessOutputMarker):]
+	}
+	candidate = strings.TrimSpace(candidate)
+
+	if json.Valid([]byte(candidate)) {
+		return candidate
+	}
+	if obj := lastJSONObject(candidate); obj != "" {
+		return obj
+	}
+	return candidate
+}
+
+// lastJSONObject returns the last brace-balanced top-level JSON object in s,
+// or "" if there is none. It tracks string literals and escapes so a brace
+// inside a JSON string (common in the envelope, whose Body is a JSON-encoded
+// string) does not throw the depth count off.
+func lastJSONObject(s string) string {
+	var (
+		depth    int
+		start    = -1
+		inString bool
+		escaped  bool
+		last     string
+	)
+	for i, r := range s {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\' && inString:
+			escaped = true
+		case r == '"':
+			inString = !inString
+		case inString:
+			// braces inside a string literal are data, not structure
+		case r == '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case r == '}':
+			if depth > 0 {
+				depth--
+				if depth == 0 && start >= 0 {
+					last = s[start : i+1]
+				}
+			}
+		}
+	}
+	return last
 }
 
 // routeGoTester labels outcomes this stage produced, so an analysis can tell

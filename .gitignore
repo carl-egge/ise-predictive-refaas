@@ -11,6 +11,9 @@ data
 /docs/*.bkp
 faasllm
 *.txt
+# ...except the Go test harness, which is source: it is //go:embed-ed by
+# internal/builder/builder.go, so a clone without it does not compile.
+!internal/builder/test_handler.txt
 .env
 
 .claude
