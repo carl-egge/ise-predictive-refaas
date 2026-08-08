@@ -10,7 +10,16 @@ import (
 // Report is the whole analysis of a set of run logs, in a shape that is both
 // printed and (with -json) machine readable for plotting.
 type Report struct {
+	// Translations holds the completed translations every figure below is
+	// computed from. Failed attempts are costed too but kept apart, in
+	// FailedAttempts - they spent energy without producing a result, so
+	// folding them into a per-function mean or a pass rate would misreport
+	// both (TODO.md [H2]).
 	Translations []TranslationEnergy `json:"translations"`
+
+	// FailedAttempts accounts for the jobs that never produced a translation.
+	// Nil when the run logs contain none.
+	FailedAttempts *FailedAttempts `json:"failed_attempts,omitempty"`
 
 	Count                int     `json:"count"`
 	TotalFacilityJoules  float64 `json:"total_facility_joules"`
@@ -30,6 +39,34 @@ type Report struct {
 	// AssumedModels lists models costed with the default coefficients because
 	// the config had no entry for them - a caveat the reader must see.
 	AssumedModels []string `json:"assumed_models,omitempty"`
+}
+
+// FailedAttempts accounts for the jobs that spent energy without producing a
+// translation, so a run's total spend is visible and the cost of a *successful*
+// translation can be stated with its failures amortized in.
+//
+// This is the half of the picture the run log used to discard entirely. In the
+// first full batch it was the larger half: six of fourteen jobs, holding 68% of
+// the inference energy, because a job that fails is usually one that exhausted
+// its repair budget first.
+type FailedAttempts struct {
+	Count          int      `json:"count"`
+	FunctionIDs    []string `json:"function_ids,omitempty"`
+	PromptTokens   int      `json:"prompt_tokens"`
+	EvalTokens     int      `json:"eval_tokens"`
+	FacilityJoules float64  `json:"facility_joules"`
+	CO2eGrams      float64  `json:"co2e_grams"`
+	// ShareOfTotalSpend is this energy over the run's whole spend (completed
+	// plus failed).
+	ShareOfTotalSpend float64 `json:"share_of_total_spend"`
+	// JoulesPerSuccess is the run's total spend divided by the number of
+	// completed translations: what one working Go function actually cost,
+	// including the attempts that had to be paid for on the way. Zero when
+	// nothing completed.
+	JoulesPerSuccess float64 `json:"joules_per_success"`
+	// Translations carries the costed failures themselves, so -json consumers
+	// can see everything the run logs recorded rather than a summary.
+	Translations []TranslationEnergy `json:"translations,omitempty"`
 }
 
 // StageAggregate is one pipeline stage summed across translations.
@@ -65,10 +102,19 @@ type BreakEvenReport struct {
 	Max           float64            `json:"max"`
 }
 
-// Build assembles the report from costed translations.
-func Build(cfg *Config, translations []TranslationEnergy, runtime map[string]RuntimeMeasurement) *Report {
+// Build assembles the report from costed jobs.
+//
+// Completed translations drive every figure; failed attempts are summarised
+// separately by splitFailed. Both are kept, because the energy they cost was
+// really spent - see FailedAttempts.
+func Build(cfg *Config, jobs []TranslationEnergy, runtime map[string]RuntimeMeasurement) *Report {
+	translations, failed := splitFailed(jobs)
+
 	r := &Report{Translations: translations, Count: len(translations)}
+	r.FailedAttempts = summariseFailed(failed)
 	if len(translations) == 0 {
+		// Nothing completed: the failure summary is the only result there is,
+		// and its per-success figure has no denominator.
 		return r
 	}
 
@@ -136,7 +182,45 @@ func Build(cfg *Config, translations []TranslationEnergy, runtime map[string]Run
 	if len(runtime) > 0 {
 		r.BreakEven = buildBreakEven(translations, runtime)
 	}
+	if r.FailedAttempts != nil {
+		total := r.TotalFacilityJoules + r.FailedAttempts.FacilityJoules
+		if total > 0 {
+			r.FailedAttempts.ShareOfTotalSpend = r.FailedAttempts.FacilityJoules / total
+		}
+		r.FailedAttempts.JoulesPerSuccess = total / float64(len(translations))
+	}
 	return r
+}
+
+// splitFailed partitions costed jobs into completed translations and failed
+// attempts, preserving input order within each.
+func splitFailed(jobs []TranslationEnergy) (completed, failed []TranslationEnergy) {
+	for _, j := range jobs {
+		if j.Completed {
+			completed = append(completed, j)
+			continue
+		}
+		failed = append(failed, j)
+	}
+	return completed, failed
+}
+
+// summariseFailed totals the energy spent on jobs that produced no
+// translation. Returns nil when there were none, so a clean run prints no
+// failure section at all.
+func summariseFailed(failed []TranslationEnergy) *FailedAttempts {
+	if len(failed) == 0 {
+		return nil
+	}
+	out := &FailedAttempts{Count: len(failed), Translations: failed}
+	for _, f := range failed {
+		out.FunctionIDs = append(out.FunctionIDs, f.FunctionID)
+		out.PromptTokens += f.PromptTokens
+		out.EvalTokens += f.EvalTokens
+		out.FacilityJoules += f.FacilityJoules
+		out.CO2eGrams += f.CO2eGrams
+	}
+	return out
 }
 
 func addGroup(groups map[string]*GroupAggregate, key string, t TranslationEnergy) {
@@ -226,6 +310,10 @@ func median(values []float64) float64 {
 func (r *Report) Write(w io.Writer, cfg *Config) {
 	if r.Count == 0 {
 		fmt.Fprintln(w, "no completed translations found in the given run logs")
+		if r.FailedAttempts != nil {
+			fmt.Fprintf(w, "  (%d failed attempt(s) recorded, costing %s)\n",
+				r.FailedAttempts.Count, formatJoules(r.FailedAttempts.FacilityJoules))
+		}
 		return
 	}
 
@@ -240,7 +328,10 @@ func (r *Report) Write(w io.Writer, cfg *Config) {
 	fmt.Fprintf(w, "  energy total:  %s (%.1f g CO2e)\n", formatJoules(r.TotalFacilityJoules), r.TotalCO2eGrams)
 	fmt.Fprintf(w, "  per function:  mean %s, median %s\n",
 		formatJoules(r.MeanFacilityJoules), formatJoules(r.MedianFacilityJoules))
-	fmt.Fprintf(w, "  repair share:  %.1f%% of inference energy\n\n", r.RepairShare*100)
+	fmt.Fprintf(w, "  repair share:  %.1f%% of inference energy\n", r.RepairShare*100)
+	fmt.Fprintln(w)
+
+	r.writeFailedAttempts(w)
 
 	fmt.Fprintln(w, "By stage:")
 	fmt.Fprintf(w, "  %-20s %12s %7s %6s %6s %6s\n", "task", "energy", "share", "execs", "fails", "calls")
@@ -275,6 +366,27 @@ func (r *Report) Write(w io.Writer, cfg *Config) {
 	if len(r.BreakEven.Missing) > 0 {
 		fmt.Fprintf(w, "  no runtime measurement for: %s\n", strings.Join(r.BreakEven.Missing, ", "))
 	}
+}
+
+// writeFailedAttempts states what the run spent on jobs that produced nothing.
+//
+// It is printed above the breakdowns rather than tucked at the end because it
+// changes how every figure above it should be read: those describe the
+// translations that succeeded, and this is what the same run also paid for.
+func (r *Report) writeFailedAttempts(w io.Writer) {
+	f := r.FailedAttempts
+	if f == nil {
+		fmt.Fprintf(w, "Failed attempts:  none - every recorded job produced a translation\n\n")
+		return
+	}
+
+	fmt.Fprintf(w, "Failed attempts: %d (no translation produced; excluded from every figure above)\n", f.Count)
+	fmt.Fprintf(w, "  functions:     %s\n", strings.Join(f.FunctionIDs, ", "))
+	fmt.Fprintf(w, "  tokens:        %d prompt / %d output\n", f.PromptTokens, f.EvalTokens)
+	fmt.Fprintf(w, "  energy wasted: %s (%.1f g CO2e) - %.1f%% of this run's total spend\n",
+		formatJoules(f.FacilityJoules), f.CO2eGrams, f.ShareOfTotalSpend*100)
+	fmt.Fprintf(w, "  cost per successful translation, failures amortized in: %s\n\n",
+		formatJoules(f.JoulesPerSuccess))
 }
 
 func writeGroups(w io.Writer, title string, groups []GroupAggregate) {

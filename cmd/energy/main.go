@@ -8,6 +8,12 @@
 // production behaviour. All constants live in the config file, so replacing an
 // assumed value with a measured one is an edit there, not here.
 //
+// Run logs archive every finished job, including the ones that produced no
+// translation. Those are costed but reported apart: every table here describes
+// completed translations, and the "Failed attempts" section states what the
+// same run spent on the rest, plus the cost per success with failures
+// amortized in (TODO.md [H2]).
+//
 //	go run ./cmd/energy runs/run-*.jsonl
 //	go run ./cmd/energy -sweep runs/run-*.jsonl
 //	go run ./cmd/energy -runtime evaluation/runtime.json -json runs/run-*.jsonl
@@ -60,11 +66,11 @@ func run(configPath, runtimePath string, logs []string, asJSON, sweep bool) erro
 		}
 	}
 
-	translations := make([]TranslationEnergy, 0, len(records))
+	jobs := make([]TranslationEnergy, 0, len(records))
 	for _, rec := range records {
-		translations = append(translations, Evaluate(cfg, rec))
+		jobs = append(jobs, Evaluate(cfg, rec))
 	}
-	report := Build(cfg, translations, runtime)
+	report := Build(cfg, jobs, runtime)
 
 	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -74,7 +80,10 @@ func run(configPath, runtimePath string, logs []string, asJSON, sweep bool) erro
 
 	report.Write(os.Stdout, cfg)
 	if sweep {
-		WriteSensitivity(os.Stdout, cfg, translations)
+		// Completed translations only (report.Translations, not jobs): the
+		// table is "mean energy per translation", so its denominator must be
+		// the same one the central estimate above it uses.
+		WriteSensitivity(os.Stdout, cfg, report.Translations)
 	}
 	return nil
 }

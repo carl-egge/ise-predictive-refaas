@@ -93,11 +93,14 @@ type StageEnergy struct {
 
 // TranslationEnergy is the energy of one translation run.
 type TranslationEnergy struct {
-	FunctionID string        `json:"function_id"`
-	JobID      string        `json:"job_id,omitempty"`
-	Bucket     string        `json:"bucket,omitempty"`
-	UsesAWS    bool          `json:"uses_aws"`
-	Stages     []StageEnergy `json:"stages,omitempty"`
+	FunctionID string `json:"function_id"`
+	JobID      string `json:"job_id,omitempty"`
+	Bucket     string `json:"bucket,omitempty"`
+	UsesAWS    bool   `json:"uses_aws"`
+	// Completed distinguishes a translation from a failed attempt. Both cost
+	// energy; only the former is a result, so the report separates them.
+	Completed bool          `json:"completed"`
+	Stages    []StageEnergy `json:"stages,omitempty"`
 
 	PromptTokens int `json:"prompt_tokens"`
 	EvalTokens   int `json:"eval_tokens"`
@@ -132,6 +135,7 @@ func Evaluate(cfg *Config, rec JobRecord) TranslationEnergy {
 	out := TranslationEnergy{
 		FunctionID:   rec.FunctionID,
 		JobID:        rec.JobID,
+		Completed:    rec.IsCompleted(),
 		FailureKinds: map[string]int{},
 	}
 	if out.FunctionID == "" {

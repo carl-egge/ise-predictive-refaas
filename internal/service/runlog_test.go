@@ -123,19 +123,63 @@ func TestRunLogRecordsCompletedJob(t *testing.T) {
 // translations enter the persistent metrics. A failed or cancelled job has no
 // translation to evaluate, and mixing it in would distort the per-function
 // figures.
-func TestRunLogSkipsIncompleteJobs(t *testing.T) {
+func TestRunLogRecordsIncompleteJobsAsFailed(t *testing.T) {
 	rl := testRunLog(t)
 
 	failed := completedJob("f7")
 	failed.Completed = false
 	rl.recordJob(failed, "chatai")
 
-	if records := readRecords(t, rl); records != nil {
-		t.Fatalf("an incomplete job must not be archived, got %+v", records)
+	records := readRecords(t, rl)
+	var job *runLogRecord
+	for i, rec := range records {
+		if rec.Type == runLogJob {
+			job = &records[i]
+		}
 	}
-	// nothing written at all - not even an empty file
-	if _, err := os.Stat(rl.path); !os.IsNotExist(err) {
-		t.Errorf("run log file should not exist yet, stat err = %v", err)
+	if job == nil {
+		t.Fatalf("a failed job must still be archived - its tokens were spent: %+v", records)
+	}
+	if job.Completed == nil {
+		t.Fatal("completed must be written explicitly, not omitted: an absent field means 'completed' to readers")
+	}
+	if *job.Completed {
+		t.Error("a job that produced no translation must be recorded as completed=false")
+	}
+	if job.Metrics == nil || job.Metrics.FunctionID != "f7" {
+		t.Errorf("a failed job's metrics must survive too: %+v", job.Metrics)
+	}
+}
+
+// TestRunLogMarksCompletedJobs is the other half: the flag must actually
+// distinguish the two, or the analysis cannot filter on it.
+func TestRunLogMarksCompletedJobs(t *testing.T) {
+	rl := testRunLog(t)
+	rl.recordJob(completedJob("f1"), "chatai")
+
+	for _, rec := range readRecords(t, rl) {
+		if rec.Type != runLogJob {
+			continue
+		}
+		if rec.Completed == nil || !*rec.Completed {
+			t.Errorf("a completed translation must be recorded as completed=true, got %v", rec.Completed)
+		}
+	}
+}
+
+// TestRunLogCompletedFlagOmittedOnNonJobRecords keeps the header and
+// reconfigure markers free of a field that only means something for a job.
+func TestRunLogCompletedFlagOmittedOnNonJobRecords(t *testing.T) {
+	rl := testRunLog(t)
+	rl.recordReconfigure("chatai", "switched model")
+
+	for _, rec := range readRecords(t, rl) {
+		if rec.Type == runLogJob {
+			continue
+		}
+		if rec.Completed != nil {
+			t.Errorf("%s record should carry no completed flag, got %v", rec.Type, *rec.Completed)
+		}
 	}
 }
 

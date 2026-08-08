@@ -89,6 +89,13 @@ func (cc *GoPackageTester) Apply(runner *pipeline.Runner, request *domain.Conver
 	// backend is off, in which case it points at an unreachable local address
 	// so an AWS call fails fast instead of leaving the SDK to find a real one.
 	awsEndpoint, awsRegion := runner.FlociEndpoint(), runner.FlociRegion()
+	if request.Metrics != nil {
+		// A new validation round supersedes the last one: this stage is
+		// re-entered after every recovery hop and re-runs every fixture, so
+		// keeping the earlier rounds would multiply the recorded test count
+		// and leave repaired cases recorded as failures too ([A19]).
+		request.Metrics.BeginTestRound()
+	}
 	failures := make([]domain.TestFailure, 0)
 	log.Debugf("Running GoPackageTester with %d tests", len(pkg.TestFiles))
 	// Parse per file (rather than fixture.FromPackage) so one broken fixture

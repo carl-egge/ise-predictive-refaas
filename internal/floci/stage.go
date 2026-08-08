@@ -71,6 +71,14 @@ func (t *FlociTester) Apply(runner *pipeline.Runner, req *domain.ConversionReque
 		return err
 	}
 
+	if req.Metrics != nil {
+		// Same rule as goTester: the outcomes describe the latest round, not
+		// every round the repair loop went through ([A19]). Reset here rather
+		// than at the case loop so a round that dies during deploy reports no
+		// validated cases - which is true - instead of the previous round's.
+		req.Metrics.BeginTestRound()
+	}
+
 	start := time.Now()
 	zipBytes, err := packageLambda(ctx, req.WorkingPackage)
 	if err != nil {

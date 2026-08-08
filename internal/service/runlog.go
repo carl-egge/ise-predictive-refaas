@@ -28,14 +28,24 @@ const defaultRunLogDir = "runs"
 // records stay comparable across machines and can be cross-referenced with
 // server-side data if the provider supplies any.
 type runLogRecord struct {
-	Type       string          `json:"type"`
-	RunID      string          `json:"run_id"`
-	Timestamp  time.Time       `json:"timestamp"`
-	JobID      string          `json:"job_id,omitempty"`
-	FunctionID string          `json:"function_id,omitempty"`
-	LLMClient  string          `json:"llm_client,omitempty"`
-	Metrics    *domain.Metrics `json:"metrics,omitempty"`
-	Note       string          `json:"note,omitempty"`
+	Type       string    `json:"type"`
+	RunID      string    `json:"run_id"`
+	Timestamp  time.Time `json:"timestamp"`
+	JobID      string    `json:"job_id,omitempty"`
+	FunctionID string    `json:"function_id,omitempty"`
+	LLMClient  string    `json:"llm_client,omitempty"`
+	// Completed reports whether the conversion produced a translation. It is a
+	// pointer so that `false` is written explicitly while the non-job record
+	// types (run_start, reconfigure) omit the field entirely - a plain bool
+	// with omitempty would drop exactly the value that matters here.
+	//
+	// Readers must treat an *absent* field as true: run logs written before
+	// failed jobs were archived contain completed jobs only, so defaulting to
+	// false would retroactively mark every historical translation as a
+	// failure.
+	Completed *bool           `json:"completed,omitempty"`
+	Metrics   *domain.Metrics `json:"metrics,omitempty"`
+	Note      string          `json:"note,omitempty"`
 }
 
 // runLog appends one JSON object per finished job to runs/<run-id>.jsonl.
@@ -46,8 +56,11 @@ type runLogRecord struct {
 // record is opened, written and closed immediately: a finished job's record
 // must survive whatever happens to the next one.
 //
+// Every finished job is archived, successful or not, tagged with `completed` -
+// see recordJob for why the failures belong here too.
+//
 // The file is created lazily, on the first record, so a service that never
-// completes a job leaves nothing behind.
+// finishes a job leaves nothing behind.
 type runLog struct {
 	mu    sync.Mutex
 	dir   string
@@ -113,7 +126,7 @@ func (rl *runLog) append(rec runLogRecord) {
 			RunID:     rl.runID,
 			Timestamp: time.Now().UTC(),
 		})
-		log.Infof("run log: archiving completed jobs to %s", rl.path)
+		log.Infof("run log: archiving finished jobs to %s", rl.path)
 	}
 	rl.writeLine(f, rec)
 }
@@ -129,29 +142,42 @@ func (rl *runLog) writeLine(f *os.File, rec runLogRecord) {
 	}
 }
 
-// recordJob archives a finished conversion.
+// recordJob archives a finished conversion, whether or not it produced a
+// translation, tagging each record with `completed`.
 //
-// Only *completed* translations are persisted (maintainer decision): a job
-// that failed or was cancelled did spend tokens, but it has no translation to
-// evaluate, and mixing the two would silently distort per-function energy and
-// success figures. The guard lives here rather than only at the call site so
-// no future caller can bypass it by accident; failures remain visible through
-// /metrics and the logs.
+// This used to persist completed jobs only, on the grounds that a failed job
+// has no translation to evaluate and mixing the two would distort per-function
+// energy and success figures. That reasoning holds for the analysis and is
+// where it now lives - cmd/energy reports completed translations by default -
+// but it was the wrong place to enforce it, for two reasons the first full
+// batch made concrete (TODO.md [H2], run-20260807-132133):
+//
+//   - A failed attempt still spent its tokens. In that batch the six failed
+//     jobs accounted for 86.9 kJ of the run's 127.3 kJ - 68% of the inference
+//     energy - and none of it was archived, because failures tend to be the
+//     jobs that exhausted their repair budget. An E_translation that silently
+//     omits two thirds of the spend is not a measurement.
+//   - The fallback did not hold. Failures were said to remain "visible through
+//     /metrics", but that map is in-memory and wiped by /reconfigure - the very
+//     fragility this run log exists to remove. The data with no durable home
+//     was exactly the data the archive excluded.
+//
+// Discarding is not reversible; labelling is. A tagged record lets the analysis
+// filter, and lets a "cost per successful translation" figure amortize the
+// attempts that failed.
 func (rl *runLog) recordJob(req *domain.ConversionRequest, llmClient string) {
 	if rl == nil || req == nil || req.Metrics == nil {
 		return
 	}
-	if !req.Completed {
-		log.Debugf("run log: skipping job %s (not completed)", req.Id)
-		return
-	}
 
 	metrics := *req.Metrics
+	completed := req.Completed
 	rl.append(runLogRecord{
 		Type:       runLogJob,
 		JobID:      req.Id.String(),
 		FunctionID: metrics.FunctionID,
 		LLMClient:  llmClient,
+		Completed:  &completed,
 		Metrics:    &metrics,
 	})
 }

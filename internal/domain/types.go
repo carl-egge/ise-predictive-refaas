@@ -222,6 +222,31 @@ type TestOutcome struct {
 // TestingError.Failures and the chatlogs.
 const maxOutcomeDetail = 500
 
+// BeginTestRound discards the previous validation round's outcomes, so the
+// recorded set always describes the latest one ([A19]).
+//
+// A test stage executes several times per conversion - the pipeline retries it
+// after each recovery hop - and every execution re-runs every fixture. Without
+// this, the failed early rounds stay in the slice alongside the final one: a
+// three-round job reports three times its fixture count, and a case that was
+// eventually repaired appears as both a failure and a pass with nothing to
+// order them. Every consumer wants the end state - the run log archives how a
+// translation *ended up*, and cmd/energy counts passes straight off the slice.
+//
+// TestCases is cleared with it. It is kept in sync by RecordTestOutcome and is
+// last-write-wins per name, so it survives repeated rounds intact today; but
+// leaving it alone here would let entries for fixtures the new round no longer
+// runs outlive them, and two views of one job that disagree is the bug this
+// method exists to remove. The empty map (rather than nil) keeps the
+// serialized shape stable for existing /metrics consumers.
+//
+// TestError needs no equivalent: the stages assign it per round rather than
+// accumulating, which is the semantics this restores for the outcomes.
+func (m *Metrics) BeginTestRound() {
+	m.TestOutcomes = nil
+	m.TestCases = make(map[string]bool)
+}
+
 // RecordTestOutcome appends a per-case result and keeps the legacy
 // TestCases map in sync, so existing /metrics consumers keep working.
 func (m *Metrics) RecordTestOutcome(o TestOutcome) {

@@ -23,7 +23,21 @@ type JobRecord struct {
 	JobID      string          `json:"job_id"`
 	FunctionID string          `json:"function_id"`
 	LLMClient  string          `json:"llm_client"`
+	Completed  *bool           `json:"completed"`
 	Metrics    *domain.Metrics `json:"metrics"`
+}
+
+// IsCompleted reports whether the record describes a job that produced a
+// translation.
+//
+// An absent field means completed. Run logs written before failed jobs were
+// archived contain nothing but completed jobs, so decoding a missing
+// `completed` into Go's zero value would retroactively reclassify every
+// historical translation as a failure - and silently drop those runs out of
+// every table in this report. The pointer is what makes "not recorded"
+// distinguishable from "recorded as false".
+func (r JobRecord) IsCompleted() bool {
+	return r.Completed == nil || *r.Completed
 }
 
 // recordTypeJob is the run-log line type carrying a finished translation.

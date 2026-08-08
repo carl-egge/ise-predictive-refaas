@@ -273,9 +273,9 @@ func TestBreakEven(t *testing.T) {
 func TestBuildGroupsByReportingAxes(t *testing.T) {
 	cfg := testConfig()
 	translations := []TranslationEnergy{
-		{FunctionID: "f1", Bucket: "A", UsesAWS: false, FacilityJoules: 100, TestsPassed: 3},
-		{FunctionID: "f2", Bucket: "A", UsesAWS: true, FacilityJoules: 300, TestsPassed: 2, TestsFailed: 1},
-		{FunctionID: "f3", Bucket: "D+", UsesAWS: true, FacilityJoules: 800, TestsFailed: 2},
+		{FunctionID: "f1", Bucket: "A", UsesAWS: false, FacilityJoules: 100, TestsPassed: 3, Completed: true},
+		{FunctionID: "f2", Bucket: "A", UsesAWS: true, FacilityJoules: 300, TestsPassed: 2, TestsFailed: 1, Completed: true},
+		{FunctionID: "f3", Bucket: "D+", UsesAWS: true, FacilityJoules: 800, TestsFailed: 2, Completed: true},
 	}
 
 	report := Build(cfg, translations, map[string]RuntimeMeasurement{
@@ -327,5 +327,117 @@ func TestReportJSONIsSelfContained(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("JSON report missing %s: %s", want, data)
 		}
+	}
+}
+
+// --- [H2] failed attempts are archived, costed, and reported apart ----------
+
+// TestJobRecordTreatsAbsentCompletedAsSuccess is the back-compatibility rule
+// that keeps historical run logs readable: they predate the completed flag and
+// contain nothing but completed jobs, so decoding a missing field into Go's
+// zero value would reclassify every past translation as a failure and empty
+// every table in the report.
+func TestJobRecordTreatsAbsentCompletedAsSuccess(t *testing.T) {
+	var legacy JobRecord
+	if err := json.Unmarshal([]byte(`{"type":"job","function_id":"f1"}`), &legacy); err != nil {
+		t.Fatalf("decoding a pre-flag record: %v", err)
+	}
+	if !legacy.IsCompleted() {
+		t.Error("a record without the completed field must be read as completed")
+	}
+
+	var failed JobRecord
+	if err := json.Unmarshal([]byte(`{"type":"job","function_id":"f2","completed":false}`), &failed); err != nil {
+		t.Fatalf("decoding a failed record: %v", err)
+	}
+	if failed.IsCompleted() {
+		t.Error("completed:false must be read as a failed attempt, not confused with absent")
+	}
+}
+
+// TestBuildSeparatesFailedAttempts: failures must not move any per-translation
+// figure, but their energy must still be visible - that is the whole point of
+// archiving them ([H2]).
+func TestBuildSeparatesFailedAttempts(t *testing.T) {
+	cfg := testConfig()
+	jobs := []TranslationEnergy{
+		{FunctionID: "f1", Bucket: "A", FacilityJoules: 100, TestsPassed: 2, PromptTokens: 10, Completed: true},
+		{FunctionID: "f2", Bucket: "A", FacilityJoules: 300, TestsPassed: 1, PromptTokens: 30, Completed: true},
+		{FunctionID: "f9", Bucket: "B", FacilityJoules: 600, TestsFailed: 3, PromptTokens: 60, CO2eGrams: 1.5},
+	}
+
+	report := Build(cfg, jobs, nil)
+
+	// the headline figures describe the two completed translations only
+	if report.Count != 2 {
+		t.Errorf("Count = %d, want 2 completed translations", report.Count)
+	}
+	if math.Abs(report.TotalFacilityJoules-400) > 0.01 {
+		t.Errorf("total energy = %v, want 400 (failures excluded)", report.TotalFacilityJoules)
+	}
+	if math.Abs(report.MeanFacilityJoules-200) > 0.01 {
+		t.Errorf("mean = %v, want 200 - a failed attempt must not enter the denominator", report.MeanFacilityJoules)
+	}
+	if report.TotalPromptTokens != 40 {
+		t.Errorf("prompt tokens = %d, want 40 (failures excluded)", report.TotalPromptTokens)
+	}
+	for _, g := range report.ByBucket {
+		if g.Group == "B" {
+			t.Errorf("a failed attempt must not appear as a reporting group: %+v", g)
+		}
+	}
+
+	// ...and the failure is still fully accounted for
+	f := report.FailedAttempts
+	if f == nil {
+		t.Fatal("failed attempts must be reported, not dropped")
+	}
+	if f.Count != 1 || len(f.FunctionIDs) != 1 || f.FunctionIDs[0] != "f9" {
+		t.Errorf("failed attempt not identified: %+v", f)
+	}
+	if math.Abs(f.FacilityJoules-600) > 0.01 || f.PromptTokens != 60 {
+		t.Errorf("failed attempt cost wrong: %+v", f)
+	}
+	// 600 wasted of 1000 spent
+	if math.Abs(f.ShareOfTotalSpend-0.6) > 0.001 {
+		t.Errorf("share of total spend = %v, want 0.6", f.ShareOfTotalSpend)
+	}
+	// 1000 J spent to obtain 2 working translations
+	if math.Abs(f.JoulesPerSuccess-500) > 0.01 {
+		t.Errorf("cost per success = %v, want 500 with failures amortized in", f.JoulesPerSuccess)
+	}
+	if len(f.Translations) != 1 {
+		t.Errorf("the costed failures themselves must survive for -json consumers: %+v", f.Translations)
+	}
+}
+
+// TestBuildWithoutFailuresReportsNone keeps a clean run clean: no failure
+// section, and nothing that could be mistaken for one.
+func TestBuildWithoutFailuresReportsNone(t *testing.T) {
+	report := Build(testConfig(), []TranslationEnergy{
+		{FunctionID: "f1", FacilityJoules: 100, Completed: true},
+	}, nil)
+	if report.FailedAttempts != nil {
+		t.Errorf("a run with no failures must report none, got %+v", report.FailedAttempts)
+	}
+}
+
+// TestBuildAllFailedStillAccountsEnergy: a batch where nothing completed must
+// still say what it cost, rather than reporting an empty run.
+func TestBuildAllFailedStillAccountsEnergy(t *testing.T) {
+	report := Build(testConfig(), []TranslationEnergy{
+		{FunctionID: "f9", FacilityJoules: 600},
+	}, nil)
+
+	if report.Count != 0 {
+		t.Errorf("Count = %d, want 0 completed translations", report.Count)
+	}
+	if report.FailedAttempts == nil || math.Abs(report.FailedAttempts.FacilityJoules-600) > 0.01 {
+		t.Fatalf("energy spent on a fully failed batch must still be reported: %+v", report.FailedAttempts)
+	}
+	// no completed translations means no denominator; it must not divide by zero
+	if report.FailedAttempts.JoulesPerSuccess != 0 {
+		t.Errorf("cost per success has no meaning with zero successes, got %v",
+			report.FailedAttempts.JoulesPerSuccess)
 	}
 }

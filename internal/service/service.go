@@ -152,9 +152,10 @@ func (service *ConverterService) Start(ctx context.Context) {
 			service.results[request.Id] = request
 			service.mutex.Unlock()
 
-			// Archive completed translations immediately, so the batch
-			// survives a later crash, restart or /reconfigure. recordJob
-			// itself skips jobs that did not complete.
+			// Archive every finished job immediately, so the batch survives a
+			// later crash, restart or /reconfigure. Failures are archived too,
+			// tagged completed=false: their tokens were spent, and /metrics is
+			// not durable enough to be their only home (see recordJob).
 			service.runLog.recordJob(request, service.llmClientName())
 		}
 	}

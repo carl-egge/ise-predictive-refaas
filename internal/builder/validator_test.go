@@ -721,3 +721,76 @@ func handle(ctx context.Context, event json.RawMessage) (response, error) {
 		t.Errorf("extracted envelope must be valid JSON, got: %q", stdout.String())
 	}
 }
+
+// TestGoPackageTesterOutcomesDescribeLastRound is the end-to-end form of
+// [A19]: the stage is re-entered after a recovery hop, with the working
+// package rewritten in between. What it records must be the state of the code
+// that finally ran, not the union of every attempt. This mirrors the pf7 case
+// in run-20260807-132133, which archived 9 passed / 10 outcomes for a
+// five-fixture function that in truth ended at 5/5.
+func TestGoPackageTesterOutcomesDescribeLastRound(t *testing.T) {
+	const broken = `package main
+
+import "fmt"
+
+func main() { fmt.Println(` + "`" + `{"response":{"statusCode":500}}` + "`" + `) }
+`
+	const repaired = `package main
+
+import "fmt"
+
+func main() { fmt.Println(` + "`" + `{"response":{"statusCode":200}}` + "`" + `) }
+`
+
+	dir := writeRunnablePackage(t, broken)
+	buildFn(t, dir)
+	runner := pipeline.NewRunner(context.Background(), nil, nil)
+	runner.SetWorkingDir(dir)
+	tester := NewGoPackageTester(map[string]interface{}{})
+
+	req := &domain.ConversionRequest{
+		Metrics: &domain.Metrics{TestCases: map[string]bool{}},
+		WorkingPackage: &domain.DeploymentPackage{
+			RootFile: "package main",
+			TestFiles: map[string]string{
+				"test/t1.json": `{"name":"t1","payload":{},"expectedOutput":{"statusCode":200}}`,
+				"test/t2.json": `{"name":"t2","payload":{},"expectedOutput":{"statusCode":200}}`,
+			},
+		},
+	}
+
+	// round 1: both fixtures fail
+	if err := tester.Apply(runner, req); err == nil {
+		t.Fatal("the broken package should fail its fixtures")
+	}
+	if len(req.Metrics.TestOutcomes) != 2 {
+		t.Fatalf("round 1 should record one outcome per fixture, got %+v", req.Metrics.TestOutcomes)
+	}
+
+	// a recovery stage repairs the code, then the pipeline re-enters this task
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(repaired), 0o644); err != nil {
+		t.Fatalf("rewriting main.go: %v", err)
+	}
+	buildFn(t, dir)
+
+	// round 2: both pass
+	if err := tester.Apply(runner, req); err != nil {
+		t.Fatalf("the repaired package should pass, got: %v", err)
+	}
+
+	if len(req.Metrics.TestOutcomes) != 2 {
+		t.Fatalf("outcomes must describe the last round only, got %d entries: %+v",
+			len(req.Metrics.TestOutcomes), req.Metrics.TestOutcomes)
+	}
+	for _, o := range req.Metrics.TestOutcomes {
+		if !o.Passed {
+			t.Errorf("outcome %q still carries the pre-repair failure: %+v", o.Name, o)
+		}
+	}
+	if !req.Metrics.TestCases["t1"] || !req.Metrics.TestCases["t2"] {
+		t.Errorf("legacy TestCases map out of sync with the last round: %v", req.Metrics.TestCases)
+	}
+	if req.Metrics.TestError != 0 {
+		t.Errorf("TestError should describe the last round too, got %d", req.Metrics.TestError)
+	}
+}
