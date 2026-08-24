@@ -42,7 +42,7 @@
 - [x] [C5] Detect repair-loop stagnation (narrowed — see item)
 - [x] [C6] Validate uploads and fixtures before spending LLM tokens
 - [x] [C7] Deterministic and complete test context for prompts
-- [ ] [C8] Python feature pre-scan feeding the translate prompt
+- [ ] [C8] Python feature pre-scan feeding the translate prompt — **also [I3]'s feature extractor; do first (P0)**
 - [~] [C9] ~~Support multi-file Python inputs~~ — **dropped**, single-file is the contract
 - [x] [C10] Unified fixture schema + per-job validation routing (goTester vs. flociTester)
 - [x] [C11] Prevent AWS leakage: always resolve to the Floci harness
@@ -84,17 +84,31 @@
 - [x] [H3] Record the model per stage for per-model energy coefficients
 - [x] [H4] Energy-model script over the run logs, constants in one config file
 - [ ] [H5] Account for or bound local compute energy (build/test/Floci)
-- [ ] [H6] Go vs. Python runtime measurement harness reusing the fixture payloads
+- [ ] [H6] Go vs. Python runtime measurement harness reusing the fixture payloads — **before the [I1] run (P0)**
 - [ ] [H7] Verify token accounting across connector-internal retries
 - [ ] [H8] `cmd/energy` reports a coefficient assumption for stages that consumed no tokens
 - [x] [H9] Integrate the GWDG infrastructure reply into the energy constants
+
+**I. Prediction & candidate selection** (new 2026-08-24, decisions settled the same day — *nothing here exists in code yet*)
+*Order: [C8]/[I3] scanner + [H6] runtime harness → [I1] one run (+[I11] in parallel) → [I2] → [I4]–[I7].*
+- [ ] [I3] Deterministic ex-ante feature extractor — the accurate Python-AST scanner, built as [C8]'s `pyScan` **(P0 — do first)**
+- [ ] [I1] Labelled corpus: one full `evaluation_set` pass; label = `all_tests_passed` **(P0 — blocks [I2], [I4]–[I9])**
+- [ ] [I11] Leakage audit: `f92`/`f94` and `f35`/`f44` are confirmed near-duplicates; build the `group_id` key **(P0)**
+- [ ] [I2] Signal check: confirm the base rate leaves anything to predict, before modelling **(P0)**
+- [ ] [I4] One feature/label table every method and baseline consumes **(P0)**
+- [ ] [I5] Baselines: always-translate, never, majority, `cc` threshold, infeasibility rule list
+- [ ] [I6] Candidate methods: M1 logistic regression + M2 random forest (M3 LLM-judge optional; MLP deferred) **(P0)**
+- [ ] [I7] Split protocol (repeated stratified *group* k-fold, not one holdout) + net energy vs. always-translate **(P0)**
+- [ ] [I8] Measure the predictor's own energy in the same units as the pipeline
+- [ ] [I9] Secondary objective (energy-saving potential): compose from `P(success)` × [H6]'s ΔE, don't train a second model
+- [ ] [I10] Service integration: `internal/predictor` + `predictGate` converter, off by default
 
 ---
 
 > Produced by a full read of the orchestration (`internal/pipeline`), all prompt templates and
 > their embed wiring, the build/test harness (`internal/builder`), the LLM connectors, the
 > service layer, the Floci stage, the paper fixture set (`examples/paper/f1–f14`), and the
-> recorded failure evidence in `examples/metrics/`. Items are grouped by category (A–G) and
+> recorded failure evidence in `examples/metrics/`. Items are grouped by category (A–I) and
 > ordered by priority within each group. Checkboxes track implementation status.
 
 ## Executive summary
@@ -473,7 +487,8 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Problem / current state: The paper set includes constructs a small model mishandles silently: decorators (`f13`), generators/`inspect` (`f14`), third-party libs (`requests` in `f9`/`f10`, `boto3`), recursion (`f6`). Nothing analyzes the source; infeasible translations are discovered only after the full budget is spent — the exact waste the thesis's "prediction" goal targets.
 - Proposed change: A non-LLM converter that scans the Python source for third-party imports (mapped through a static table: `requests`→`net/http`, `boto3.client("s3")`→`aws-sdk-go-v2/service/s3`, …), decorators, `async`, `yield`, `**kwargs`, raised exception classes. Writes findings into `req.Metadata` (`{{ .py_features }}`, `{{ .lib_hints }}`) and emits a feasibility-warning metric.
 - Why: Injecting explicit API-mapping hints removes the hardest reasoning step (library equivalence) from the model's job — the "more structure, less reliance on large-model reasoning" tradeoff this pipeline needs at 30B scale.
-- Architecture impact: Local (fits the registry architecture by design) | Effort: M | Priority: P1
+- Architecture impact: Local (fits the registry architecture by design) | Effort: M | Priority: **P0** (raised 2026-08-24)
+- **Scope extended and rescheduled 2026-08-24 (maintainer decision):** this scanner is also the prediction module's feature extractor — see [I3], which specifies the accurate Python-AST variant and the fixed-width numeric vector emitted alongside the prompt hints built here. Build it **once**, for both consumers, and land it **before** the [I1] labelling run so that run records features and outcomes together. [I3]'s `meta.json` reproduction check (`cc`/`lloc` over all 95 artifacts) doubles as this item's acceptance test.
 
 ### [~] [C9] Support multi-file Python inputs — DROPPED
 - Category: Feature
@@ -875,7 +890,8 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Problem / current state: EVALUATION.md §6 requires methodologically symmetric measurement of both versions; nothing exists yet. The Go side already has its harness (JSON event on stdin → `handle` → `{"response": …}` on stdout); the Python side has no equivalent, and cold start is not separated from steady state anywhere.
 - Proposed change: a Python harness mirroring the Go one exactly, plus a driver that runs both over the *same* fixture payloads on the same machine under `perf stat -e power/energy-pkg/,power/energy-ram/`, measuring cold start (one process per invocation) separately from steady state (N invocations in one process), applying the same PUE to both sides.
 - Why this improves the evaluation: reusing the canonical fixtures guarantees both sides see identical inputs through identical envelopes by construction, which is precisely the symmetry the comparison depends on — and it means the harness needs no new test data. Based on reasoning; no external source needed.
-- Architecture impact: None (separate tool) | Effort: M | Priority: P1
+- Architecture impact: None (separate tool) | Effort: M | Priority: **P0** (raised 2026-08-24)
+- **Rescheduled 2026-08-24 (maintainer decision): implement this before the [I1] `evaluation_set` run.** The measured per-invocation ΔE is what [I9] composes the prediction module's secondary objective from, and running it first means the single pass yields labels, per-function `E_translation` *and* ΔE at once instead of needing a repeat for the missing term.
 
 ### [ ] [H7] Verify token accounting across connector-internal retries
 - Category: Evaluation
@@ -906,6 +922,214 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Verification: `TestSupersededCoefficientsStillDerive` pins the pre-reply figures (e_in 0.41, e_out 2.6, prefill 4900 tok/s, decode step 41 ms) against the current formula, so the claim "only the inputs changed, not the method" is testable rather than asserted. `TestShippedConfigIsValid` now also fails if the config silently reverts to BF16, loses either new sweep axis, or drops the market intensity. Two new tests cover the dual-CO₂ reporting and the case where no market intensity is configured (no fabricated zero).
 - Architecture impact: None (constants + separate tool) | Effort: M | Priority: **P0** (every energy figure in the thesis is linear in these)
 - Follow-up left open: node power and current PUE are still unanswered and worth one short follow-up mail — neither is likely sensitive, and node power is now the second-largest uncertainty. Concurrency is **not** worth pursuing: the refusal was explicit.
+
+---
+
+## I. Prediction & candidate selection (new — 2026-08-24)
+
+> Opened 2026-08-24; **maintainer decisions folded in the same day** (see "Decisions" at the end
+> of the section — label, single run, extractor, method set and [H6] ordering are all settled).
+> **Nothing in this section exists in code yet** — there is no predictor, no feature extractor,
+> no training data, and no ML dependency anywhere in the repo (`go.mod` is clean, `internal/`
+> has no `predictor` package, `scripts/` has no Python).
+>
+> **The decision problem.** Given an uploaded artifact *before any LLM call is made*, emit a
+> decision in {translate, skip} plus a score. Primary criterion: will the translation succeed?
+> Secondary: is the translation worth its energy? The two are different questions and are
+> deliberately handled differently — see [I9]: only the first is learned, the second is
+> *composed* from the first plus [H6]'s runtime measurements and `cmd/energy`.
+>
+> **The constraint that shapes every choice here.** The predictor's own energy must be
+> negligible against what it saves. From the pilot run, one wasted translation costs ~4–10 kJ;
+> a decision-tree or logistic-regression inference over ~25 numeric features costs on the order
+> of microjoules. That is a ~10⁹ margin, which means *any* classical model is affordable and the
+> real cost driver is **feature extraction**, not inference. So the rule is: features must be
+> deterministic, single-pass, and LLM-free. One LLM call for feature extraction would cost more
+> than everything else in this section combined ([I8] makes that quantitative rather than
+> asserted).
+>
+> **Execution order** (changed by the 2026-08-24 decisions — the extractor and [H6] now come
+> *before* the labelling run, so the run produces everything at once):
+>
+> ```
+> [C8]/[I3] accurate Python scanner  ─┐
+> [H6] Go-vs-Python runtime harness  ─┼─► [I1] one full evaluation_set run ─► [I2] signal check
+>                                     │        (labels + per-function E_translation + ΔE)
+> [I11] leakage audit ───────────────┘                    │
+>                                                          ▼
+>                              [I4] dataset table ─► [I5] baselines ─► [I6] LR + RF ─► [I7] evaluation
+>                                                                              │
+>                                                          [I8] predictor energy ─┴─► [I9] worthwhileness
+>                                                                                        │
+>                                                                                    [I10] integration
+> ```
+
+### [ ] [I1] Produce the labelled corpus: one full `evaluation_set` pass with per-function outcomes
+- Category: Prediction (data)
+- Affected component(s): `evaluation/evaluation_set` (95 artifacts), `internal/service/runlog.go` (already records everything needed), `runs/`, `cmd/energy`
+- Problem / current state: supervised prediction needs (features → outcome) pairs and **none exist**. `run-20260807-132133` covers 14 functions on the paper set, predates the [A18]/[A19]/[H2] fixes, and its own Open-Question entry says "re-run the set before citing anything from it". The `evaluation_set` — the only corpus large enough to train on at all — has no recorded run.
+- Proposed change: run the full 95-function set through `default.json` on the canonical model, with the Floci route enabled (40 of 95 functions need `setup` provisioning per EVALUATION_DATASET.md §6.4, and they will otherwise fail for infrastructure reasons and pollute the labels as if they were translation defects). Archive to `runs/` as usual; [H1]/[H2] already put `meta`, `per_task`, `test_outcomes` and `completed` into every record, so **no new instrumentation is needed** — the run log is already a usable label source.
+- **Label — SETTLED 2026-08-24: `all_tests_passed` on the final validation round.** Derived from `Metrics.TestOutcomes`, which post-[A19] describes the last round only. Rationale: it is the property the thesis actually claims, whereas `completed` conflates "every test passed" with "the pipeline gave up gracefully".
+  - Also record `pass_fraction` and `completed` as **secondary columns** in [I4]'s table. They cost nothing to carry, they let a regression variant be tried later without a re-run, and `completed` is the natural label for a "will this even build?" ablation.
+  - **Shape-mode handling:** 27 tests across 14 named functions (`f1 f6 f22 f34 f37 f43 f48 f49 f54 f63 f67 f80 f86 f91`) compare types only and cannot catch a value regression (EVALUATION_DATASET.md §6.2). They still count toward `all_tests_passed`, but [I4] carries a `shape_only_fraction` column per function so [I7] can report the comparison with those 14 excluded as a robustness check. Do not silently drop them — a positive resting entirely on shape-mode evidence is a weak positive, and the write-up should be able to say how many there are.
+  - **`f88/t1` has no `expectedOutput`** (§6.9) and only asserts the function does not error. Treat it as a pass condition as-is; note it where the label is defined.
+- **Repetitions — SETTLED 2026-08-24: one pass for now.** The consequence has to be stated rather than glossed: LLM translation is stochastic, so a single pass gives labels whose own reproducibility is **unmeasured**, and no classifier can exceed the reproducibility of its labels. Therefore:
+  - Every accuracy figure in [I7] is reported **without a known noise ceiling**, and the write-up must say so in exactly those terms — not "our model achieves X%" but "X% against single-run labels of unmeasured stability".
+  - A model that lands close to the base rate is then **ambiguous**: it may be a weak model or it may be at the noise floor. Single-run labels cannot distinguish those two, and that ambiguity is the price of the decision.
+  - **Cheapest partial mitigation, if a few hours free up later:** re-run only a **stratified 20-function subset** (5 per bucket) and report the flip rate on it as an *estimate* of the ceiling. That is ~30–50 min, not a second full pass, and it converts the limitation from unbounded to bounded. Recorded here as the obvious follow-up rather than a requirement.
+  - Keep the run id in the dataset filename ([I4]) so a second pass can be joined later without ambiguity.
+- Cost to plan for (measured, from `runs/batch-20260807-132133.csv`): 14 functions took 16.2 min wall-clock at 70 s/function mean, sequential (one worker, by design). `evaluation_set` is harder (higher cc, real repo code, Floci provisioning), so budget **2.5–4 h** for the pass. Energy, post-[H9] constants: ~4 kJ/function ⇒ ~385 kJ (~107 Wh). This is an overnight job, not an interactive one.
+- **Run it only once the prerequisites are in**, per the 2026-08-24 ordering: [C8]/[I3]'s scanner and [H6]'s runtime harness both land first, so this single pass yields labels, per-function `E_translation` *and* the ΔE measurements [I9] needs — instead of being repeated later for want of one of them.
+- Why: it is the single blocking dependency. Feature engineering, model choice and evaluation protocol can all be *designed* now (and are, below), but none can be *executed* without this.
+- Architecture impact: None (uses existing instrumentation) | Effort: S (to launch) / L (wall-clock) | Priority: **P0 — blocks [I2], [I4]–[I9]**
+
+### [ ] [I2] Signal check: confirm there is anything to predict before spending the day
+- Category: Prediction (data)
+- Affected component(s): the `evaluation_set` pass from [I1]
+- Problem / current state: the entire premise assumes the success rate sits somewhere in the middle. It might not. The paper-set pilot came out 8/14 (~57%), which is ideal — but that set was hand-built and half its failures were bad fixtures, not bad translations. If `evaluation_set` comes out at 90%+ success, "always translate" is near-optimal, there is almost nothing to gain, and any classifier will look good on accuracy while saving no energy. If it comes out at 10%, the same in reverse.
+- Proposed change: as soon as [I1] finishes (or on the first ~20 functions while it runs), check three numbers: overall `all_tests_passed` rate, per-bucket rate (A/B/C/D+), and the AWS vs non-AWS split. Abort criterion: if the base rate is outside roughly **[20%, 85%]**, or if per-bucket rates are flat, stop and reframe — see the fallback below.
+- Fallback if there is no signal, which is a **publishable result, not a failure**: report "at this pipeline's maturity, ex-ante selection cannot beat always-translate on this corpus, because the pipeline succeeds on X% of inputs regardless of their static profile" — and pivot the secondary objective ([I9], energy worthwhileness) to the primary one, since a function can be perfectly translatable and still not worth translating. With [H6] landing first, that pivot is fully supported by measured data rather than being a consolation prize.
+- Why: this is a one-day modelling budget under thesis time pressure. Half a day spent training models on a corpus with no separable structure is half a day lost; the check costs an hour of analysis on data [I1] produces anyway.
+- Architecture impact: None (analysis) | Effort: S | Priority: **P0 (gate on [I6])**
+
+### [ ] [I3] Deterministic ex-ante feature extractor — built as [C8]'s `pyScan`, accurate variant
+- Category: Prediction (features)
+- Affected component(s): **the same scanner [C8] specifies** — one implementation, two consumers; plus `internal/fixture` for the fixture-side features
+- **SETTLED 2026-08-24: build the accurate Python-AST scanner, and complete [C8] and [I3] together, before the [I1] run.** This closes the "Python subprocess vs. Go heuristic tokenizer" question in favour of real parsing: `cc`/Halstead stay comparable to the dataset's own radon-derived values, train/serve parity is guaranteed because training and the service call the *same* extractor, and [C8]'s prompt hints get accurate library/construct detection rather than regex approximations. The cost accepted with it is a Python interpreter in the service image.
+- Problem / current state: [C8] specifies a non-LLM Python source scanner that writes `{{ .py_features }}`/`{{ .lib_hints }}` into `req.Metadata` for the translate prompt. That is *exactly* the feature vector a predictor needs, computed at exactly the right moment (upload time, before any LLM call). Building two scanners would be duplicated work and would let the prompt hints and the model features drift apart.
+- Proposed change: one extractor emitting **both** shapes from one AST pass — the human-readable hint text [C8] injects into the prompt, and a fixed-width numeric vector (stable, versioned key order) for the model. Four feature families, all free:
+  1. **Size/complexity** — `lloc`, `cc`, `cc/lloc`, Halstead difficulty/vocabulary/length, max nesting depth, number of `def`s, branch and loop counts.
+  2. **Library surface** — number of imports, third-party import count, `aws` flag, distinct boto3 service count, one-hot over a *fixed, closed* vocabulary (`boto3`, `requests`, `dateutil`, `bs4`, `urllib3`, …) plus an `other` bucket, `stdlib_only` flag, and a **hard-infeasibility marker** for libraries with no realistic Go equivalent (`numpy`, `pandas`, `scipy`, ML stacks) — a function importing those is a near-deterministic skip and belongs in the rule baseline of [I5] as much as in the model.
+  3. **Dynamic-Python markers** — the constructs that actually break translation: `eval`/`exec`, `getattr`/`setattr`, decorators, `*args`/`**kwargs`, `yield`, `async`, comprehension count, class definitions, `try`/`except` and `raise` counts, regex use, pickle.
+  4. **Fixture-side features (free, and easy to overlook)** — available at upload from `internal/fixture` without touching the Python at all: number of test cases, mean payload size and nesting depth, count of cases declaring `setup`/`sideEffects`, `outputMode` distribution, expected-output arity. A side-effecting fixture set is plausibly a strong difficulty signal and costs nothing to read.
+- **Leakage rules, non-negotiable**: no feature may depend on anything knowable only *after* translation starts — no compiler diagnostics, no token counts, no stage durations, no test outcomes. And no feature may require an LLM call: in particular **do not use `meta.json`'s free-text `description`**, which reads as LLM-generated and would silently make every prediction cost an inference.
+- **Acceptance test — reproduce `meta.json`**: run the extractor over all 95 artifacts and compare its `cc`/`lloc` against the `meta.json` values produced by the external dataset pipeline. Report agreement and a stated tolerance. This is the extractor's test suite *and* the evidence that the predictor works on an arbitrary upload with no `meta.json` — which is what makes the contribution a mechanism rather than a dataset artefact. Where the two disagree, **the extractor's own value is what the model trains on**, so that training and serving see identical numbers.
+- Why: it is the only component on the critical path that is genuine engineering rather than analysis, it is already half-specified as [C8], and doing it before [I1] means the run records the feature vector alongside the outcome instead of it being reconstructed afterwards.
+- Architecture impact: Local (new converter via `RegisterConverterFactory`, per repo convention) | Effort: M | Priority: **P0 — do first, with [C8]**
+
+### [ ] [I4] One feature/label table as the single artifact every method consumes
+- Category: Prediction (data)
+- Affected component(s): new `evaluation/prediction/` (Python, scikit-learn, its own `requirements.txt`, **never** part of `go build` — the same separation `cmd/energy` keeps for the energy model)
+- Problem / current state: with several methods and a baseline set, the fastest way to produce an unreproducible comparison is to let each method assemble its own view of the data.
+- Proposed change: one script joining [I3]'s features to [I1]'s run-log labels into a single versioned CSV (`evaluation/prediction/dataset-<run-id>.csv`), one row per function. Columns:
+  - **Features** — [I3]'s vector, in its versioned key order.
+  - **Labels** — `all_tests_passed` (primary, settled), plus `pass_fraction`, `completed` and `shape_only_fraction` as secondaries.
+  - **Grouping** — `bucket`, `aws`, and **`group_id` from [I11]** (the near-duplicate/fork-aware group key, *not* `repo_uri`, which misses forks).
+  - **Costs** — measured `E_translation` per function from `cmd/energy -json`, and per-invocation ΔE from [H6]. These two are what let [I7] report energy rather than accuracy, and [I9] compose worthwhileness without a second model.
+  - Commit the CSV: it is small, and it makes every number in the thesis re-derivable without re-running the pipeline or holding an LLM budget.
+- Why: every method, baseline and plot then reads one file, and a reviewer can reproduce the whole comparison from the repo.
+- Architecture impact: None (separate tooling) | Effort: S | Priority: **P0**
+
+### [ ] [I5] Baselines the models must beat — including the trivial ones
+- Category: Prediction (evaluation)
+- Affected component(s): `evaluation/prediction/`
+- Problem / current state: "random forest achieves 78% accuracy" is not a result. Without trivial baselines it is not even interpretable — at a 75% base rate, "always translate" achieves 75%.
+- Proposed change: implement and report all of these alongside the learned models, under the identical split protocol of [I7]:
+  - **B0 always-translate** — the current pipeline, the baseline the thesis is actually arguing against. Zero prediction energy, zero missed opportunities, maximum waste.
+  - **B1 never-translate** — the degenerate lower bound; makes the energy axis honest.
+  - **B2 majority class** — the accuracy floor that exposes an unbalanced corpus.
+  - **B3 single-threshold on `cc`** — one number, no training, fully interpretable. If the random forest cannot beat this, that *is* the finding, and it is a good one: it says complexity alone explains translation feasibility. Fit the threshold **inside each training fold**, never on the whole set, or it is not a baseline but a peek.
+  - **B4 hard-infeasibility rule list** — the `numpy`/`pandas`/`scipy` blocklist from [I3] plus perhaps an lloc cap. Costs nothing, is trivially explainable to an examiner, and may capture most of the achievable saving.
+- Why: the comparison against B0 is the thesis claim; the comparison against B3/B4 is what separates "machine learning helped" from "machine learning was ceremony around a threshold". Both belong in the write-up regardless of which way they come out.
+- Architecture impact: None | Effort: S | Priority: P1 (cheap, do it first — it is also the fastest way to sanity-check [I4]'s table)
+
+### [ ] [I6] The candidate methods
+- Category: Prediction (modelling)
+- Affected component(s): `evaluation/prediction/`
+- **SETTLED 2026-08-24: two trained models — logistic regression and random forest — with the LLM-judge as an optional third. The tiny MLP is dropped from the comparison and recorded as a future idea.** Rationale: at **N = 95 with ~25 features** an MLP has no capacity advantage it can actually exploit, and the two retained models answer the same question with better interpretability and far less variance.
+- Proposed change — each ~30–60 LOC on top of [I4]'s table:
+  - **M1 Logistic regression** (L2, standardized features). The interpretable arm: its coefficients go into the thesis directly as "what makes a function hard for this pipeline to translate", and it produces **calibrated probabilities**, which [I9]'s expected-value composition needs and a forest's vote fraction does not give for free. If only one model survives the schedule, it should be this one.
+  - **M2 Random forest** (depth-limited, ~200 trees, `min_samples_leaf` ≥ 3). The non-linear arm: handles the one-hot/high-dimensional library features without scaling and captures interactions M1 cannot (e.g. "high cc *and* boto3"). Its permutation importances are a second, independent read on the same question M1 answers — where the two agree, the finding is robust; where they disagree, that is worth a paragraph. If probabilities are needed from it, calibrate inside the fold.
+  - **M3 (optional, only if the day allows) LLM-as-judge** — one small-model call asking whether the function is translatable to Go. Its value is not accuracy, it is being the *expensive upper bound*: it makes [I8]'s "the predictor must not defeat its own purpose" argument quantitative by putting a method with real inference cost on the same axis as two methods with effectively none. Skip without regret if time is short — the B0–B4 baselines already anchor the comparison from below.
+  - **Future idea, not scheduled: tiny MLP.** Worth revisiting only if the corpus grows well past 95 (which [I10]'s score-recording makes happen passively over time). Recorded here so the option is not lost; explicitly *not* part of this week's comparison.
+- **Hyperparameters: fix them a priori, do not tune.** With 95 samples, a hyperparameter search either overfits the corpus or consumes the budget in nested-CV bookkeeping. Defensible defaults, stated in the write-up as chosen without tuning, are the stronger scientific position — and they are what make the plain repeated-CV estimate in [I7] unbiased.
+- Why: two well-matched models plus five baselines is a complete comparison at this sample size, and dropping the MLP buys back the hours that [I7]'s protocol and [I11]'s audit actually need.
+- Architecture impact: None (offline) | Effort: M | Priority: **P0 (gated on [I2])**
+
+### [ ] [I7] Evaluation protocol: how the data is split, and why accuracy is the wrong headline
+- Category: Prediction (evaluation)
+- Affected component(s): `evaluation/prediction/`, reuses `cmd/energy`'s per-function costs and `N*` machinery
+- **Answering "don't we need a proper train/test split?" — yes to the principle, no to a single static holdout.** The requirement is that no information from the evaluation data reaches model fitting or model selection. A one-off 80/20 split is the textbook way to get that, and at N = 95 it is the *wrong* implementation of it: a 20% test set is **19 functions**, so a single accuracy estimate carries a standard error of roughly ±11 points — wide enough to reorder the methods by luck — and it throws away 19 of the 95 training examples the models can least afford to lose. The protocol below gets the same guarantee without either cost.
+  - **Primary estimate: repeated stratified k-fold cross-validation** over all 95 — 5 folds × 10 repeats, stratified jointly on `all_tests_passed` and `bucket`. Every function serves as test data in exactly one fold per repeat, so all 95 contribute to the estimate; the 10 repeats give a mean **and a spread**, which is the number that actually supports a claim of contribution.
+  - **Why this is unbiased here:** CV is optimistically biased when the same data drives hyperparameter or feature selection. [I6] fixes hyperparameters a priori and [I3] fixes the feature set a priori, so there is no selection loop to leak through — that a-priori rule is not stylistic, it is what licenses the plain (non-nested) protocol. **If any tuning is added later, the protocol must become nested CV**, or the estimate stops being honest.
+  - **Everything fitted goes inside the fold** — standardization, class weighting, B3's `cc` threshold, any calibration, and the [I8] operating point. The single most common way a study like this quietly invalidates itself is choosing the decision threshold on the test fold.
+  - **Grouping is mandatory, not optional:** use `GroupKFold`/`StratifiedGroupKFold` on [I11]'s `group_id`, because the corpus contains near-duplicate function pairs (evidence in [I11]) that would otherwise straddle the train/test boundary and inflate every method equally.
+  - **Independent confirmation set:** the 14-function `function_set` is a genuinely separate corpus and can serve as a one-shot external check of the model trained on all 95 — a *different-corpus* generalization test, which is more informative than a random slice of the same one. Caveat that must travel with it: `function_set` expectations were never executed against the Python originals (EVALUATION_DATASET.md §4), so its labels are noisier than `evaluation_set`'s. Report it as corroboration, never as the headline number.
+- **Then: accuracy is the wrong headline metric.** The two error types have wildly asymmetric costs and accuracy weights them equally. A **false positive** (translating a function that fails) wastes one translation — measurable, bounded, ~4–10 kJ. A **false negative** (skipping a function that would have succeeded) forgoes the entire lifetime saving of that function — unbounded in `N`, the invocation count.
+  - **Threshold-free metrics**: ROC-AUC and average precision, so the model comparison does not depend on where the operating point is placed.
+  - **The headline metric**: **net energy saved versus B0 (always-translate), swept over the decision threshold**, using real per-function `E_translation` and [H6]'s ΔE from [I4]'s table, parameterised by invocation count `N`. Report it as a curve over `N`, which connects directly to `cmd/energy`'s existing break-even `N*` — the predictor and the energy model then tell one coherent story instead of two.
+  - **Operating point**: chosen on the training folds by maximising expected net energy at a stated `N`; report the confusion matrix there.
+  - **Label-noise caveat, per the single-run decision in [I1]**: report every accuracy figure as "against single-run labels of unmeasured stability". There is no measured ceiling to compare against, so a result near the base rate cannot be attributed to the model rather than to label noise.
+  - **Per-group generalisation**: report per-bucket and AWS/non-AWS performance (the dataset's own two reporting axes, EVALUATION_DATASET.md §9), to show whether the model learned anything beyond "high cc → fail".
+- Why: this is what turns a classifier benchmark into an energy result, which is what the thesis is about, and the split protocol is what makes the comparison defensible at a sample size this small.
+- Architecture impact: None | Effort: M | Priority: **P0**
+
+### [ ] [I8] Measure the predictor's own energy in the same units as the pipeline
+- Category: Prediction (evaluation)
+- Affected component(s): `evaluation/prediction/`, `evaluation/energy.config.json`, `cmd/energy`
+- Problem / current state: "the prediction must not defeat the purpose of the saving" is currently an assertion. It is almost certainly true by a huge margin for M1/M2 and *not obviously* true for M3 — but no number exists either way, and an examiner will ask for one.
+- Proposed change: measure wall-clock for (a) [I3]'s feature extraction per function — now the dominant term, since it parses Python rather than pattern-matching — and (b) each model's inference; convert with the **same** node-power and PUE constants already in `energy.config.json`; report `E_predictor / E_translation` per method. Expected outcome, to be confirmed not assumed: ~10⁻⁶ or better for M1/M2, versus order-unity for M3. Then state the break-even explicitly: the predictor pays for itself if it avoids one wasted translation per *k* screened functions, for the measured *k*.
+- Note the extractor is doing double duty: with [C8] shipped, its cost is incurred by the translation pipeline anyway, so the *marginal* energy of prediction is the inference alone. Report both framings — marginal and standalone — rather than picking the flattering one.
+- Why: it is the item that makes the section's central premise checkable, it is cheap, and it reuses the constants table so the number is consistent with every other energy figure in the thesis.
+- Architecture impact: None | Effort: S | Priority: P1
+
+### [ ] [I9] The secondary objective (energy-saving potential): compose it, do not train a second model
+- Category: Prediction (modelling)
+- Affected component(s): `cmd/energy` (`N*`), [H6], [I6]'s calibrated probabilities
+- **SETTLED 2026-08-24: [H6] is implemented before the [I1] run, so option 1 below is the plan** and the coarse proxy is no longer needed. Sequencing consequence: the single `evaluation_set` pass yields ΔE measurements alongside the labels, which is exactly why [H6] belongs before it rather than after.
+- Problem / current state: "estimated energy saving potential" looks like a second regression target, but its label — the per-invocation energy delta between the Python original and the Go translation — **only exists after the translation has been done and measured**. Training a regressor on it would mean an even smaller label set than [I1]'s (only the successful translations have a ΔE at all) and would present an unvalidated model's output as an energy estimate.
+- Proposed change:
+  1. **Compose rather than learn.** Expected net saving = `P(success)` (from [I6]'s calibrated M1) × (`N` × ΔE_invocation − `E_translation`). `P(success)` is the learned part; ΔE comes from [H6]; `E_translation` is already measured per function. No second model, and the two objectives stay cleanly separated — the primary criterion gates, the secondary ranks what passes the gate.
+  2. ΔE is measured only for functions that translated successfully, so ranking a *candidate* still needs an ex-ante estimate of it. Use the measured ΔE distribution **grouped by workload character** (`type` pure/compute vs. network/io, `aws` flag): network- and I/O-bound functions are latency-dominated and save little from a language switch, compute-bound ones save most. Report it as a group-level expectation with its spread, not a per-function point estimate — that is what the data supports.
+  3. **Full ex-ante ΔE regression** — out of scope. Record it as a limitation, not as an unfinished task.
+- Why: it delivers the secondary objective at a fraction of the cost and avoids presenting an unvalidated regressor as a measurement. The framing — "we predict feasibility and *derive* worthwhileness" — is also the more defensible one.
+- Architecture impact: None | Effort: S | Priority: P1 (unblocked, now that [H6] precedes [I1])
+
+### [ ] [I10] Service integration: `internal/predictor` + a `predictGate` converter, off by default
+- Category: Prediction (integration)
+- Affected component(s): new `internal/predictor`, `internal/pipeline/registry.go` (registration only), `internal/domain` (`Metrics`), `internal/service`
+- Problem / current state: the thesis needs a working demonstration that the gate fits the running system, but the modelling work is offline and the two must not become entangled.
+- Proposed change, deliberately thin:
+  - **Export the trained model as JSON** (LR weights, or RF trees) and write a pure-Go inference reader. This keeps `go.mod` free of any ML dependency, matching how the repo already keeps `cmd/energy`'s constants in a config file rather than in code. M1's export is a vector of coefficients — trivially small, trivially auditable, and one more reason to prefer it as the shipped model.
+  - **A `predictGate` converter** registered via `RegisterConverterFactory` in an `init()` (per the repo's stated convention — never hard-coded into `pipeline.go`), usable either as `root`'s `canApply` precondition or as a task that aborts the run with a typed error.
+  - **Record the score on every job regardless of the decision** (`Metrics.PredictionScore` + [I3]'s feature vector), so the run log becomes a growing labelled corpus and the "would this have succeeded?" question stays answerable post hoc. This is the cheapest possible fix for the N = 95 problem *over time* — and the thing that eventually makes the deferred MLP in [I6] worth revisiting.
+  - **Off by default**, gated like Floci (`PREDICT_ENABLED` / a `ConverterOptions` field). A pipeline with an active gate produces a different denominator, and every existing baseline in section H must remain reproducible.
+  - Optionally a `POST /predict` endpoint that scores an upload without translating it — the natural way to demo the feature and to score a corpus cheaply.
+- Why: it demonstrates the mechanism end to end without letting an experimental model become load-bearing in the evaluation pipeline. The default-off rule is what protects every number already recorded.
+- Architecture impact: Local (fits the registry architecture by design) | Effort: M | Priority: P2 (after the offline comparison is decided — integrating before knowing which model wins is wasted work)
+
+### [ ] [I11] Leakage audit: near-duplicate functions in `evaluation_set` and the grouping key
+- Category: Prediction (data)
+- Affected component(s): `evaluation/evaluation_set`, [I4]'s table (`group_id` column), [I7]'s CV splitter
+- Problem / current state — **measured 2026-08-24, this is not hypothetical**: the corpus is scraped from The Stack and contains related functions.
+  - **Five pairs share a `repo_uri`**: `f2`/`f75`, `f13`/`f47`, `f29`/`f60`, `f35`/`f44`, and — under *different* URIs — `f92`/`f94`.
+  - Of those, **two pairs are near-duplicates by source**: `f92`/`f94` (565 vs 583 lines, only 28 differing lines after normalisation) and `f35`/`f44` (171 vs 176 lines, 34 differing). The other three pairs share a repo but differ substantially.
+  - **`f92`/`f94` come from `tgockel/blockify` and `slparker/blockify` — a fork.** Their `repo_uri` values differ, so **grouping by `repo_uri` would not catch the worst case in the set.** That is precisely the failure mode this item exists to prevent.
+  - Impact if unhandled: a near-duplicate pair split across the train/test boundary lets a model "predict" a function it has effectively already seen. With a 19-function test fold, one such pair is ~5% of it — enough to move a reported number, and it inflates every method equally, so it would not show up as anomalous.
+- Proposed change: a one-off script that (a) computes pairwise source similarity across all 95 artifacts (normalised token or line similarity is sufficient — the two pairs above are obvious at any reasonable threshold), (b) assigns a `group_id` merging both same-repo and above-threshold-similar functions into one group, and (c) writes that column into [I4]'s table. [I7]'s splitter then uses `StratifiedGroupKFold` on it. Report the number of merged groups in the write-up — it is a one-line methods statement that pre-empts an obvious reviewer question.
+- Also worth recording from the same pass: whether any near-duplicate pair **disagrees on its label**. Two ~97%-identical functions with opposite outcomes is direct evidence of the stochasticity that the single-run decision in [I1] leaves unmeasured — a free, partial substitute for the repeat runs that were deferred.
+- Why: it is a half-hour script that protects the headline comparison from a defect already confirmed to exist in the data, and its by-product is the only label-noise evidence available under the one-run decision.
+- Architecture impact: None (analysis) | Effort: S | Priority: **P0 (blocks [I7]'s splitter; do it while [I1] runs)**
+
+### Threats to validity (write these into the thesis, not just here)
+
+1. **N = 95, one corpus.** Any accuracy figure carries a confidence interval of roughly ±10 points. Report intervals, not point estimates, and never rank two methods whose intervals overlap.
+2. **Single-run, stochastic labels.** Per the [I1] decision, labels come from one pass and their reproducibility is unmeasured, so no noise ceiling is available to contextualise any accuracy figure. State it as a limitation with the named mitigation (a 20-function re-run) rather than leaving it implicit. [I11]'s near-duplicate label agreement is the only partial evidence available in the meantime.
+3. **The predictor learns *this* pipeline, not *translatability*.** Labels come from one pipeline configuration (`default.json`), one model (`devstral-2-123b-instruct-2512`), one prompt set. Improve the prompts and the labels shift. The honest claim is "predicts what this pipeline fails at", and it should be stated in exactly those words.
+4. **Corpus bias.** `evaluation_set` is scraped AWS Lambda code from The Stack, 58/95 using AWS; the class balance and feature distribution of production traffic will differ. It also contains near-duplicates ([I11]).
+5. **Fixture quality bounds the label.** EVALUATION_DATASET.md §4 warns that functions are not certified correct and that expectations record behaviour including bugs; the paper-set pilot found 5 of 9 failures were fixture artefacts rather than translation defects. A label that says "failed" may mean "the fixture was unsatisfiable" — inspect the failures from [I1] before trusting the negative class.
+6. **The extractor is now on the translation path too.** With [C8]/[I3] shipped before the [I1] run, the labels are produced by a pipeline whose prompts already receive the scanner's hints. That is the intended configuration, but it means these labels are not comparable to `run-20260807-132133`'s — do not mix the two corpora when reporting success rates.
+
+### Decisions (settled 2026-08-24)
+
+| Question | Decision | Where it lands |
+|:---|:---|:---|
+| Label | **`all_tests_passed`** on the final round; `pass_fraction`/`completed` carried as secondary columns | [I1], [I4] |
+| Repeat runs | **One pass for now**; noise ceiling explicitly unmeasured, 20-function re-run named as the cheap follow-up | [I1], [I7], threat 2 |
+| Feature extractor | **Accurate Python-AST scanner**, [C8] and [I3] completed together **before** the run | [I3] |
+| Method set | **Logistic regression + random forest**; LLM-judge optional third; **MLP dropped** to a future idea | [I6] |
+| [H6] ordering | **[H6] implemented before the full run** — so [I9] composes from measured ΔE, no coarse proxy | [I9], [H6] |
+| Train/test split | **Repeated stratified group k-fold** (5×10) over all 95 with a-priori hyperparameters, not a single 80/20 holdout; `function_set` as external corroboration | [I7], [I11] |
 
 ---
 
