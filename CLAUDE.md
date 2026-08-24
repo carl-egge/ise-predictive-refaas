@@ -16,6 +16,7 @@ This is a research codebase (thesis project). The two open problems it's built a
 go build ./...                 # build everything
 go run ./cmd/refaas             # run the service locally (listens on :8080)
 go run ./cmd/energy runs/*.jsonl   # energy report over archived runs (add -sweep/-json)
+go run ./cmd/runtime -artifacts evaluation/evaluation_set -packages runs/packages-<id>.zip   # Go vs Python energy (H6)
 go run ./cmd/pyscan evaluation/evaluation_set/*.zip   # ex-ante feature table (add -json/-hints)
 gofmt -l .                      # check formatting; run `gofmt -w <file>` on changed files
 go vet ./...
@@ -47,6 +48,11 @@ cmd/energy/            analysis tool: run logs -> energy per translation/stage/f
                        Every table describes *completed* translations; failed attempts
                        are costed separately under "Failed attempts", with the run's
                        cost per success (failures amortized in).
+cmd/runtime/           analysis tool: measures the Go translation against the Python
+                       original over the same fixture payloads; emits the per-function
+                       joules cmd/energy needs for break-even N*. Never runs during a
+                       conversion. Harnesses live in evaluation/harness (one package,
+                       so the two sides cannot drift apart).
 cmd/pyscan/           analysis tool: artifact(s) -> feature CSV/JSON for the prediction
                        dataset. Never runs during a conversion.
 cmd/refaas/main.go
@@ -99,6 +105,15 @@ cmd/refaas/main.go
 - **Failure policy:** the stage *enriches* a prompt, so a missing interpreter or unparseable source degrades to a warning and no hints, rather than failing the conversion. `task_args.required: true` inverts that — set in `default.json` so a benchmark run cannot silently record a job without a feature vector.
 - Every job records its vector on `Metrics.Features` (`domain.FeatureVector`, carrying names + schema version, since a run log outlives the code that wrote it). This is what makes the run log directly usable as `(features → outcome)` training data ([I1]/[I4]) instead of requiring artifacts to be re-scanned later with a possibly-changed scanner.
 - `cmd/pyscan` is the offline CLI (`go run ./cmd/pyscan evaluation/evaluation_set/*.zip > features.csv`, plus `-json`/`-hints`). It never runs during a conversion — same separation `cmd/energy` keeps. It also reports **constant feature columns** to stderr: on `evaluation_set`, 8 of 56 are constant-zero, including `has_infeasible_lib`, which means baseline B4's blocklist ([I5]) cannot skip a single function on this corpus.
+
+### Runtime energy measurement (`cmd/runtime` + `evaluation/harness`) — [H6]
+
+- Measures the Go translation against the Python original over the **same** fixture payloads, and emits the `map[function_id]{python_joules_per_invocation, go_joules_per_invocation}` file `cmd/energy -runtime` reads to compute break-even `N*`. Pure analysis tooling — never runs during a conversion.
+- **Symmetry is structural.** `evaluation/harness/handler.py` and `bench_handler.go.txt` both read JSON Lines on stdin, invoke once per line, and emit the same marker + `{"response"}`/`{"error"}` envelope with the same [A18] stdout discipline. They live in one Go package (`evaluation/harness`, embedding both) so they cannot drift; `harness_test.go` pins the marker across **all four** files that must agree on it (the two harnesses, `internal/builder/test_handler.txt`, `validator.go`). Both sides also run under one meter, on one machine, with the same AWS isolation via `builder.TestExecutionEnv`.
+- **Cold vs. steady is a two-point difference**, not a clock inside the harness: the same executable runs with 1 payload and with N, and `per_invocation = (T(N)-T(1))/(N-1)`. An in-harness clock would compare Go's runtime clock against Python's `time` module; the difference method also charges import-time/module-level work to startup, where Lambda charges it. Minimum of repetitions, never the mean.
+- **N escalates until the difference clears the measured repetition spread.** Most of this corpus does microseconds of work against a millisecond of startup, so at a fixed N the naive answer is a per-invocation cost of *zero* — which would enter `runtime.json` as "free to run" and make `N*` infinite. Unresolvable functions are reported `UNRESOLVED` and **omitted** from `runtime.json` (`cmd/energy` names a missing function, but would cost a zero as free).
+- **Three meters and no fabricated joules**: `rapl` (powercap sysfs, no root or perf needed — the primary), `perf`, and `time`. The `time` meter reports **no energy at all** unless `-watts` states a package power, and then tags every figure `energy_derived`. **Neither RAPL nor perf works under WSL2**, so measured energy needs a bare-metal Linux host; that run is still outstanding, and no absolute joule figure or `N*` should be quoted until it happens.
+- First result (paper set, derived energy): Go is **1.9× median steady state but 15.0× median cold start**. `runtime.json` carries the *steady-state* figure deliberately — break-even concerns a deployed function, which at `N*` invocations is overwhelmingly warm — with the cold figures in `-report`.
 
 ### Build/test stages (`internal/builder`)
 

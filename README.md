@@ -73,6 +73,7 @@ The codebase follows Standard Go Project Layout with a thin entrypoint and inter
 - **internal/translator**: prompt rendering, LLM translation, and response parsing.
 - **internal/builder**: build/compile/test stages and output validation.
 - **internal/pyscan**: deterministic, LLM-free Python source analysis - the `pyScan` stage. Produces both the translate prompt's library/construct hints and the fixed-width numeric feature vector the prediction work is built on.
+- **evaluation/harness**: the two measurement harnesses (Python and Go) used by `cmd/runtime` for the Go-vs-Python energy comparison; kept in one package so the two sides cannot drift apart.
 - **internal/fixture**: the canonical test-fixture schema shared by `goTester` and `flociTester` (legacy `input`/`output` fixtures are lowered into it automatically).
 - **internal/inputhandler**: zip input parsing and normalization.
 - **internal/outputhandler**: zip output writing and HTTP error reporting.

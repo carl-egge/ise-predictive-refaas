@@ -400,6 +400,86 @@ Python-side equivalent of the existing Go harness.
 
 ---
 
+### Implementation ([H6], 2026-08-24)
+
+Implemented as `cmd/runtime`, with the two harnesses in `evaluation/harness/`.
+
+```sh
+# measure both sides, then turn the result into break-even counts
+go run ./cmd/runtime -artifacts evaluation/evaluation_set \
+    -packages runs/packages-<run-id>.zip -out evaluation/runtime.json -report evaluation/runtime-report.json
+go run ./cmd/energy -runtime evaluation/runtime.json runs/run-<run-id>.jsonl
+```
+
+**Symmetry is structural, not conventional.** `evaluation/harness/handler.py` and
+`bench_handler.go.txt` read the *same* fixture payloads as JSON Lines on stdin, invoke the
+function once per line, and write the *same* envelope (marker + `{"response": …}` / `{"error": …}`)
+on stdout, with the same stdout discipline as [A18]. `harness_test.go` pins the marker across all
+four files that must agree on it. Both sides run under the same meter, on the same machine, with
+the same AWS isolation — `internal/builder.TestExecutionEnv`, the same helper the test stage uses,
+so an AWS call cannot resolve differently on the two sides and be recorded as a runtime difference.
+
+**Cold vs. steady comes from a two-point difference, not from a clock inside the harness.** The
+same executable is run once with 1 payload and once with N:
+
+```
+T(1) = startup + 1 × per_invocation
+T(N) = startup + N × per_invocation
+```
+
+An in-harness clock would compare Go's runtime clock against Python's `time` module and add a
+per-language bias to the very quantity under test. It also puts module import and package-level
+statements — which run before the first invocation in both languages, and in real Lambda too — on
+the startup side where they belong. Each point is repeated and the **minimum** is kept: noise on a
+shared machine only ever adds time, so the minimum is the best available estimate of the true cost
+and is far more stable than a mean a single scheduling hiccup can dominate.
+
+**N escalates until the signal clears the noise.** Most functions in this corpus do microseconds of
+work against a millisecond of process startup, so at a fixed N the difference `T(N) − T(1)` is
+buried in scatter and the naive result is a per-invocation cost of *zero* — which would propagate
+into `runtime.json` as "this function is free to run" and make its `N*` infinite. The driver
+therefore raises N (×10, to `-max-invocations`) until the difference exceeds the measured
+repetition spread. A function that never resolves is reported as `UNRESOLVED` and **omitted** from
+`runtime.json`, because `cmd/energy` names a missing function but would cost a zero as free.
+
+**No fabricated joules.** Three meters, and every figure carries which produced it:
+`rapl` (reads `/sys/class/powercap/intel-rapl:*/energy_uj` — no root, no perf, the primary),
+`perf` (`perf stat -e power/energy-pkg/,power/energy-ram/`, as specified above), and `time`
+(wall-clock only). The `time` meter reports **no energy at all** unless `-watts` explicitly states a
+package power, in which case `E = P·t` is computed and tagged `energy_derived` everywhere it
+appears. This is the same assumption `energy.config.json` already makes for the LLM side
+(`node_power_watts × time`), so both halves of the comparison stay on one method — but it is an
+assumption, and the tool says so rather than letting a derived number read as a measurement.
+
+> **Neither RAPL nor perf is available under WSL2**, which is where this was developed. Measured
+> energy therefore requires a bare-metal Linux host with readable powercap counters; that run is
+> still outstanding and is a prerequisite for quoting any absolute joule figure or any `N*` here.
+
+**First result (paper set, 14 functions, derived energy at 15 W — timings are measurements, joules
+are not):**
+
+| | median | min | max |
+|---|---|---|---|
+| Go speedup, steady state | **1.9×** | 1.0× | 4.3× |
+| Go speedup, cold start | **15.0×** | 3.9× | 21.0× |
+
+The gap between the two rows is the finding: this section predicted cold start would be where Go's
+advantage is largest, and on this set it is roughly **eight times larger** than the steady-state
+advantage. For short serverless invocations, which is what this corpus is, the cold-start column is
+the one that governs whether a translation pays back. `runtime.json` nonetheless carries the
+**steady-state** figure, because break-even asks how many invocations of a *deployed* function repay
+one translation and a function invoked `N*` times is overwhelmingly warm — charging every
+invocation a cold start would understate `N*` on both sides at once and flatter the conclusion. The
+cold figures are in `-report` for the write-up to use explicitly.
+
+Caveats specific to this first run: the paper set is deliberately trivial (12 of 14 in bucket A,
+none using AWS), so its steady-state ratios are dominated by interpreter overhead on functions that
+do almost no work, and the resulting `N*` values are correspondingly enormous (median ~2×10⁷). The
+`evaluation_set` numbers are the ones to report, and they need the [I1] run's translated packages
+before they can be produced.
+
+---
+
 ## 7. Validation
 
 No per-token measurement exists for Devstral 2 123B. Validate as follows:

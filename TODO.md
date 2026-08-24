@@ -84,7 +84,7 @@
 - [x] [H3] Record the model per stage for per-model energy coefficients
 - [x] [H4] Energy-model script over the run logs, constants in one config file
 - [ ] [H5] Account for or bound local compute energy (build/test/Floci)
-- [ ] [H6] Go vs. Python runtime measurement harness reusing the fixture payloads — **before the [I1] run (P0)**
+- [x] [H6] Go vs. Python runtime measurement harness — **shipped 2026-08-24 as `cmd/runtime` + `evaluation/harness`**
 - [ ] [H7] Verify token accounting across connector-internal retries
 - [ ] [H8] `cmd/energy` reports a coefficient assumption for stages that consumed no tokens
 - [x] [H9] Integrate the GWDG infrastructure reply into the energy constants
@@ -100,7 +100,7 @@
 - [ ] [I6] Candidate methods: M1 logistic regression + M2 random forest (M3 LLM-judge optional; MLP deferred) **(P0)**
 - [ ] [I7] Split protocol (repeated stratified *group* k-fold, not one holdout) + net energy vs. always-translate **(P0)**
 - [ ] [I8] Measure the predictor's own energy in the same units as the pipeline
-- [ ] [I9] Secondary objective (energy-saving potential): compose from `P(success)` × [H6]'s ΔE, don't train a second model
+- [ ] [I9] Secondary objective (energy-saving potential): compose from `P(success)` × [H6]'s ΔE — **[H6] is done; unblocked**
 - [ ] [I10] Service integration: `internal/predictor` + `predictGate` converter, off by default
 
 ---
@@ -892,7 +892,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why this improves the evaluation: an energy claim that omits a component of its own pipeline invites the obvious examiner question; the durations needed to bound it are already being recorded, so closing it is cheap. Based on reasoning; no external source needed.
 - Architecture impact: None (analysis) | Effort: S (bound) / M (measure) | Priority: P1
 
-### [ ] [H6] Go vs. Python runtime measurement harness reusing the fixture payloads
+### [x] [H6] Go vs. Python runtime measurement harness reusing the fixture payloads
 - Category: Evaluation
 - Affected component(s): new tooling under `evaluation/`; reuses `internal/fixture` payloads and the envelope of `internal/builder/test_handler.txt`
 - Problem / current state: EVALUATION.md §6 requires methodologically symmetric measurement of both versions; nothing exists yet. The Go side already has its harness (JSON event on stdin → `handle` → `{"response": …}` on stdout); the Python side has no equivalent, and cold start is not separated from steady state anywhere.
@@ -900,6 +900,15 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why this improves the evaluation: reusing the canonical fixtures guarantees both sides see identical inputs through identical envelopes by construction, which is precisely the symmetry the comparison depends on — and it means the harness needs no new test data. Based on reasoning; no external source needed.
 - Architecture impact: None (separate tool) | Effort: M | Priority: **P0** (raised 2026-08-24)
 - **Rescheduled 2026-08-24 (maintainer decision): implement this before the [I1] `evaluation_set` run.** The measured per-invocation ΔE is what [I9] composes the prediction module's secondary objective from, and running it first means the single pass yields labels, per-function `E_translation` *and* ΔE at once instead of needing a repeat for the missing term.
+
+- **Status: implemented 2026-08-24** as `cmd/runtime` (driver, meters, report) plus `evaluation/harness` (the two harnesses, embedded from one package so they cannot drift apart). Full method write-up is in [EVALUATION.md §6 "Implementation"](evaluation/EVALUATION.md); the points worth having here:
+  - **Symmetry is structural.** Both harnesses read the same fixture payloads as JSON Lines, invoke once per line, and emit the same marker+envelope with the same [A18] stdout discipline; both sides run under one meter, on one machine, with the same AWS isolation (`builder.TestExecutionEnv`, so an AWS call cannot resolve differently on the two sides and be recorded as a runtime difference). `harness_test.go` pins the marker across all four files that must agree on it.
+  - **Two-point cold/steady split**, `T(1)` and `T(N)` differenced, with no clock inside either harness — an in-harness clock would compare Go's runtime clock against Python's `time` module and bias the very quantity under test, and it puts import-time work on the startup side where Lambda puts it too. Minimum of repetitions, not mean.
+  - **N escalates until the signal clears the measured noise.** This was not anticipated in the original item and turned out to matter most: at a fixed N, most functions in this corpus do microseconds of work against a millisecond of startup, the difference is buried in scatter, and the naive answer is a per-invocation cost of **zero** — which would enter `runtime.json` as "free to run" and send `N*` to infinity. The first run of the tool produced exactly that for 5 of 14 functions before the escalation was added. A function that never resolves is reported `UNRESOLVED` and omitted from `runtime.json`, because `cmd/energy` names a missing function but would cost a zero as free.
+  - **Three meters, no fabricated joules**: `rapl` (powercap sysfs, no root/perf needed — the primary), `perf` (as §6 specifies), and `time`. The `time` meter reports **no energy at all** unless `-watts` states a package power, and then tags every figure `energy_derived`. **Neither RAPL nor perf works under WSL2**, so measured energy needs a bare-metal Linux host — that run is still outstanding and is a prerequisite for quoting any absolute joule figure or `N*`.
+  - **First result (paper set, 14/14 measured, derived energy at 15 W — the timings are measurements, the joules are not): Go speedup median 1.9× steady state vs. 15.0× cold start** (min 3.9×, max 21.0×). The ~8× gap between the two is the finding: §6 predicted cold start would be where Go's advantage is largest, and for short serverless invocations that column is what governs payback. `runtime.json` still carries the steady-state figure — break-even asks about a *deployed* function, which at `N*` invocations is overwhelmingly warm, and charging every invocation a cold start would understate `N*` on both sides and flatter the conclusion. Cold figures are in `-report` for the write-up.
+  - Verified end to end against `runs/packages-20260807-132133.zip`: measurement → `runtime.json` → `go run ./cmd/energy -runtime` → break-even N* computed for all 8 completed translations. The paper set's `N*` values are enormous (median ~2×10⁷) because those functions are trivial by design; `evaluation_set` is what to report, and it needs [I1]'s translated packages first.
+  - Two bugs the end-to-end run caught and that are now fixed: the correctness gate matched `"error"` anywhere in the output, so a function whose *successful response* described an error (pf14) was wrongly dropped — it now parses the envelope and checks its top-level key; and the sub-resolution zero described above.
 
 ### [ ] [H7] Verify token accounting across connector-internal retries
 - Category: Evaluation
