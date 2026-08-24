@@ -190,6 +190,47 @@ type Metrics struct {
 	// wall-clock time and LLM token spend per stage. This is what makes
 	// "which stage exhausts its retries" and "tokens per stage" answerable.
 	PerTask map[string]*TaskMetrics `json:"per_task,omitempty"`
+
+	// Features is the deterministic, ex-ante feature vector computed from
+	// the uploaded artifact by the pyScan stage, recorded so a finished run
+	// log carries (features -> outcome) pairs directly ([I1]/[I4]).
+	//
+	// Recording it on every job - not only when a predictor is enabled - is
+	// deliberate: it means the corpus for training grows as a by-product of
+	// running the pipeline, rather than having to be reconstructed by
+	// re-scanning archived artifacts and hoping the scanner has not changed
+	// in between. Nil for jobs whose scan did not run.
+	Features *FeatureVector `json:"features,omitempty"`
+}
+
+// FeatureVector is one function's static feature vector, stored with its
+// column names and schema version rather than as a bare slice.
+//
+// The names travel with the values because a run log outlives the code that
+// wrote it: a vector recorded under one schema and read back under another
+// would otherwise be silently misaligned, feeding the wrong number into the
+// wrong coefficient. Version mismatch must be detectable by the reader.
+type FeatureVector struct {
+	SchemaVersion int       `json:"schema_version"`
+	Names         []string  `json:"names"`
+	Values        []float64 `json:"values"`
+}
+
+// RecordFeatures attaches the static feature vector to the run's metrics.
+// Names and values must be the same length; a mismatch is dropped rather
+// than stored, since a misaligned vector is worse than an absent one.
+func (m *Metrics) RecordFeatures(schemaVersion int, names []string, values []float64) {
+	if m == nil || len(names) == 0 || len(names) != len(values) {
+		return
+	}
+	fv := &FeatureVector{
+		SchemaVersion: schemaVersion,
+		Names:         make([]string, len(names)),
+		Values:        make([]float64, len(values)),
+	}
+	copy(fv.Names, names)
+	copy(fv.Values, values)
+	m.Features = fv
 }
 
 // TestOutcome is the per-case result the evaluation reads ([H1a]).

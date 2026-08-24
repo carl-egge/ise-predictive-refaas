@@ -59,6 +59,17 @@ func handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyR
 Python code:
 {{ .code }}
 
+{{ if .lib_hints }}## Library mapping
+Use these Go equivalents for the Python libraries this function imports:
+
+{{ .lib_hints }}
+
+{{ end }}{{ if .py_features }}## Constructs needing attention
+This source uses Python constructs with no direct Go form:
+
+{{ .py_features }}
+
+{{ end }}
 {{ if .tests }}The translation must satisfy these test cases (input event → expected response of the Python function):
 
 {{ .tests }}{{ else }}Expected output for one input:

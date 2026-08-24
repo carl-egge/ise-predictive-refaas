@@ -8,7 +8,15 @@ options:
   model_name: "qwen2.5-coder:3b"
 
 tasks:
+  # Deterministic Python analysis ([C8]/[I3]): no LLM call, no tokens. Runs
+  # first so every later prompt can reference {{ .lib_hints }} and
+  # {{ .py_features }}, and so the job records its feature vector.
   - id: "root"
+    task: "pyScan"
+    maxRetryCount: 1
+    next:
+      - "clean"
+  - id: "clean"
     task: "cleaner"
     maxRetryCount: 1
     retryDelay: "5s"

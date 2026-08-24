@@ -28,6 +28,21 @@ type Runner struct {
 	floci FlociConfig
 }
 
+// ctx returns the Runner's context, falling back to Background when it has
+// none.
+//
+// NewRunner and Convert both guarantee a non-nil Context, so this only
+// matters for a Runner assembled directly (a zero value in a test, or a
+// future caller). Without it, a converter that passes the Runner where a
+// context.Context is wanted - which is the whole point of the embedding -
+// dereferences nil and takes the conversion worker down with it.
+func (cc *Runner) ctx() context.Context {
+	if cc == nil || cc.Context == nil {
+		return context.Background()
+	}
+	return cc.Context
+}
+
 // NewRunner returns a Runner with the provided context, pipeline, and LLM client.
 func NewRunner(ctx context.Context, pipe *Pipeline, client llmconnector.Client) *Runner {
 	if ctx == nil {

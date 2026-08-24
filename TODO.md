@@ -42,7 +42,7 @@
 - [x] [C5] Detect repair-loop stagnation (narrowed — see item)
 - [x] [C6] Validate uploads and fixtures before spending LLM tokens
 - [x] [C7] Deterministic and complete test context for prompts
-- [ ] [C8] Python feature pre-scan feeding the translate prompt — **also [I3]'s feature extractor; do first (P0)**
+- [x] [C8] Python feature pre-scan feeding the translate prompt — **shipped 2026-08-24 as `internal/pyscan`, jointly with [I3]**
 - [~] [C9] ~~Support multi-file Python inputs~~ — **dropped**, single-file is the contract
 - [x] [C10] Unified fixture schema + per-job validation routing (goTester vs. flociTester)
 - [x] [C11] Prevent AWS leakage: always resolve to the Floci harness
@@ -91,7 +91,7 @@
 
 **I. Prediction & candidate selection** (new 2026-08-24, decisions settled the same day — *nothing here exists in code yet*)
 *Order: [C8]/[I3] scanner + [H6] runtime harness → [I1] one run (+[I11] in parallel) → [I2] → [I4]–[I7].*
-- [ ] [I3] Deterministic ex-ante feature extractor — the accurate Python-AST scanner, built as [C8]'s `pyScan` **(P0 — do first)**
+- [x] [I3] Deterministic ex-ante feature extractor — **shipped 2026-08-24**; cc 92/95 exact vs `meta.json` (r=0.9998), 56 columns
 - [ ] [I1] Labelled corpus: one full `evaluation_set` pass; label = `all_tests_passed` **(P0 — blocks [I2], [I4]–[I9])**
 - [ ] [I11] Leakage audit: `f92`/`f94` and `f35`/`f44` are confirmed near-duplicates; build the `group_id` key **(P0)**
 - [ ] [I2] Signal check: confirm the base rate leaves anything to predict, before modelling **(P0)**
@@ -481,7 +481,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local | Effort: S | Priority: P1
 - Status: **Implemented 2026-07-04.** `getFirstTestFile` (random map order) replaced by `sortedTestFiles` (lexical order, unparseable fixtures skipped); `{{ .tests }}` renders up to `max_test_examples` (default 3, converter-level task param — stripped before connector `Prepare`) input/expected pairs, each field capped at 2000 chars; `{{ .input }}`/`{{ .output }}` remain as the first *sorted* pair for backward compatibility. Both translate prompts consume `{{ .tests }}` ([D1]). Tests: `TestSortedTestFilesAndRenderExamples`.
 
-### [ ] [C8] Python feature pre-scan: deterministic source analysis feeding the translate prompt
+### [x] [C8] Python feature pre-scan: deterministic source analysis feeding the translate prompt
 - Category: Feature
 - Affected component(s): new converter (e.g. `pyScan`), output carried via `req.Metadata` (the metadata mode built for `summary`)
 - Problem / current state: The paper set includes constructs a small model mishandles silently: decorators (`f13`), generators/`inspect` (`f14`), third-party libs (`requests` in `f9`/`f10`, `boto3`), recursion (`f6`). Nothing analyzes the source; infeasible translations are discovered only after the full budget is spent — the exact waste the thesis's "prediction" goal targets.
@@ -489,6 +489,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Injecting explicit API-mapping hints removes the hardest reasoning step (library equivalence) from the model's job — the "more structure, less reliance on large-model reasoning" tradeoff this pipeline needs at 30B scale.
 - Architecture impact: Local (fits the registry architecture by design) | Effort: M | Priority: **P0** (raised 2026-08-24)
 - **Scope extended and rescheduled 2026-08-24 (maintainer decision):** this scanner is also the prediction module's feature extractor — see [I3], which specifies the accurate Python-AST variant and the fixed-width numeric vector emitted alongside the prompt hints built here. Build it **once**, for both consumers, and land it **before** the [I1] labelling run so that run records features and outcomes together. [I3]'s `meta.json` reproduction check (`cc`/`lloc` over all 95 artifacts) doubles as this item's acceptance test.
+
+- **Status: implemented 2026-08-24** as `internal/pyscan` (analysis library, no pipeline dependency), the `pyScan` converter in `internal/pipeline/pyscan.go`, and `cmd/pyscan` (offline CLI). Registered as `root` in both `default.yaml` and `default.json` (the latter with `required: true`), before the cleaner.
+  - **Acceptance test result** (`internal/pyscan/calibration_test.go`, runs against the real 95 artifacts): `cc` reproduces `meta.json` **exactly for 92/95**, within 2 for 94/95, Pearson **r = 0.9998**. The definition that achieves this is the **max block complexity** counting BoolOp chains and comprehensions — not a whole-file sum, which was 5× too high. `lloc` correlates at **r = 0.9936** with a systematic ≈ −4 offset and is *not* an exact reproduction: radon's raw counter works on a different basis, and no clean formula recovers the dataset's values (a regression on construct counts gave fractional coefficients and residual sd 7.7, so the difference is not a countable-construct one — most likely the values were computed on a pre-normalisation form of the source we do not have). Per this item's own rule, the extractor's value is what the model trains on; the correlation is what matters for a feature, and the thresholds in the test are set to catch a regression rather than chase the last few lines.
+  - **`halstead_*` are deliberately named apart from `meta.json`'s `h_*`**: this scanner's operator/operand basis is broader (f0: 34.3 vs 1.5), so a same-named field would invite a false comparison in the write-up.
+  - **Cross-checks against EVALUATION_DATASET.md, all exact**: `uses_aws` non-zero for **58/95** (§7 says boto3 in 58), `n_cases_with_setup` non-zero for **40/95** (§6.4 says 40 need Floci provisioning), `n_mode_shape` non-zero for **14/95** (§6.2 says 27 tests in 14 functions), max `cc` = 147 (§8's D+ ceiling). These were not fitted — they fall out of the scan and independently corroborate it.
+  - **56 feature columns** in four families (size/complexity, library surface, dynamic-Python markers, fixture surface), fixed order, versioned by `FeatureSchemaVersion`. Recorded on `Metrics.Features` for every job, so the [I1] run log is directly `(features → outcome)` training data.
+  - **Finding for [I5]/[I7] — 8 of the 56 columns are constant-zero on `evaluation_set`**: `has_infeasible_lib`, `lib_yaml`, `lib_pytz`, `lib_jwt`, `n_yield`, `n_async`, `n_mode_strict`, `n_cases_with_env`. Two consequences. (a) **Baseline B4's infeasibility blocklist cannot skip a single function on this corpus** and will be numerically identical to B0/always-translate — expect that result rather than discovering it. (b) Those columns are pure width at N=95; the training pipeline must drop zero-variance columns **inside each CV fold**, not over the whole table, or the choice of which to drop leaks the test fold. `cmd/pyscan` prints this list to stderr on every corpus scan so it cannot be forgotten.
+  - Interpreter: auto-detected `python3`/`python`, override with `PYSCAN_PYTHON`; added to the Dockerfile. The stage degrades to a warning when it cannot run (it enriches a prompt), except under `required: true`.
 
 ### [~] [C9] Support multi-file Python inputs — DROPPED
 - Category: Feature
@@ -992,7 +1000,8 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: this is a one-day modelling budget under thesis time pressure. Half a day spent training models on a corpus with no separable structure is half a day lost; the check costs an hour of analysis on data [I1] produces anyway.
 - Architecture impact: None (analysis) | Effort: S | Priority: **P0 (gate on [I6])**
 
-### [ ] [I3] Deterministic ex-ante feature extractor — built as [C8]'s `pyScan`, accurate variant
+### [x] [I3] Deterministic ex-ante feature extractor — built as [C8]'s `pyScan`, accurate variant
+- **Status: implemented 2026-08-24 together with [C8]** — one scanner, both consumers, as this item specified. Full result, the calibration numbers, the constant-column finding and its consequences for [I5]/[I7] are recorded under [C8] rather than duplicated here.
 - Category: Prediction (features)
 - Affected component(s): **the same scanner [C8] specifies** — one implementation, two consumers; plus `internal/fixture` for the fixture-side features
 - **SETTLED 2026-08-24: build the accurate Python-AST scanner, and complete [C8] and [I3] together, before the [I1] run.** This closes the "Python subprocess vs. Go heuristic tokenizer" question in favour of real parsing: `cc`/Halstead stay comparable to the dataset's own radon-derived values, train/serve parity is guaranteed because training and the service call the *same* extractor, and [C8]'s prompt hints get accurate library/construct detection rather than regex approximations. The cost accepted with it is a Python interpreter in the service image.

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ReFaaS converts serverless functions from one language to another (currently Python → Go) using a configurable, LLM-assisted pipeline. A client uploads a `.zip` containing the source function and test fixtures; a background worker runs it through a pipeline of LLM translation and build/test validation stages and the converted package can be downloaded once the job completes.
 
-This is a research codebase (thesis project). The two open problems it's built around: (1) end-to-end validation that translated code is correct for non-trivial, side-effecting workloads, and (2) prediction mechanisms to avoid infeasible or energy-ineffective translation attempts before spending LLM/build time on them. Prediction is not yet implemented anywhere in this repo — don't assume a predictor, scoring model, or related API exists unless you find it in code.
+This is a research codebase (thesis project). The two open problems it's built around: (1) end-to-end validation that translated code is correct for non-trivial, side-effecting workloads, and (2) prediction mechanisms to avoid infeasible or energy-ineffective translation attempts before spending LLM/build time on them. The **predictor itself is not implemented**: there is no model, no scoring endpoint, no gate — don't assume one exists unless you find it in code. What *does* exist is its input side, `internal/pyscan` (the `pyScan` stage), which computes the deterministic ex-ante feature vector and records it on every job. Section I of `TODO.md` holds the plan and the settled decisions.
 
 **Verify before claiming.** Always grep for a symbol/converter/endpoint before describing it as existing — `docs/floci.md` in particular is third-party Floci reference documentation, not a description of this repo's own code. Note that `internal/floci` *does* now exist: it is the optional, opt-in Floci-backed Lambda integration testing stage (`flociTester` converter), gated by `ConverterOptions.Floci.Enabled` / `FLOCI_ENABLED`; see `docs/floci-integration.md`. It is a no-op unless explicitly enabled, so it never affects default translation/build/test runs.
 
@@ -16,6 +16,7 @@ This is a research codebase (thesis project). The two open problems it's built a
 go build ./...                 # build everything
 go run ./cmd/refaas             # run the service locally (listens on :8080)
 go run ./cmd/energy runs/*.jsonl   # energy report over archived runs (add -sweep/-json)
+go run ./cmd/pyscan evaluation/evaluation_set/*.zip   # ex-ante feature table (add -json/-hints)
 gofmt -l .                      # check formatting; run `gofmt -w <file>` on changed files
 go vet ./...
 ```
@@ -46,9 +47,13 @@ cmd/energy/            analysis tool: run logs -> energy per translation/stage/f
                        Every table describes *completed* translations; failed attempts
                        are costed separately under "Failed attempts", with the run's
                        cost per success (failures amortized in).
+cmd/pyscan/           analysis tool: artifact(s) -> feature CSV/JSON for the prediction
+                       dataset. Never runs during a conversion.
 cmd/refaas/main.go
   -> internal/service       HTTP API, job queue, background worker, metrics, reconfigure
        -> internal/pipeline Runner: holds compiled Pipeline + LLM Client, executes ConversionRequests
+            -> internal/pyscan       deterministic Python AST analysis (pyScan stage): prompt
+                                     hints + the ex-ante feature vector for prediction
             -> internal/translator   LLM-backed Converters (cleaner/coder/fixer/realign)
             -> internal/builder      build + test Converters/validators
             -> internal/llmconnector LLM Client implementations (ollama, gemini, chatai)
@@ -84,6 +89,16 @@ cmd/refaas/main.go
 - `outputschema.go`'s `OutputSchema` (`map[string]OutputField`, each field defaulting to a nullable string) is the shared, connector-neutral representation of `task_args.output_keys`, parsed by `ParseOutputSchema` and set on every connector by its own `Prepare`. Each `InvokeLLM` builds its own SDK-specific structured-output request from it, falling back to that connector's original fixed schema when no task-specific `output_keys` was given (Ollama → the generic `llmOutputSchema` in `schema.go`; Gemini → the hardcoded `main.go`/`go.mod`/`main.py` properties; ChatAI → plain `response_format: json_object` with no schema). This is what lets a task like `summary` request a differently-shaped response (`{"intent": "..."}`) without changing what `cleaner`/`coder`/`fixer`/`realign` get by default.
 - `chatai.go`'s `ChatAIInvocationClient` talks to the GWDG/AcademicCloud "Chat AI" service, an OpenAI-compatible `/chat/completions` API, over plain `net/http` (no SDK dependency). It defaults `response_format` to `{"type":"json_object"}` and `max_tokens` to `2<<14` unless the task already set them, since the readers in `internal/translator` expect the entire response body to be a parseable JSON object.
 - `schema.go`'s `llmOutputSchema` is an Ollama-specific structured-output schema passed via `Format` in `ollama.go`'s `Generate` call; it has no equivalent for Gemini/ChatAI today.
+
+### Python source analysis (`internal/pyscan`) — the `pyScan` stage
+
+- `extract.py` (embedded, run through the `python3`/`python` interpreter on PATH — override with `PYSCAN_PYTHON`) parses the uploaded Python and emits **raw facts only** as JSON: complexity metrics, imports, boto3 service names, construct counts. Every *policy* decision lives on the Go side — `libmap.go` (Python→Go API table, the infeasible-library list, and the closed one-hot vocabulary), `features.go` (the feature vector's fixed column order), `hints.go` (prompt text). The split means the mapping table can be edited without touching the parser.
+- One scan serves **both** consumers, which is why [C8] and [I3] are one implementation: `hints.go` renders `{{ .lib_hints }}` / `{{ .py_features }}` into the translate prompts, and `features.go` builds the fixed-width numeric vector the prediction work ([I3]) trains on. Building them separately would let the hints and the model features drift apart.
+- **Calibration is the acceptance test** (`calibration_test.go`, runs against the real `evaluation/evaluation_set`): `cc` reproduces the dataset's radon-derived `meta.json` value exactly for **92/95** functions (94 within 2, r = 0.9998); `lloc` correlates at r = 0.9936 with a systematic ≈ −4 offset. `cc` is the **max block complexity**, not a whole-file sum — that is what the dataset reports. The `halstead_*` fields are deliberately named apart from `meta.json`'s `h_*`: they use a broader operator/operand basis and are ~20× larger, so they are model features, not a reproduction.
+- The `pyScan` **converter lives in `internal/pipeline/pyscan.go`**, not in `internal/pyscan` — `pyscan` imports nothing from the pipeline, so it stays a pure library usable by `cmd/pyscan` and any future predictor. (Same shape as `testrouter.go`; the opposite direction would be an import cycle.)
+- **Failure policy:** the stage *enriches* a prompt, so a missing interpreter or unparseable source degrades to a warning and no hints, rather than failing the conversion. `task_args.required: true` inverts that — set in `default.json` so a benchmark run cannot silently record a job without a feature vector.
+- Every job records its vector on `Metrics.Features` (`domain.FeatureVector`, carrying names + schema version, since a run log outlives the code that wrote it). This is what makes the run log directly usable as `(features → outcome)` training data ([I1]/[I4]) instead of requiring artifacts to be re-scanned later with a possibly-changed scanner.
+- `cmd/pyscan` is the offline CLI (`go run ./cmd/pyscan evaluation/evaluation_set/*.zip > features.csv`, plus `-json`/`-hints`). It never runs during a conversion — same separation `cmd/energy` keeps. It also reports **constant feature columns** to stderr: on `evaluation_set`, 8 of 56 are constant-zero, including `has_infeasible_lib`, which means baseline B4's blocklist ([I5]) cannot skip a single function on this corpus.
 
 ### Build/test stages (`internal/builder`)
 

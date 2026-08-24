@@ -12,6 +12,13 @@
   "tasks": [
     {
       "id": "root",
+      "task": "pyScan",
+      "task_args": { "required": true },
+      "maxRetryCount": 1,
+      "next": ["clean"]
+    },
+    {
+      "id": "clean",
       "task": "cleaner",
       "maxRetryCount": 2,
       "next": ["convert"],
