@@ -1,45 +1,89 @@
 {
   "_comment": [
     "Constants for the energy model of EVALUATION.md section 4, in one place so",
-    "the pending GWDG reply and the section 8 sensitivity sweep are config edits",
-    "rather than code edits. Every value replaced by GWDG data should have its",
-    "source changed from 'assumed' to 'gwdg' and be marked as such in the thesis",
-    "constants table.",
+    "the GWDG reply and the section 8 sensitivity sweep are config edits rather",
+    "than code edits. Every value is tagged with its source; 'gwdg' means the",
+    "support reply of 2026-08-22 stated it, 'assumed' means we still do not know.",
     "Consumed by: go run ./cmd/energy"
   ],
 
+  "_gwdg_reply_2026_08_22": {
+    "_comment": [
+      "What GWDG support confirmed, declined, and left unanswered. Recorded here",
+      "because the thesis constants table has to mark GWDG-provided values apart",
+      "from assumed ones, and because two of these are refusals rather than gaps:",
+      "asking again will not close them.",
+      "NOTE the reply is internally split: the generic 'is it 4x H100 PCIe on",
+      "KISSKI?' question was confirmed for the platform, but the precision answer",
+      "names our model specifically - 'FP8, wie zum Beispiel bei Devstral, das auf",
+      "2x H200 laeuft'. The model-specific statement governs: we cost Devstral,",
+      "not the platform average."
+    ],
+    "confirmed": {
+      "platform": "KISSKI inference platform is 4x H100 PCIe 80GB per node",
+      "devstral_hardware": "devstral-2-123b-instruct-2512 runs on 2x H200",
+      "devstral_precision": "FP8 (FP16 is the house default; Devstral is one of the FP8 exceptions)",
+      "carbon": "GWDG operates carbon-neutral"
+    },
+    "declined": {
+      "throughput_and_concurrency": "data exists but may not be released - B stays the dominant unknown permanently, not pending"
+    },
+    "unanswered": {
+      "node_power_watts": "no monitoring figure given",
+      "pue": "not answered; the 2021 Emmy press release remains the only source"
+    }
+  },
+
   "hardware": {
-    "_source": "KISSKI inference platform page + NVIDIA H100 PCIe datasheet (assumed)",
-    "gpus_per_node": 4,
-    "peak_flops_per_gpu": 7.56e14,
+    "_source": "gwdg (2x H200, per the 2026-08-22 reply) + NVIDIA H200 datasheet; node power still assumed",
+    "_gpu_model": "NVIDIA H200 SXM 141GB HBM3e (700 W). The reply did not name the variant; H200 NVL would be 600 W, which the node_power_watts sweep covers.",
+    "gpus_per_node": 2,
+    "peak_flops_per_gpu": 1.979e15,
+    "_peak_flops_note": "H200 FP8 tensor dense, 1979 TFLOP/s (3958 with sparsity, not used). FP8 is the right peak because the model is served in FP8; if the deployment were weight-only quantized (W8A8 vs W8A16) the math would run at the BF16 peak of 989 TFLOP/s - swept in sensitivity.peak_flops_per_gpu.",
     "model_flop_utilization": 0.4,
-    "hbm_bandwidth_bytes_per_second": 2.0e12,
+    "hbm_bandwidth_bytes_per_second": 4.8e12,
     "achieved_bandwidth_fraction": 0.75,
-    "node_power_watts": 2000
+    "node_power_watts": 1700,
+    "_node_power_note": "assumed: 2 x 700 W GPU + 2 x 150 W host/network share, keeping the same per-GPU host overhead the superseded 4x H100 figure used (600 W / 4 GPUs). GWDG did not supply a monitoring value."
   },
 
   "models": {
     "_default": {
       "_comment": "Applied to any model in the run log without its own entry.",
       "parameters": 1.23e11,
-      "bytes_per_parameter": 2,
-      "_source": "devstral-2-123b-instruct-2512 model card; BF16 assumed - verify"
+      "bytes_per_parameter": 1,
+      "_source": "devstral-2-123b-instruct-2512 model card; FP8 confirmed by GWDG 2026-08-22"
     },
     "devstral-2-123b-instruct-2512": {
       "parameters": 1.23e11,
-      "bytes_per_parameter": 2
+      "bytes_per_parameter": 1
     }
   },
 
   "serving": {
-    "_comment": "Concurrency is the single largest unknown; see section 8.",
+    "_comment": [
+      "Concurrency remains the single largest unknown; see section 8. GWDG holds",
+      "this data but declined to release it, so unlike the other gaps this one is",
+      "closed off rather than pending - the sweep over B is the permanent answer."
+    ],
+    "_source": "assumed",
     "concurrency": 32
   },
 
   "facility": {
+    "_comment": [
+      "Two CO2 intensities, reported side by side (GHG Protocol Scope 2 dual",
+      "reporting). market_co2e_grams_per_kwh is GWDG's own basis - they stated",
+      "carbon-neutral operation - while grid_co2e_grams_per_kwh is what the",
+      "electricity physically drew from the German grid. Reporting only the",
+      "market figure would claim the energy was free; reporting only the location",
+      "figure would overstate what GWDG reports. Set market to null to drop the",
+      "second figure from the report."
+    ],
     "pue": 1.05,
     "grid_co2e_grams_per_kwh": 363,
-    "_source": "GWDG press release 4/2021 (Emmy, 2021 - replace with GWDG reply); Umweltbundesamt"
+    "market_co2e_grams_per_kwh": 0,
+    "_source": "pue: GWDG press release 4/2021 (Emmy, 2021 - GWDG did not answer this, so it stays assumed); grid: Umweltbundesamt; market: gwdg (carbon-neutral, 2026-08-22)"
   },
 
   "analysis": {
@@ -54,9 +98,16 @@
   },
 
   "sensitivity": {
-    "_comment": "Ranges swept by -sweep to produce the section 8 table.",
+    "_comment": [
+      "Ranges swept by -sweep to produce the section 8 table. The first three are",
+      "the parameters GWDG did not or would not supply; bytes_per_parameter is now",
+      "a counterfactual rather than an unknown (FP8 is confirmed) and is kept so",
+      "the table shows what the confirmation was worth."
+    ],
     "concurrency": [8, 16, 32, 64, 128],
-    "bytes_per_parameter": [2, 1],
+    "node_power_watts": [1400, 1700, 2550],
+    "peak_flops_per_gpu": [9.894e14, 1.979e15],
+    "bytes_per_parameter": [1, 2],
     "model_flop_utilization": [0.3, 0.4, 0.5],
     "pue": [1.03, 1.05, 1.2]
   }

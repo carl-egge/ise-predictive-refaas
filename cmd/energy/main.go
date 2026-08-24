@@ -109,6 +109,21 @@ func WriteSensitivity(w *os.File, cfg *Config, translations []TranslationEnergy)
 		variant.Serving.Concurrency = b
 		writeSweepRow(tw, "concurrency B", fmt.Sprintf("%.0f", b), &variant, translations, central)
 	}
+	// Node power and peak FLOP/s are swept because GWDG's 2026-08-22 reply left
+	// them open: no monitoring figure was given for node power, and the reply
+	// named the precision (FP8) without saying whether the *math* runs in FP8
+	// or only the weights are stored that way - which is a factor of two on the
+	// prefill peak, and so on e_in.
+	for _, p := range cfg.Sensitivity.NodePowerWatts {
+		variant := *cfg
+		variant.Hardware.NodePowerWatts = p
+		writeSweepRow(tw, "node power", fmt.Sprintf("%.0f W", p), &variant, translations, central)
+	}
+	for _, f := range cfg.Sensitivity.PeakFLOPSPerGPU {
+		variant := *cfg
+		variant.Hardware.PeakFLOPSPerGPU = f
+		writeSweepRow(tw, "prefill peak", fmt.Sprintf("%.0f TFLOP/s", f/1e12), &variant, translations, central)
+	}
 	for _, bytes := range cfg.Sensitivity.BytesPerParameter {
 		variant := *cfg
 		variant.Models = scaleModelBytes(cfg.Models, bytes)

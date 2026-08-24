@@ -4,8 +4,12 @@ Reference document for the energy-consumption estimation of the Python→Go
 translation pipeline. Records the decisions, formulas, constants and open
 tasks agreed for the thesis.
 
-**Status:** constants are provisional defaults. A request for the real values
-has been sent to GWDG support and is pending. See [Open Questions](#open-questions).
+**Status:** GWDG support replied on **2026-08-22**. Hardware, precision and
+carbon accounting are now provider-stated; node power and PUE went unanswered
+and concurrency was **declined** (they hold the data but may not release it),
+so those three stay assumed and are swept instead. See
+[The GWDG reply](#the-gwdg-reply-2026-08-22) and
+[Open Questions](#open-questions).
 
 ---
 
@@ -40,6 +44,8 @@ method (absolute accuracy) into a demonstrated non-issue.
 | LLM provider | GWDG SAIA / Chat AI (`https://chat-ai.academiccloud.de/v1`) |
 | Model | `devstral-2-123b-instruct-2512` (dense, 123B parameters) |
 | Serving stack | vLLM 0.22.x |
+| Serving hardware | 2 × NVIDIA H200 (141 GB HBM3e), **GWDG-stated** |
+| Precision | **FP8**, GWDG-stated (FP16 is their house default; Devstral is one of the exceptions) |
 | Evaluation set | **95** curated Python serverless functions (`evaluation_set`, 392 tests) + the legacy **14** paper functions (`function_set`, 41 tests) — see [EVALUATION_DATASET.md](EVALUATION_DATASET.md); report the two separately, `function_set` expectations were never executed |
 | Pipeline | Go, multiple LLM calls per translation |
 | Signals available | `prompt_tokens`, `completion_tokens` (read directly from the OpenAI-compatible `usage` object by `internal/llmconnector/chatai.go` — no `total − prompt` subtraction needed) |
@@ -90,8 +96,12 @@ a constant — see [Validation](#7-validation).
 E_call     [J] = prompt_tokens × e_in + output_tokens × e_out
 E_pipeline [J] = Σ E_call          (over all calls, including retries)
 E_facility [J] = E_pipeline × PUE
-CO2e       [g] = E_facility / 3.6e6 × I_grid
+CO2e       [g] = E_facility / 3.6e6 × I
 ```
+
+`I` is reported twice: once at the location-based German grid intensity and
+once at GWDG’s market-based intensity of zero (they state carbon-neutral
+operation). See [The GWDG reply](#the-gwdg-reply-2026-08-22).
 
 Input and output tokens are weighted separately because they are physically
 different operations:
@@ -116,12 +126,20 @@ T_prefill = (n_gpu × peak_flops × mfu) / (2 × n_params)
 e_in      = P_node / T_prefill
 ```
 
-With 4 × H100 PCIe (756 TFLOP/s BF16 dense each), MFU 0.40, 123e9 params:
+With 2 × H200 (1,979 TFLOP/s FP8 dense each), MFU 0.40, 123e9 params:
 
 ```
-T_prefill ≈ 1210e12 / 246e9 ≈ 4,900 tokens/s
-e_in      ≈ 2000 W / 4900   ≈ 0.41 J per input token
+T_prefill ≈ 1583e12 / 246e9 ≈ 6,440 tokens/s
+e_in      ≈ 1700 W / 6440   ≈ 0.26 J per input token
 ```
+
+The FP8 peak is used because the model is *served* in FP8. One assumption
+survives inside GWDG's confirmation: whether the deployment quantizes weights
+and activations (W8A8, so the matmuls really run on FP8 tensor cores) or only
+the weights (W8A16, so prefill still runs at the 989 TFLOP/s BF16 peak). The
+latter would halve `T_prefill` and double `e_in`, leaving `e_out` untouched —
+which is why `peak_flops_per_gpu` is now one of the swept parameters in
+section 8 rather than a silent choice.
 
 **`e_out` — energy per output token**
 
@@ -130,41 +148,57 @@ t_step = weight_bytes / (n_gpu × hbm_bw × bw_eff)
 e_out  = P_node × t_step / B
 ```
 
-With 246 GB weights (123B × 2 bytes, BF16), 4 × 2 TB/s at 75% efficiency:
+With 123 GB weights (123B × 1 byte, FP8), 2 × 4.8 TB/s at 75% efficiency:
 
 ```
-t_step ≈ 246e9 / 6.0e12 ≈ 41 ms
+t_step ≈ 123e9 / 7.2e12 ≈ 17.1 ms
 ```
 
 | Concurrency `B` | `e_out` (J/token) |
 |---|---|
-| 8 | 10.3 |
-| 16 | 5.1 |
-| **32 (central)** | **2.6** |
-| 64 | 1.3 |
-| 128 | 0.64 |
+| 8 | 3.63 |
+| 16 | 1.82 |
+| **32 (central)** | **0.91** |
+| 64 | 0.45 |
+| 128 | 0.23 |
 
-`B` is the single largest unknown. Everything else is pinned down by hardware
-documentation.
+`B` remains the single largest unknown, and after the GWDG reply it is a
+**permanent** one rather than a pending one: they hold the throughput and
+concurrency data but are not permitted to release it. The sensitivity sweep
+over `B` is therefore not a placeholder awaiting an answer — it *is* the
+answer, and the thesis should present it that way.
+
+Note the FP8 confirmation cuts the weight traffic per decode step in half
+relative to the BF16 assumption, and moving from 4 × H100 PCIe (2.0 TB/s) to
+2 × H200 (4.8 TB/s) leaves aggregate bandwidth nearly unchanged (8.0 → 9.6
+TB/s) while halving the number of GPUs drawing power. Both effects push the
+same way, which is why the estimate fell by roughly a factor of two.
 
 ### Worked example
 
 5 calls averaging 6,000 prompt / 1,500 output tokens:
 
 ```
-prefill: 30,000 × 0.41 =  12.3 kJ
-decode:   7,500 × 2.6  =  19.5 kJ
-total:                    31.8 kJ × PUE 1.05 ≈ 33 kJ ≈ 9.3 Wh
+prefill: 30,000 × 0.264 =  7.9 kJ
+decode:   7,500 × 0.908 =  6.8 kJ
+total:                     14.7 kJ × PUE 1.05 ≈ 15.5 kJ ≈ 4.3 Wh
 ```
 
-Range over `B` ∈ [8, 128]: roughly **4–20 Wh per translation**.
+Range over `B` ∈ [8, 128]: roughly **3–10 Wh per translation**.
+
+> Before the GWDG reply the same example gave 33 kJ ≈ 9.3 Wh over a 4–20 Wh
+> range, on 4 × H100 PCIe at BF16. The formulas did not change — only their
+> inputs did. `cmd/energy`'s `TestSupersededCoefficientsStillDerive` pins the
+> old figures against the current code so this remains a demonstrable claim
+> rather than an assertion.
 
 ---
 
 ## 4. Constants
 
-Provisional until GWDG replies. Any value replaced by GWDG data should be
-marked as such in the thesis constants table.
+Values marked **GWDG** were stated by GWDG support on 2026-08-22 and carry into
+the thesis constants table as provider-supplied; everything else remains an
+assumption and must be labelled as one.
 
 > **These values live in [`energy.config.json`](energy.config.json)**, which
 > `go run ./cmd/energy` reads. The tool has no compiled-in fallback, so that
@@ -172,24 +206,63 @@ marked as such in the thesis constants table.
 > figure recomputes. The table below documents the same values with their
 > provenance for the write-up.
 
-| Parameter | Symbol | Default | Source |
+| Parameter | Symbol | Value | Source |
 |---|---|---|---|
-| GPUs per node | `n_gpu` | 4 | KISSKI inference platform page |
-| GPU model | — | H100 PCIe 80 GB HBM2e | KISSKI inference platform page |
-| GPU TDP | — | 350 W | NVIDIA H100 PCIe datasheet |
-| Node power under load | `P_node` | 2000 W | 4 × 350 W GPU + ~600 W host/network |
-| Peak BF16 throughput | `peak_flops` | 756 TFLOP/s per GPU | NVIDIA H100 PCIe datasheet |
+| GPUs serving Devstral | `n_gpu` | 2 | **GWDG (2026-08-22)** |
+| GPU model | — | H200 141 GB HBM3e | **GWDG (2026-08-22)**; SXM/NVL variant not stated |
+| GPU TDP | — | 700 W (SXM; NVL would be 600 W) | NVIDIA H200 datasheet |
+| Node power under load | `P_node` | 1700 W | **assumption** — 2 × 700 W GPU + 150 W/GPU host share; not answered |
+| Peak FP8 throughput | `peak_flops` | 1,979 TFLOP/s per GPU (dense) | NVIDIA H200 datasheet |
 | Model FLOP utilization | `mfu` | 0.40 | conventional inference-serving assumption |
 | Parameters | `n_params` | 123e9 | model card |
-| Bytes per parameter | — | 2 (BF16) | **assumption — verify** |
-| HBM bandwidth | `hbm_bw` | 2.0e12 B/s per GPU | H100 PCIe datasheet |
+| Bytes per parameter | — | 1 (FP8) | **GWDG (2026-08-22)** |
+| HBM bandwidth | `hbm_bw` | 4.8e12 B/s per GPU | NVIDIA H200 datasheet |
 | Achieved bandwidth fraction | `bw_eff` | 0.75 | standard assumption |
-| Concurrency | `B` | 32 (range 8–128) | **assumption — largest uncertainty** |
-| PUE | `PUE` | 1.05 (range 1.03–1.2) | GWDG press release 4/2021 (Emmy) |
-| Grid CO₂ intensity | `I_grid` | 363 gCO₂e/kWh | Umweltbundesamt, German average |
+| Concurrency | `B` | 32 (range 8–128) | **assumption — GWDG declined to release; largest uncertainty** |
+| PUE | `PUE` | 1.05 (range 1.03–1.2) | GWDG press release 4/2021 (Emmy); not answered |
+| CO₂ intensity, location-based | `I_grid` | 363 gCO₂e/kWh | Umweltbundesamt, German average |
+| CO₂ intensity, market-based | `I_market` | 0 gCO₂e/kWh | **GWDG (2026-08-22)** — carbon-neutral operation |
 
-Two assumptions dominate the result: **precision** (FP8 instead of BF16 would
-roughly halve `e_out`) and **concurrency `B`**.
+The two assumptions that dominated the result were precision and concurrency.
+Precision is now settled (FP8, confirmed), which leaves **concurrency `B`** as
+the single dominant uncertainty, with **node power** a distant second.
+
+### The GWDG reply (2026-08-22)
+
+Recorded verbatim in structure because the thesis must distinguish *answered*
+from *refused* from *unanswered* — they warrant different treatment.
+
+| Question | Outcome | Effect on the model |
+|---|---|---|
+| GPU type and count | **Answered.** KISSKI is 4 × H100 PCIe per node — but Devstral specifically "läuft auf 2× H200" | `n_gpu` 4 → 2, H100 PCIe → H200 |
+| Precision | **Answered.** FP16 for most models, FP8 for some "wie zum Beispiel bei Devstral" | bytes/param 2 → 1; `e_out` halved |
+| Node power | **Not answered** | stays assumed; now swept |
+| Throughput / concurrency | **Declined** — the data exists but may not be released | `B` stays assumed *permanently*; the sweep is the result |
+| PUE | **Not answered** | 1.03–1.05 from the 2021 Emmy press release stands, still Emmy-specific |
+| Electricity | **Answered.** "wir sind tatsächlich CO2-neutral" | market-based intensity 0; location-based retained alongside |
+
+**Reading the hardware answer.** The reply is internally split: the generic
+question ("4 × H100 PCIe on KISSKI, correct?") was confirmed with "Richtig",
+while the precision answer names our model specifically as running on 2 × H200.
+The model-specific statement governs — we are costing Devstral, not the
+platform average — and the two are consistent rather than contradictory: the
+H100 figure describes the KISSKI inference platform in general, the H200 pair
+describes this model's deployment. A sanity check supports the specific
+reading: 123B parameters at FP8 is 123 GB of weights, which fits 2 × 141 GB
+with ~159 GB left for KV cache; at BF16 it would be 246 GB, leaving 36 GB and
+a context far short of the advertised 256K. The stated precision and the
+stated GPU count only fit each other.
+
+**Carbon accounting.** "CO₂-neutral" is a statement about procurement, not
+about physics: the electricity was still drawn. Following the GHG Protocol's
+Scope 2 dual-reporting rule, `cmd/energy` now reports **both** — a
+location-based figure at the German grid average (what the draw would emit on
+the physical grid) and a market-based figure at GWDG's contractual intensity
+of zero. Report both in the thesis. Quoting only the market figure would make
+the pipeline look free; quoting only the location figure would misstate what
+GWDG reports. Note also that carbon-neutrality typically covers operational
+emissions only — embodied GPU manufacturing is excluded from both figures, and
+that belongs in section 9's lower-bound caveat.
 
 ---
 
@@ -335,8 +408,10 @@ No per-token measurement exists for Devstral 2 123B. Validate as follows:
    *is* on the ML.ENERGY leaderboard, apply the formulas above to its
    configuration, and compare against their measured value. Agreement within a
    factor of 2 demonstrates the formula works and justifies applying it to
-   Devstral. Note that ML.ENERGY measures H100/B200 **SXM** parts (700 W, HBM3)
-   whereas GWDG runs H100 **PCIe** (350 W, HBM2e) — adjust accordingly.
+   Devstral. Since GWDG’s reply places Devstral on **H200** (700 W SXM,
+   4.8 TB/s HBM3e), the leaderboard’s H100/B200 SXM measurements are now a
+   closer hardware match than under the old H100 PCIe assumption — but still
+   adjust for the part actually measured rather than assuming equivalence.
    Match dense-to-dense; for MoE models the relevant quantity is *active*
    parameters.
 2. **Cross-check against Mistral's LCA** (July 2025, with ADEME and partners)
@@ -356,12 +431,30 @@ and hardware are held constant.
 Never report a single number. Report central estimate plus range, and include
 a sensitivity table:
 
-| Parameter varied | Range | Effect on E per translation |
-|---|---|---|
-| Concurrency `B` | 8 → 128 | 20 Wh → 4 Wh |
-| Precision | BF16 → FP8 | ÷ ~2 |
-| MFU | 0.30 → 0.50 | prefill term ±25% |
-| PUE | 1.03 → 1.2 | +16% |
+`go run ./cmd/energy -sweep runs/*.jsonl` emits this table directly, re-costing
+the *measured* token counts under each varied assumption — only the
+coefficients are assumptions, the tokens are facts.
+
+| Parameter varied | Range | Effect on E per translation | Status after the reply |
+|---|---|---|---|
+| Concurrency `B` | 8 → 128 | ×2.6 → ×0.6 (10 Wh → 3 Wh) | **assumed; declined by GWDG — permanent** |
+| Node power `P_node` | 1400 → 2550 W | ×0.82 → ×1.50 | **assumed; unanswered** |
+| Prefill peak | 989 → 1979 TFLOP/s | ×1.45 → ×1.00 | W8A16 vs W8A8 ambiguity inside the FP8 answer |
+| Precision | FP8 → BF16 | ×1.00 → ×1.55 | **settled: FP8** — kept as a counterfactual |
+| MFU | 0.30 → 0.50 | ×1.15 → ×0.91 | assumed |
+| PUE | 1.03 → 1.2 | ×0.98 → ×1.14 | assumed; unanswered |
+
+The multipliers above are from the `run-20260807-132133` archive; they shift
+slightly with the prompt/output token mix of a given run, since `B` and
+precision act on the decode term while MFU and the prefill peak act on
+prefill. Regenerate the table from the batch actually reported.
+
+Two rows changed character with the reply. **Precision** is no longer an
+unknown — it is a resolved constant, and its row now shows what the
+confirmation was worth (a 1.55× overestimate avoided). **Concurrency** is no
+longer pending — GWDG holds the data and may not share it, so no future
+correspondence will collapse this row, and the sweep is the reported result
+rather than a stand-in for one.
 
 Conclude with the payoff statement: *even at the pessimistic end of every
 parameter, the break-even point remains below N invocations, so the conclusion
@@ -400,12 +493,27 @@ obvious examiner question at no cost.
 
 Write this section. Items to cover:
 
-- Unknown server concurrency (`B`) — the dominant uncertainty.
-- Assumed model precision (BF16 vs. FP8).
+- Unknown server concurrency (`B`) — the dominant uncertainty, and an
+  irreducible one: GWDG holds the measurement and declined to release it
+  (2026-08-22). State the refusal, not just the gap.
+- ~~Assumed model precision~~ — **resolved**: GWDG confirmed FP8 for Devstral.
+  A residual remains: whether the deployment is W8A8 or weight-only W8A16,
+  which is a factor of 2 on `e_in` (swept as `peak_flops_per_gpu`).
+- Assumed node power (1700 W). GWDG gave no monitoring figure, and the reply
+  did not state whether the H200s are SXM (700 W) or NVL (600 W). Swept over
+  1400–2550 W, i.e. GPU-only to full-node-share attribution.
+- PUE is taken from a 2021 press release about **Emmy**, a different machine
+  from the inference platform, and GWDG did not confirm a current value. It is
+  the smallest of the uncertainties (±16% across the swept range) but it is not
+  a measured value for this hall.
+- Carbon-neutrality is a **market-based** claim about procurement. Both
+  intensities are reported; neither includes embodied manufacturing emissions.
 - Token counts used as a proxy for computational work.
 - Prefix caching, if active, makes the estimate conservative — and it cannot
   be quantified here, since SAIA does not expose `cached_tokens` (verified).
-- Marginal-cost framing excludes idle and embodied energy.
+- Marginal-cost framing excludes idle and embodied energy — and GWDG's
+  carbon-neutral status does not change that, since it covers operational
+  emissions only.
 - **Local pipeline compute (builds, test executions, Floci containers) is
   excluded from `E_translation`**, or included only as a bounded estimate —
   state which, and give the bound (see [Local compute](#local-compute-non-llm-pipeline-energy)).
@@ -450,9 +558,21 @@ Write this section. Items to cover:
    https://doi.org/10.1007/s11227-026-08508-3
    (GWDG's requested citation; supports the marginal-cost argument)
 4. GWDG press release 4/2021 — https://gwdg.de/about-us/press-releases/2021/press-release-4-2021/
-   (PUE up to 1.03 on Emmy; 2021, Emmy-specific — replace with GWDG's reply)
+   (PUE up to 1.03 on Emmy; 2021, Emmy-specific — GWDG did not answer the PUE
+   question in the 2026-08-22 reply, so this remains the only source and its
+   Emmy-specificity remains a caveat)
+4a. **GWDG support correspondence, 2026-08-22** — personal communication.
+   Source for: 2 × H200 serving Devstral 2 123B, FP8 precision, carbon-neutral
+   operation; and for the *refusal* to release throughput/concurrency data.
+   Cite as personal communication with the date; keep the mail archived with
+   the thesis artifacts, since three constants in the table above rest on it
+   and none is otherwise published.
 5. GWDG SAIA API documentation — https://docs.hpc.gwdg.de/services/ai-services/saia/index.html
-6. NVIDIA H100 PCIe datasheet — obtain the official PDF from nvidia.com
+6. NVIDIA H200 datasheet — obtain the official PDF from nvidia.com
+   (141 GB HBM3e, 4.8 TB/s, 1,979 TFLOP/s FP8 dense, up to 700 W SXM). This
+   replaces the H100 PCIe datasheet as the hardware source for every
+   coefficient; the H100 figures are retained only in the superseded-values
+   note of section 3.
 
 **To verify before citing — methodology**
 
@@ -474,16 +594,32 @@ energy-documentation requirements. Same verification treatment applies.
 
 ## Open Questions
 
-Awaiting GWDG support reply. On receipt, update Section 4 and mark the
-superseded defaults.
+GWDG support replied on **2026-08-22**. Section 4 and the constants file are
+updated; the superseded defaults are noted in section 3.
 
-- [ ] GPU type and count serving Devstral 2 123B (assumed: 4 × H100 PCIe 80 GB)
-- [ ] Model precision — BF16 or quantized (FP8 / INT4)? **Halves `e_out` if FP8**
-- [ ] Typical node power draw under inference load
-- [ ] Typical aggregate output-token throughput and concurrent request count
-      → **would eliminate `B` entirely**, reducing `e_out` to `P_node / T_aggregate`
-- [ ] Current measured PUE for the hall hosting the inference platform
-- [ ] Grid CO₂ intensity used for reporting, or renewable procurement status
+- [x] ~~GPU type and count serving Devstral 2 123B~~ — **answered:** 2 × H200
+      for this model (KISSKI in general is 4 × H100 PCIe, confirmed separately;
+      see the reading note in section 4)
+- [x] ~~Model precision~~ — **answered:** FP8. FP16 is the house default,
+      Devstral one of the FP8 exceptions. `e_out` halved as predicted.
+      Residual: W8A8 vs. weight-only W8A16, which moves `e_in` by 2× and is now
+      swept rather than assumed.
+- [ ] Typical node power draw under inference load — **not answered.** Stays at
+      the assumed 1700 W and is swept over 1400–2550 W. Worth one follow-up:
+      it is the only remaining open item that GWDG neither declined nor is
+      likely to consider sensitive.
+- [x] ~~Typical aggregate output-token throughput and concurrent request
+      count~~ — **declined:** "hierzu haben wir zwar Daten, dürfen diese aber
+      leider nicht ohne Weiteres rausgeben." This does not become available by
+      asking again, so `B` is permanently a swept parameter. Do not present the
+      sweep as provisional.
+- [ ] Current measured PUE for the hall hosting the inference platform — **not
+      answered.** The 2021 Emmy press release remains the only source; keep its
+      Emmy-specificity in threats to validity.
+- [x] ~~Grid CO₂ intensity used for reporting, or renewable procurement
+      status~~ — **answered:** "wir sind tatsächlich CO2-neutral". Reported as
+      a market-based intensity of 0 alongside the location-based German grid
+      average, per GHG Protocol Scope 2 dual reporting.
 - [x] ~~Whether vLLM prefix caching is enabled and `cached_tokens` is passed
       through the SAIA gateway~~ — **answered by API experiment (2026-07-04):**
       `usage` reports `prompt_tokens` / `completion_tokens` / `total_tokens`
@@ -493,8 +629,9 @@ superseded defaults.
       caching is *active* server-side remains unknown; if it is, the estimate
       is an overestimate. Ask GWDG only if the distinction becomes load-bearing.
 
-If no reply within ~2 weeks, proceed with the documented defaults and note the
-attempt in the thesis.
+Remaining follow-up, if any: node power and current PUE. Neither is likely to
+move the result far (±50% and ±16% respectively across their swept ranges,
+against a factor-2.6 range on `B`), so neither is worth blocking on.
 
 ---
 
@@ -538,6 +675,14 @@ Resolved while writing this revision:
 **Thesis text**
 - [ ] Marginal vs. shared cost section, with the counter-argument paragraph
 - [ ] Threats to validity section
-- [ ] Constants table with sources, marking GWDG-provided vs. assumed values
+- [ ] Constants table with sources, marking GWDG-provided vs. assumed values —
+      the section 4 table is now marked; carry the marking through verbatim
 - [ ] Verify sources 7–10 before citing
-- [ ] Replace defaults with GWDG values once the reply arrives (Section 4)
+- [x] ~~Replace defaults with GWDG values once the reply arrives (Section 4)~~ —
+      done 2026-08-22; `evaluation/energy.config.json` and section 4 updated,
+      superseded figures recorded in section 3
+- [ ] Report both CO₂ intensities (location- and market-based) and say why,
+      rather than quoting GWDG's carbon-neutral status alone
+- [ ] Present the `B` sweep as the *result* for concurrency, not as a pending
+      unknown — GWDG declined to release the data, and that refusal is itself
+      reportable

@@ -25,10 +25,16 @@ type Report struct {
 	TotalFacilityJoules  float64 `json:"total_facility_joules"`
 	MeanFacilityJoules   float64 `json:"mean_facility_joules"`
 	MedianFacilityJoules float64 `json:"median_facility_joules"`
-	TotalCO2eGrams       float64 `json:"total_co2e_grams"`
-	TotalPromptTokens    int     `json:"total_prompt_tokens"`
-	TotalEvalTokens      int     `json:"total_eval_tokens"`
-	RepairShare          float64 `json:"repair_share"`
+	// TotalCO2eGrams is location-based: the German grid intensity applied to
+	// the energy actually drawn. TotalCO2eGramsMarket is the market-based
+	// counterpart under the provider's own procurement (zero for GWDG, who
+	// state carbon-neutral operation) and is nil when the config names no
+	// market intensity. Both are reported; see Config.MarketIntensity.
+	TotalCO2eGrams       float64  `json:"total_co2e_grams"`
+	TotalCO2eGramsMarket *float64 `json:"total_co2e_grams_market,omitempty"`
+	TotalPromptTokens    int      `json:"total_prompt_tokens"`
+	TotalEvalTokens      int      `json:"total_eval_tokens"`
+	RepairShare          float64  `json:"repair_share"`
 
 	ByStage    []StageAggregate `json:"by_stage"`
 	ByBucket   []GroupAggregate `json:"by_bucket"`
@@ -159,6 +165,12 @@ func Build(cfg *Config, jobs []TranslationEnergy, runtime map[string]RuntimeMeas
 
 	r.MeanFacilityJoules = r.TotalFacilityJoules / float64(len(translations))
 	r.MedianFacilityJoules = median(facility)
+	if intensity, ok := cfg.MarketIntensity(); ok {
+		// linear in energy, so deriving it here is exactly equivalent to
+		// costing every translation twice
+		market := r.TotalFacilityJoules / joulesPerKWh * intensity
+		r.TotalCO2eGramsMarket = &market
+	}
 	if r.TotalFacilityJoules > 0 {
 		// repair energy is compute-side, so compare like with like
 		r.RepairShare = repairJoules / (r.TotalFacilityJoules / cfg.Facility.PUE)
@@ -320,12 +332,26 @@ func (r *Report) Write(w io.Writer, cfg *Config) {
 	coeff := DeriveCoefficients(cfg.hardware(), cfg.Models[defaultModelKey], cfg.Serving.Concurrency)
 	fmt.Fprintf(w, "Energy model (default model, B=%.0f): e_in %.3f J/token, e_out %.3f J/token\n",
 		cfg.Serving.Concurrency, coeff.EIn, coeff.EOut)
-	fmt.Fprintf(w, "  prefill %.0f tokens/s, decode step %.1f ms, PUE %.2f\n\n",
+	fmt.Fprintf(w, "  prefill %.0f tokens/s, decode step %.1f ms, PUE %.2f\n",
 		coeff.PrefillTokensPerSecond, coeff.DecodeStepSeconds*1000, cfg.Facility.PUE)
+	// the hardware line is provenance, not decoration: every figure below is
+	// linear in it, and a reader must be able to see which serving
+	// configuration produced them without opening the config file
+	fmt.Fprintf(w, "  hardware: %.0f GPU x %.0f TFLOP/s peak, %.1f TB/s HBM, %.0f W node, %.0f bytes/param\n\n",
+		cfg.Hardware.GPUsPerNode, cfg.Hardware.PeakFLOPSPerGPU/1e12,
+		cfg.Hardware.HBMBandwidthBytesPerSecond/1e12, cfg.Hardware.NodePowerWatts,
+		cfg.Models[defaultModelKey].BytesPerParameter)
 
 	fmt.Fprintf(w, "Translations: %d\n", r.Count)
 	fmt.Fprintf(w, "  tokens:        %d prompt / %d output\n", r.TotalPromptTokens, r.TotalEvalTokens)
-	fmt.Fprintf(w, "  energy total:  %s (%.1f g CO2e)\n", formatJoules(r.TotalFacilityJoules), r.TotalCO2eGrams)
+	fmt.Fprintf(w, "  energy total:  %s\n", formatJoules(r.TotalFacilityJoules))
+	fmt.Fprintf(w, "  CO2e:          %.1f g location-based (grid at %.0f g/kWh)\n",
+		r.TotalCO2eGrams, cfg.Facility.GridCO2eGramsPerKWh)
+	if r.TotalCO2eGramsMarket != nil {
+		intensity, _ := cfg.MarketIntensity()
+		fmt.Fprintf(w, "                 %.1f g market-based (provider procurement at %.0f g/kWh)\n",
+			*r.TotalCO2eGramsMarket, intensity)
+	}
 	fmt.Fprintf(w, "  per function:  mean %s, median %s\n",
 		formatJoules(r.MeanFacilityJoules), formatJoules(r.MedianFacilityJoules))
 	fmt.Fprintf(w, "  repair share:  %.1f%% of inference energy\n", r.RepairShare*100)
@@ -383,7 +409,7 @@ func (r *Report) writeFailedAttempts(w io.Writer) {
 	fmt.Fprintf(w, "Failed attempts: %d (no translation produced; excluded from every figure above)\n", f.Count)
 	fmt.Fprintf(w, "  functions:     %s\n", strings.Join(f.FunctionIDs, ", "))
 	fmt.Fprintf(w, "  tokens:        %d prompt / %d output\n", f.PromptTokens, f.EvalTokens)
-	fmt.Fprintf(w, "  energy wasted: %s (%.1f g CO2e) - %.1f%% of this run's total spend\n",
+	fmt.Fprintf(w, "  energy wasted: %s (%.1f g CO2e location-based) - %.1f%% of this run's total spend\n",
 		formatJoules(f.FacilityJoules), f.CO2eGrams, f.ShareOfTotalSpend*100)
 	fmt.Fprintf(w, "  cost per successful translation, failures amortized in: %s\n\n",
 		formatJoules(f.JoulesPerSuccess))

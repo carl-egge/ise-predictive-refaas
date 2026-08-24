@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -12,8 +13,35 @@ import (
 )
 
 // documentedHardware is the configuration EVALUATION.md section 3 derives its
-// published coefficients from: 4x H100 PCIe, MFU 0.40, 2 kW node.
+// published coefficients from, as confirmed by GWDG on 2026-08-22: Devstral is
+// served on 2x H200 (141 GB HBM3e, 4.8 TB/s, 1979 TFLOP/s FP8 dense) at MFU
+// 0.40. Node power remains assumed - GWDG gave no monitoring figure - at
+// 2 x 700 W GPU plus a 150 W/GPU host share.
 func documentedHardware() HardwareParams {
+	return HardwareParams{
+		GPUs:              2,
+		PeakFLOPSPerGPU:   1.979e15,
+		MFU:               0.40,
+		HBMBandwidth:      4.8e12,
+		BandwidthFraction: 0.75,
+		NodePowerWatts:    1700,
+	}
+}
+
+// documentedModel is Devstral 2 123B at FP8 (confirmed by GWDG, superseding
+// the earlier BF16 assumption - one byte per parameter, so half the weight
+// traffic per decode step).
+func documentedModel() ModelConfig {
+	return ModelConfig{Parameters: 123e9, BytesPerParameter: 1}
+}
+
+// supersededHardware and supersededModel are the pre-reply assumptions: 4x
+// H100 PCIe at BF16. They exist so one test can show that replacing them with
+// the GWDG-confirmed values changed only *constants* - the derivation itself
+// still reproduces the figures the document published before the reply, which
+// is what lets the thesis attribute the whole difference to better inputs
+// rather than to a changed method.
+func supersededHardware() HardwareParams {
 	return HardwareParams{
 		GPUs:              4,
 		PeakFLOPSPerGPU:   756e12,
@@ -24,8 +52,7 @@ func documentedHardware() HardwareParams {
 	}
 }
 
-// documentedModel is Devstral 2 123B at BF16.
-func documentedModel() ModelConfig {
+func supersededModel() ModelConfig {
 	return ModelConfig{Parameters: 123e9, BytesPerParameter: 2}
 }
 
@@ -43,14 +70,31 @@ func closeTo(t *testing.T, name string, got, want, tolerance float64) {
 func TestDeriveCoefficientsMatchesDocumentedValues(t *testing.T) {
 	c := DeriveCoefficients(documentedHardware(), documentedModel(), 32)
 
-	// T_prefill = (4 * 756e12 * 0.40) / (2 * 123e9) ~ 4,900 tokens/s
-	closeTo(t, "prefill tokens/s", c.PrefillTokensPerSecond, 4900, 50)
-	// e_in = 2000 W / 4900 ~ 0.41 J per input token
-	closeTo(t, "e_in", c.EIn, 0.41, 0.01)
-	// t_step = 246 GB / (4 * 2.0e12 * 0.75) ~ 41 ms
-	closeTo(t, "decode step (ms)", c.DecodeStepSeconds*1000, 41, 0.5)
-	// e_out at B=32 ~ 2.6 J per output token
-	closeTo(t, "e_out", c.EOut, 2.6, 0.05)
+	// T_prefill = (2 * 1979e12 * 0.40) / (2 * 123e9) ~ 6,440 tokens/s
+	closeTo(t, "prefill tokens/s", c.PrefillTokensPerSecond, 6440, 50)
+	// e_in = 1700 W / 6440 ~ 0.264 J per input token
+	closeTo(t, "e_in", c.EIn, 0.264, 0.005)
+	// t_step = 123 GB / (2 * 4.8e12 * 0.75) ~ 17.1 ms
+	closeTo(t, "decode step (ms)", c.DecodeStepSeconds*1000, 17.1, 0.3)
+	// e_out at B=32 ~ 0.91 J per output token
+	closeTo(t, "e_out", c.EOut, 0.908, 0.02)
+}
+
+// TestSupersededCoefficientsStillDerive pins the pre-GWDG-reply figures
+// (4x H100 PCIe, BF16: e_in 0.41, e_out 2.6 at B=32) against the *current*
+// formula.
+//
+// The point is not that those numbers are still used - they are not - but that
+// the GWDG reply changed inputs only. If this fails alongside the test above,
+// the derivation itself drifted, and the thesis can no longer say the drop
+// from ~9.3 Wh to ~4.3 Wh per translation is what better hardware data bought.
+func TestSupersededCoefficientsStillDerive(t *testing.T) {
+	c := DeriveCoefficients(supersededHardware(), supersededModel(), 32)
+
+	closeTo(t, "superseded prefill tokens/s", c.PrefillTokensPerSecond, 4900, 50)
+	closeTo(t, "superseded e_in", c.EIn, 0.41, 0.01)
+	closeTo(t, "superseded decode step (ms)", c.DecodeStepSeconds*1000, 41, 0.5)
+	closeTo(t, "superseded e_out", c.EOut, 2.6, 0.05)
 }
 
 // TestEOutScalesWithConcurrency reproduces the concurrency table of section 3.
@@ -61,20 +105,20 @@ func TestEOutScalesWithConcurrency(t *testing.T) {
 		concurrency float64
 		wantEOut    float64
 	}{
-		{8, 10.3},
-		{16, 5.1},
-		{32, 2.6},
-		{64, 1.3},
-		{128, 0.64},
+		{8, 3.63},
+		{16, 1.82},
+		{32, 0.91},
+		{64, 0.45},
+		{128, 0.23},
 	} {
 		c := DeriveCoefficients(documentedHardware(), documentedModel(), tc.concurrency)
-		closeTo(t, "e_out at B="+string(rune('0'+int(tc.concurrency/64)))+"x", c.EOut, tc.wantEOut, 0.06)
+		closeTo(t, fmt.Sprintf("e_out at B=%.0f", tc.concurrency), c.EOut, tc.wantEOut, 0.02)
 	}
 }
 
 // TestWorkedExample reproduces section 3's worked example end to end: five
-// calls averaging 6,000 prompt and 1,500 output tokens come to roughly 33 kJ
-// (~9.3 Wh) of facility energy.
+// calls averaging 6,000 prompt and 1,500 output tokens come to roughly 15.5 kJ
+// (~4.3 Wh) of facility energy under the GWDG-confirmed configuration.
 func TestWorkedExample(t *testing.T) {
 	cfg := testConfig()
 	rec := JobRecord{
@@ -90,23 +134,26 @@ func TestWorkedExample(t *testing.T) {
 
 	got := Evaluate(cfg, rec)
 
-	closeTo(t, "compute joules", got.ComputeJoules, 31800, 700)
-	closeTo(t, "facility joules", got.FacilityJoules, 33000, 800)
-	// and the CO2e conversion: 33 kJ = 9.2 Wh at 363 g/kWh
-	closeTo(t, "co2e grams", got.CO2eGrams, 3.3, 0.2)
+	closeTo(t, "compute joules", got.ComputeJoules, 14732, 300)
+	closeTo(t, "facility joules", got.FacilityJoules, 15469, 300)
+	// and the location-based CO2e conversion: 15.5 kJ = 4.3 Wh at 363 g/kWh
+	closeTo(t, "co2e grams", got.CO2eGrams, 1.56, 0.05)
 }
 
 func testConfig() *Config {
+	hw := documentedHardware()
 	cfg := &Config{}
-	cfg.Hardware.GPUsPerNode = 4
-	cfg.Hardware.PeakFLOPSPerGPU = 756e12
-	cfg.Hardware.ModelFLOPUtilization = 0.40
-	cfg.Hardware.HBMBandwidthBytesPerSecond = 2.0e12
-	cfg.Hardware.AchievedBandwidthFraction = 0.75
-	cfg.Hardware.NodePowerWatts = 2000
+	cfg.Hardware.GPUsPerNode = hw.GPUs
+	cfg.Hardware.PeakFLOPSPerGPU = hw.PeakFLOPSPerGPU
+	cfg.Hardware.ModelFLOPUtilization = hw.MFU
+	cfg.Hardware.HBMBandwidthBytesPerSecond = hw.HBMBandwidth
+	cfg.Hardware.AchievedBandwidthFraction = hw.BandwidthFraction
+	cfg.Hardware.NodePowerWatts = hw.NodePowerWatts
 	cfg.Serving.Concurrency = 32
 	cfg.Facility.PUE = 1.05
 	cfg.Facility.GridCO2eGramsPerKWh = 363
+	market := 0.0
+	cfg.Facility.MarketCO2eGramsPerKWh = &market
 	cfg.Models = map[string]ModelConfig{
 		defaultModelKey: documentedModel(),
 		"devstral":      documentedModel(),
@@ -124,10 +171,24 @@ func TestShippedConfigIsValid(t *testing.T) {
 	}
 
 	c := DeriveCoefficients(cfg.hardware(), cfg.Models[defaultModelKey], cfg.Serving.Concurrency)
-	closeTo(t, "shipped config e_in", c.EIn, 0.41, 0.01)
-	closeTo(t, "shipped config e_out", c.EOut, 2.6, 0.05)
+	closeTo(t, "shipped config e_in", c.EIn, 0.264, 0.005)
+	closeTo(t, "shipped config e_out", c.EOut, 0.908, 0.02)
+	// FP8 is the one hardware fact GWDG stated outright about this model; a
+	// config that quietly reverted to BF16 would double every decode cost
+	// while still looking entirely plausible.
+	if got := cfg.Models[defaultModelKey].BytesPerParameter; got != 1 {
+		t.Errorf("bytes_per_parameter = %v, want 1 (GWDG confirmed FP8 for Devstral)", got)
+	}
 	if len(cfg.Sensitivity.Concurrency) == 0 {
 		t.Error("the sensitivity sweep needs a concurrency range to produce the section 8 table")
+	}
+	// GWDG declined to release throughput/concurrency and gave no node-power
+	// figure, so these two sweeps are what stands in for the missing answers.
+	if len(cfg.Sensitivity.NodePowerWatts) == 0 || len(cfg.Sensitivity.PeakFLOPSPerGPU) == 0 {
+		t.Error("node power and prefill peak must be swept: GWDG supplied neither")
+	}
+	if _, ok := cfg.MarketIntensity(); !ok {
+		t.Error("the shipped config must carry a market-based intensity: GWDG reports carbon-neutral operation, and the report states both figures")
 	}
 	if len(cfg.Analysis.RepairStages) == 0 {
 		t.Error("repair_stages must name the pipeline's recovery tasks, or the repair share is always zero")
@@ -439,5 +500,53 @@ func TestBuildAllFailedStillAccountsEnergy(t *testing.T) {
 	if report.FailedAttempts.JoulesPerSuccess != 0 {
 		t.Errorf("cost per success has no meaning with zero successes, got %v",
 			report.FailedAttempts.JoulesPerSuccess)
+	}
+}
+
+// --- GWDG carbon-neutrality reply: both intensities are reported -----------
+
+// TestReportStatesBothCO2Intensities covers the GWDG reply's carbon-neutrality
+// statement: the provider's own basis is zero, but the electricity was still
+// drawn, so the report must carry both figures rather than silently picking
+// one (GHG Protocol Scope 2 dual reporting).
+func TestReportStatesBothCO2Intensities(t *testing.T) {
+	cfg := testConfig()
+	report := Build(cfg, []TranslationEnergy{
+		{FunctionID: "f1", FacilityJoules: 3.6e6, CO2eGrams: 363, Completed: true},
+	}, nil)
+
+	if report.TotalCO2eGramsMarket == nil {
+		t.Fatal("a configured market intensity must produce a market-based total")
+	}
+	if *report.TotalCO2eGramsMarket != 0 {
+		t.Errorf("market-based total = %v, want 0 at a carbon-neutral intensity", *report.TotalCO2eGramsMarket)
+	}
+	// 1 kWh at the German grid average, unchanged by the market figure
+	closeTo(t, "location-based total", report.TotalCO2eGrams, 363, 0.5)
+
+	var buf strings.Builder
+	report.Write(&buf, cfg)
+	for _, want := range []string{"location-based", "market-based"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("report must state the %s figure:\n%s", want, buf.String())
+		}
+	}
+}
+
+// TestReportOmitsMarketCO2WhenNotConfigured: a provider that makes no
+// carbon-neutrality claim must not be handed a fabricated zero.
+func TestReportOmitsMarketCO2WhenNotConfigured(t *testing.T) {
+	cfg := testConfig()
+	cfg.Facility.MarketCO2eGramsPerKWh = nil
+
+	report := Build(cfg, []TranslationEnergy{{FunctionID: "f1", FacilityJoules: 3.6e6, Completed: true}}, nil)
+	if report.TotalCO2eGramsMarket != nil {
+		t.Errorf("unconfigured market intensity must stay absent, got %v", *report.TotalCO2eGramsMarket)
+	}
+
+	var buf strings.Builder
+	report.Write(&buf, cfg)
+	if strings.Contains(buf.String(), "market-based") {
+		t.Errorf("no market intensity configured, so the report must not claim one:\n%s", buf.String())
 	}
 }

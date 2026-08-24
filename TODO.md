@@ -87,6 +87,7 @@
 - [ ] [H6] Go vs. Python runtime measurement harness reusing the fixture payloads
 - [ ] [H7] Verify token accounting across connector-internal retries
 - [ ] [H8] `cmd/energy` reports a coefficient assumption for stages that consumed no tokens
+- [x] [H9] Integrate the GWDG infrastructure reply into the energy constants
 
 ---
 
@@ -767,6 +768,15 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 > [H2] now persists every finished job tagged `completed`, and `cmd/energy` filters instead. Note
 > the one archive predating this (`run-20260807-132133.jsonl`) still holds completed jobs only.
 >
+> **GWDG infrastructure reply, 2026-08-22** — integrated in [H9]. Three constants are now
+> provider-stated (2× H200 rather than 4× H100 PCIe, FP8 rather than assumed BF16,
+> carbon-neutral operation) and the central energy estimate fell by roughly a factor of two
+> as a result. Two questions were **not** answered (node power, current PUE) and one was
+> **declined** — throughput and concurrency, which GWDG measures but may not release. That
+> refusal is the load-bearing one: `B` does not become knowable by asking again, so the
+> sensitivity sweep over it is the reported result rather than a placeholder. Anything below
+> that speaks of "pending GWDG values" is superseded.
+>
 > **Dataset** ([evaluation/EVALUATION_DATASET.md](evaluation/EVALUATION_DATASET.md), from the
 > `ise-dataset-pipeline` repo): `evaluation_set` = 95 functions / 392 tests, expectations
 > *recorded from the real Python function* and validated over 10 deterministic runs;
@@ -883,6 +893,19 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Proposed change: set `ModelAssumed` only when the stage actually consumed something (`LLMCalls > 0`, or non-zero tokens). Keep the `(unrecorded)` label for the case it was written for — a stage that did make calls but reported no model, i.e. a pre-[H3] record.
 - Why this improves the evaluation: the warning is the tool's one signal that a number in the thesis rests on a substituted coefficient. Firing it on a run where nothing was substituted devalues it, and a reader has no way to tell a genuinely assumed coefficient from this noise.
 - Architecture impact: None (separate tool) | Effort: S | Priority: P2
+
+### [x] [H9] Integrate the GWDG infrastructure reply into the energy constants
+- Category: Evaluation
+- Affected component(s): `evaluation/energy.config.json`, `evaluation/EVALUATION.md` (§2–§4, §7–§8, §10–§11, Open Questions), `cmd/energy/config.go`, `cmd/energy/report.go`, `cmd/energy/main.go`, `cmd/energy/energy_test.go`
+- Problem / current state: every coefficient rested on inferred hardware — 4× H100 PCIe from the KISSKI platform page, BF16 from a guess at the model card, a 2 kW node, and a German-grid CO₂ intensity. EVALUATION.md flagged precision and concurrency as the two dominant assumptions and marked the whole constants table provisional pending a support request.
+- What the reply said (2026-08-22): **answered** — Devstral 2 123B runs on **2× H200** at **FP8** (FP16 is the house default, Devstral an exception), and GWDG operates **carbon-neutral**; **declined** — aggregate throughput and concurrent-request counts, which they hold but may not release; **not answered** — node power under load and the current PUE.
+- Change made: constants file rewritten with per-value `_source` tags separating `gwdg` from `assumed`, plus a `_gwdg_reply_2026_08_22` block recording confirmed/declined/unanswered so the provenance travels with the numbers. `n_gpu` 4→2, peak 756→1979 TFLOP/s (H200 FP8 dense), HBM 2.0→4.8 TB/s, bytes/param 2→1, node power 2000→1700 W (2×700 W GPU + the same 150 W/GPU host share the old figure used). `cmd/energy` gained a market-based CO₂ intensity alongside the location-based one, a hardware provenance line in the report header, and two new sweep axes (`node_power_watts`, `peak_flops_per_gpu`).
+- Reading the hardware answer (worth keeping, because the reply looks self-contradictory): the generic "4× H100 PCIe on KISSKI?" question was confirmed, but the precision answer names our model as running on 2× H200. The model-specific statement governs — the platform average is not what we cost. The two also corroborate each other: 123B at FP8 is 123 GB of weights, fitting 2×141 GB with ~159 GB left for KV cache; at BF16 it would be 246 GB, leaving 36 GB and nothing like the advertised 256K context. The stated precision and the stated GPU count only fit together.
+- Why the CO₂ handling is two numbers and not one: "CO₂-neutral" describes procurement, not physics — the electricity was still drawn. The report now emits a location-based figure (German grid average) *and* a market-based figure (GWDG's contractual zero), which is the GHG Protocol Scope 2 dual-reporting rule. Quoting only the market figure would present the pipeline as free; quoting only the location figure would misstate what the provider reports. Neither covers embodied manufacturing emissions, which stays a §9 lower-bound caveat.
+- Effect on the result: the central estimate dropped ~2.25× — the `run-20260807-132133` archive goes from 40.4 kJ to 18.0 kJ over its 8 translations, and §3's worked example from 33 kJ (9.3 Wh) to 15.5 kJ (4.3 Wh), with the range over `B` narrowing from 4–20 Wh to 3–10 Wh. `N*` scales linearly with this, so every break-even figure roughly halves. Because it moves in the direction that makes the thesis conclusion *easier*, the pessimistic end of the sweep is what the write-up should quote.
+- Verification: `TestSupersededCoefficientsStillDerive` pins the pre-reply figures (e_in 0.41, e_out 2.6, prefill 4900 tok/s, decode step 41 ms) against the current formula, so the claim "only the inputs changed, not the method" is testable rather than asserted. `TestShippedConfigIsValid` now also fails if the config silently reverts to BF16, loses either new sweep axis, or drops the market intensity. Two new tests cover the dual-CO₂ reporting and the case where no market intensity is configured (no fabricated zero).
+- Architecture impact: None (constants + separate tool) | Effort: M | Priority: **P0** (every energy figure in the thesis is linear in these)
+- Follow-up left open: node power and current PUE are still unanswered and worth one short follow-up mail — neither is likely sensitive, and node power is now the second-largest uncertainty. Concurrency is **not** worth pursuing: the refusal was explicit.
 
 ---
 

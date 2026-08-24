@@ -27,8 +27,15 @@ type Config struct {
 	} `json:"serving"`
 
 	Facility struct {
-		PUE                 float64 `json:"pue"`
+		PUE float64 `json:"pue"`
+		// GridCO2eGramsPerKWh is the location-based intensity: what the
+		// electricity physically drew from the grid it sat on.
 		GridCO2eGramsPerKWh float64 `json:"grid_co2e_grams_per_kwh"`
+		// MarketCO2eGramsPerKWh is the market-based (contractual) intensity -
+		// GWDG's own reporting basis, which their 2026-08-22 reply states is
+		// carbon-neutral. It is a pointer because zero is a meaningful value
+		// here and "not configured" has to stay distinguishable from it.
+		MarketCO2eGramsPerKWh *float64 `json:"market_co2e_grams_per_kwh"`
 	} `json:"facility"`
 
 	Analysis struct {
@@ -37,6 +44,8 @@ type Config struct {
 
 	Sensitivity struct {
 		Concurrency          []float64 `json:"concurrency"`
+		NodePowerWatts       []float64 `json:"node_power_watts"`
+		PeakFLOPSPerGPU      []float64 `json:"peak_flops_per_gpu"`
 		BytesPerParameter    []float64 `json:"bytes_per_parameter"`
 		ModelFLOPUtilization []float64 `json:"model_flop_utilization"`
 		PUE                  []float64 `json:"pue"`
@@ -106,4 +115,19 @@ func (c *Config) ModelFor(name string) (ModelConfig, bool) {
 		return m, true
 	}
 	return c.Models[defaultModelKey], false
+}
+
+// MarketIntensity returns the market-based CO2 intensity and whether one was
+// configured at all.
+//
+// Two intensities are reported side by side rather than one being picked,
+// because neither alone is honest: GWDG states carbon-neutral operation, so
+// their market-based figure is zero, but the electricity was still drawn and
+// the location-based figure is what a reader comparing against other
+// providers needs. This is the GHG Protocol's Scope 2 dual-reporting rule.
+func (c *Config) MarketIntensity() (float64, bool) {
+	if c.Facility.MarketCO2eGramsPerKWh == nil {
+		return 0, false
+	}
+	return *c.Facility.MarketCO2eGramsPerKWh, true
 }
