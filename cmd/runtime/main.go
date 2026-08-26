@@ -25,6 +25,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -55,6 +56,7 @@ type options struct {
 	flociEndpt     string
 	flociRegion    string
 	keepWork       bool
+	noProvision    bool
 }
 
 func main() {
@@ -73,6 +75,8 @@ func main() {
 	flag.StringVar(&opt.flociEndpt, "floci-endpoint", "", "AWS endpoint both sides are pinned to (default http://localhost:4566)")
 	flag.StringVar(&opt.flociRegion, "floci-region", "", "AWS region both sides run in (default us-east-1)")
 	flag.BoolVar(&opt.keepWork, "keep", false, "keep the scratch build directory")
+	flag.BoolVar(&opt.noProvision, "no-provision", false,
+		"skip emulator provisioning; functions whose fixtures declare setup are then reported as skipped rather than measured against empty state")
 	flag.Parse()
 
 	if err := run(opt); err != nil {
@@ -102,6 +106,10 @@ type FunctionResult struct {
 	Python     *Measurement `json:"python,omitempty"`
 	Go         *Measurement `json:"go,omitempty"`
 	Skipped    string       `json:"skipped,omitempty"`
+	// Provisioned records whether this function needed emulator state set up
+	// before it could be measured, so the report can separate "no AWS work" from
+	// "AWS work against a provisioned emulator".
+	Provisioned bool `json:"provisioned,omitempty"`
 }
 
 // Measurable reports whether both sides produced comparable energy figures.
@@ -184,8 +192,23 @@ func run(opt options) error {
 		report.EnergyMeasured = true
 	}
 
+	// Connect to the emulator up front rather than on first need: 40 of the 95
+	// evaluation_set functions declare setup, and discovering the emulator is
+	// down after an hour of measuring the other 55 wastes the run.
+	var prov *provisioner
+	if !opt.noProvision {
+		if prov, err = newProvisioner(context.Background(), opt.flociEndpt, opt.flociRegion); err != nil {
+			return fmt.Errorf("%w\nstart the Floci emulator (docker compose --profile floci up), "+
+				"or pass -no-provision to measure only the functions that need no AWS state", err)
+		}
+	} else {
+		report.Notes = append(report.Notes,
+			"Provisioning disabled (-no-provision): functions whose fixtures declare setup were "+
+				"skipped rather than measured against empty emulator state.")
+	}
+
 	for _, path := range artifacts {
-		result := measureFunction(opt, meter, python, harnessPath, work, path, translations, only)
+		result := measureFunction(opt, meter, prov, python, harnessPath, work, path, translations, only)
 		if result == nil {
 			continue
 		}
@@ -205,7 +228,7 @@ func run(opt options) error {
 	return nil
 }
 
-func measureFunction(opt options, meter Meter, python, harness, work, artifactPath string,
+func measureFunction(opt options, meter Meter, prov *provisioner, python, harness, work, artifactPath string,
 	translations map[string]string, only map[string]bool) *FunctionResult {
 
 	pkg, err := inputhandler.ReadFromFile(artifactPath)
@@ -241,6 +264,22 @@ func measureFunction(opt options, meter Meter, python, harness, work, artifactPa
 	if len(payloads) == 0 {
 		result.Skipped = "no usable fixture payloads"
 		return result
+	}
+
+	// Provision the AWS state the fixtures expect, before anything is timed.
+	// A function whose fixtures declare setup and that is invoked against an
+	// empty emulator measures its error path, not its work.
+	result.Provisioned = needsProvisioning(cases)
+	if result.Provisioned {
+		if prov == nil {
+			result.Skipped = "fixtures declare setup but provisioning is off; " +
+				"start the Floci emulator, or pass -no-provision to measure only the functions that need none"
+			return result
+		}
+		if err := prov.prepare(context.Background(), id, cases); err != nil {
+			result.Skipped = err.Error()
+			return result
+		}
 	}
 
 	fnDir := filepath.Join(work, id)

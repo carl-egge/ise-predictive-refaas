@@ -61,6 +61,30 @@ func RegisterSetup(typ string, s Setup) {
 	setupRegistry[typ] = s
 }
 
+// ApplySetup runs a test case's setup actions in order, provisioning the AWS
+// state the function expects to find.
+//
+// Exported for the [H6] runtime measurement (cmd/runtime), which has to put a
+// function's fixtures into the same starting state the validation stage does
+// before it can time the function at all: 40 of the 95 evaluation_set
+// functions declare setup, and invoking one against an empty emulator does not
+// measure the function, it measures its error path - which is the fastest path
+// through it, and would therefore bias the Python/Go comparison rather than
+// merely losing a data point.
+//
+// Setup is idempotent by construction (create-if-absent, put-item), which is
+// what makes it safe to call once per measured function rather than once per
+// invocation - the measurement runs the same payload hundreds of times and
+// must not pay for provisioning inside the timed region.
+func ApplySetup(ctx context.Context, c *Clients, actions []Assertion) error {
+	for _, action := range actions {
+		if err := runSetup(ctx, c, action); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // runSetup dispatches one setup action to its registered handler.
 func runSetup(ctx context.Context, c *Clients, a Assertion) error {
 	s, ok := setupRegistry[a.Type]

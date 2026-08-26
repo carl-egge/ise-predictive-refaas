@@ -72,6 +72,15 @@ func printSummary(w io.Writer, r *Report, outPath string) {
 	}
 
 	fmt.Fprintf(w, "  measured:    %d\n", measured)
+	provisioned := 0
+	for _, f := range r.Functions {
+		if f.Provisioned && f.Skipped == "" {
+			provisioned++
+		}
+	}
+	if provisioned > 0 {
+		fmt.Fprintf(w, "  provisioned: %d  (emulator state set up from fixture setup actions)\n", provisioned)
+	}
 	if skipped > 0 {
 		fmt.Fprintf(w, "  skipped:     %d\n", skipped)
 	}

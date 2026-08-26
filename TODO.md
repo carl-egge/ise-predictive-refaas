@@ -94,6 +94,7 @@
 - [x] [I3] Deterministic ex-ante feature extractor — **shipped 2026-08-24**; cc 92/95 exact vs `meta.json` (r=0.9998), 56 columns
 - [ ] [I1] Labelled corpus: one full `evaluation_set` pass; label = `all_tests_passed` **(P0 — blocks [I2], [I4]–[I9])**
 - [ ] [I11] Leakage audit: `f92`/`f94` and `f35`/`f44` are confirmed near-duplicates; build the `group_id` key **(P0)**
+- [ ] [I1a] Bare-metal run checklist — Python deps (only 23/95 import on stdlib), RAPL perms, thermals, Floci, module cache **(P0 — do on the measurement machine first)**
 - [ ] [I2] Signal check: confirm the base rate leaves anything to predict, before modelling **(P0)**
 - [ ] [I4] One feature/label table every method and baseline consumes **(P0)**
 - [ ] [I5] Baselines: always-translate, never, majority, `cc` threshold, infeasibility rule list
@@ -999,6 +1000,73 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - **Run it only once the prerequisites are in**, per the 2026-08-24 ordering: [C8]/[I3]'s scanner and [H6]'s runtime harness both land first, so this single pass yields labels, per-function `E_translation` *and* the ΔE measurements [I9] needs — instead of being repeated later for want of one of them.
 - Why: it is the single blocking dependency. Feature engineering, model choice and evaluation protocol can all be *designed* now (and are, below), but none can be *executed* without this.
 - Architecture impact: None (uses existing instrumentation) | Effort: S (to launch) / L (wall-clock) | Priority: **P0 — blocks [I2], [I4]–[I9]**
+
+### [ ] [I1a] Bare-metal run checklist (prerequisites for [I1] and the [H6] measurement)
+
+Verified 2026-08-26 against the real corpus; these are measurements, not guesses. Work through
+them **on the measurement machine before starting the run** — the translation pass is 2–4 h and
+sequential, so anything discovered mid-run costs the whole run.
+
+**1. Python third-party packages — the biggest single gap.** Running the [H6] harness's loader over
+all 95 `evaluation_set` sources on a stdlib-only interpreter: **only 23 of 95 import successfully.**
+
+| missing module | functions |
+|---|---|
+| `boto3` | 54 |
+| `dateutil` | 15 |
+| `bs4` | 2 |
+| `botocore` | 1 |
+| **loads and runs** | **23** |
+
+Without them `cmd/runtime` skips 76% of the corpus, which means almost no ΔE, which means no `N*` —
+the headline energy result. Create a venv with `boto3`, `python-dateutil`, `beautifulsoup4`,
+`urllib3`, `requests`, **pin the versions and record them in the manifest** (they affect Python-side
+energy, and the Go-side-needs-none asymmetry is already a §6 threat). Point `PYSCAN_PYTHON` at that
+interpreter: `pyscan` needs only stdlib, so one variable serves both, and having the analysis stage
+and the measurement harness disagree about which Python is in use would be a nasty source of
+unexplained differences. Handler-name resolution is **not** a problem: 0 of 95 lack a name the
+harness recognises (`lambda_handler`/`handler`/`main`).
+
+**2. RAPL counter permissions.** `/sys/class/powercap/intel-rapl:*/energy_uj` is root-only by default
+on most distributions (post-CVE-2020-8694). Verify `cmd/runtime -meter rapl` succeeds *before* the
+run — it fails loudly with the fix in the message. This is the difference between measured joules
+and the derived `-watts` fallback, and therefore between quoting `N*` and not.
+
+**3. Thermal and frequency stability.** A multi-hour measurement on a laptop will throttle, and
+functions measured late would look slower than identical work measured early. AC power, performance
+governor, consider pinning off turbo for stability rather than speed. The design already helps —
+Python and Go run back to back per function, so drift hits both sides of each ratio similarly — but
+re-measure a handful of early functions at the end and compare; a systematic shift invalidates
+cross-function comparisons even where each individual ratio survives.
+
+**4. Floci emulator up, for both passes.** The translation run needs it for the 40 setup-declaring
+functions ([C10] routes them to `flociTester`), and `cmd/runtime` now provisions the same fixtures
+before measuring. `cmd/runtime` probes it at startup and refuses to begin without it.
+
+**5. Warm the Go module cache.** `cmd/runtime` does `go mod init`/`go mod tidy` per function, so 95
+builds are network-bound from cold. Prime it once, or the measurement pass is dominated by downloads
+(and fails entirely without network).
+
+**6. Service env for the translation pass:** `REQUIRE_META=true` (benchmark mode — no unattributable
+result), `RUN_LOG_DIR` set, `FLOCI_ENABLED=true`, `LLM_CALL_INTERVAL` matched to the backend's rate
+limit. `scripts/run-benchmark.sh` records all of these in its manifest and warns when `REQUIRE_META`
+is unset.
+
+**7. Do not run `go test ./...` while the benchmark service is up.** `cmd/refaas`'s tests bind port
+8080 and reconfigure the service on it; with a benchmark service already there they talk to the
+wrong process and fail confusingly (observed 2026-08-26 — `TestStopEndpoint` 500s because the test's
+converter factory is registered in the test process, not the running service). Also note the ChatAI
+connector test only skips when `ACADEMIC_CLOUD_API_KEY` is *absent*, so on the measurement machine —
+where the key will be set for the translation run — `go test ./...` makes a **live billable call**
+([B9]).
+
+**8. Smoke-test the chain before committing the hours.** ~5 artifacts spanning the buckets plus one
+AWS/setup case, end to end: `run-benchmark.sh` → `cmd/energy` → `cmd/runtime` → `cmd/energy
+-runtime`. This exercises every join in the pipeline (upload, poll, package archive, feature vector,
+provisioning, measurement, `N*`) at a cost of minutes.
+
+**Order of operations is fixed**: translation pass first — it produces both the labels ([I1]) and the
+translated packages `cmd/runtime` needs — then the measurement pass against `runs/packages-<id>.zip`.
 
 ### [ ] [I2] Signal check: confirm there is anything to predict before spending the day
 - Category: Prediction (data)
