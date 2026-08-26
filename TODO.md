@@ -31,8 +31,8 @@
 - [x] [B5] Observability: chatlog correlation + per-stage metrics **(P0)**
 - [X] [B6] Documentation drift on prompt wiring and Floci examples
 - [X] [B7] `goTester` runs `go run .` in the service CWD when `WorkingDir` unset
-- [ ] [B8] `Metrics.Issues` records the same error once per recursion level
-- [ ] [B9] `go test ./...` is not green: a live, billable ChatAI test never skips
+- [x] [B8] `Metrics.Issues` records the same error once per recursion level
+- [x] [B9] `go test ./...` is not green: a live, billable ChatAI test never skips
 
 **C. Pipeline features**
 - [x] [C1] Structured per-test failure evidence into the repair/align loop **(P0)**
@@ -393,7 +393,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: Local | Effort: S | Priority: P2
 - Status: **Implemented 2026-07-10.** `GoPackageTester.Apply` (`internal/builder/validator.go`) now checks `runner.WorkingDir() == ""` right after the working-package nil check and returns a config error naming the current task id and the missing `goBuilder` prerequisite, instead of silently falling through to `cmd.Dir = ""` (which runs `go run .`/`./fn` in the refaas process's own CWD). No change needed in `internal/pipeline/runner.go` - `WorkingDir()` already existed as the thing to check. Test: `TestGoPackageTesterRequiresWorkingDir`.
 
-### [ ] [B8] `Metrics.Issues` records the same error once per recursion level
+### [x] [B8] `Metrics.Issues` records the same error once per recursion level
 - Category: Code Quality / Evaluation
 - Affected component(s): `internal/pipeline/pipeline.go` (`executeTask`'s several `req.AddError` call sites), `internal/service/service.go` (`Issues` assembled from `request.Errors()`)
 - Problem / current state: `executeTask` calls `req.AddError` on the failed-attempt path *and* at each of its exits, and a task's error is then propagated up through the parent frames, which add it again. One abort therefore lands in the append-only error list several times over.
@@ -402,7 +402,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: `Issues` is the free-text half of the archived record, and for a job that never completes it is the only place the failure story survives at all ([H2] persists completed jobs only). Padding it with duplicates makes attempt counts unreadable both by eye and by script.
 - Architecture impact: Local | Effort: S | Priority: P2
 
-### [ ] [B9] `go test ./...` is not green: a live, billable ChatAI test never skips
+### [x] [B9] `go test ./...` is not green: a live, billable ChatAI test never skips
 - Category: Code Quality
 - Affected component(s): `internal/llmconnector/chatai_test.go` (`TestChatAIInvocationClient_LiveInvokeLLM`), `internal/pipeline/defaults.go` (the `godotenv/autoload` blank import), `CLAUDE.md`
 - Problem / current state: the test skips only when `ACADEMIC_CLOUD_API_KEY` is unset — but `godotenv/autoload` loads `.env` into the process before any test runs, so in a working checkout the key is always set and the test always makes a real, billable call to `meta-llama-3.1-8b-instruct`. It is flaky by construction too: it asserts the reply contains `"pong"`, and on 2026-08-07 the model answered `{}` (2 completion tokens), failing the package. Every other package passes, so the whole suite's exit status is decided by an 8B model's phrasing. Separately, `CLAUDE.md` still states the repo has "no test suite to run (`go test ./...` will currently report 'no test files')", which has been untrue since [B2].

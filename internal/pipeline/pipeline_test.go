@@ -464,3 +464,62 @@ func TestExecuteTaskRunsRecoveryForOrdinaryErrors(t *testing.T) {
 		t.Errorf("task executed %d times, want 2", failing.calls)
 	}
 }
+
+// TestExecuteTaskRecordsPropagatedErrorOnce guards B8: a leaf task's failure
+// used to be re-added to req.Errors() once per level as it propagated back
+// up through each parent's Next loop, so a failure several Next hops deep
+// from the root ended up duplicated that many times over.
+func TestExecuteTaskRecordsPropagatedErrorOnce(t *testing.T) {
+	failing := &stubConverter{err: errors.New("leaf task failed")}
+	leaf := &ConversionTask{ID: "leaf", Execute: failing, MaxRetryCount: 1}
+	middle := &ConversionTask{ID: "middle", Next: []*ConversionTask{leaf}}
+	root := &ConversionTask{ID: "root", Next: []*ConversionTask{middle}}
+
+	p := NewPipeline(root)
+	runner := NewRunner(context.Background(), p, nil)
+
+	req := &domain.ConversionRequest{}
+	err := p.Execute(runner, req)
+	if err == nil {
+		t.Fatal("expected the pipeline to fail")
+	}
+
+	matches := 0
+	for _, recorded := range req.Errors() {
+		if strings.Contains(recorded.Error(), "leaf task failed") {
+			matches++
+		}
+	}
+	if matches != 1 {
+		t.Errorf("leaf failure recorded %d times across 2 propagation levels, want exactly 1: %v", matches, req.Errors())
+	}
+}
+
+// TestExecuteTaskRecordsCanApplyFailureOnce guards the same B8 fix from the
+// other direction: a CanApply precondition failure must still be recorded
+// (it used to rely entirely on the now-removed per-level propagation add),
+// but exactly once even when it propagates through a parent's Next loop.
+func TestExecuteTaskRecordsCanApplyFailureOnce(t *testing.T) {
+	blocked := &stubConverter{err: errors.New("precondition not met")}
+	leaf := &ConversionTask{ID: "leaf", CanApply: blocked}
+	root := &ConversionTask{ID: "root", Next: []*ConversionTask{leaf}}
+
+	p := NewPipeline(root)
+	runner := NewRunner(context.Background(), p, nil)
+
+	req := &domain.ConversionRequest{}
+	err := p.Execute(runner, req)
+	if err == nil {
+		t.Fatal("expected the pipeline to fail")
+	}
+
+	matches := 0
+	for _, recorded := range req.Errors() {
+		if strings.Contains(recorded.Error(), "precondition not met") {
+			matches++
+		}
+	}
+	if matches != 1 {
+		t.Errorf("CanApply failure recorded %d times, want exactly 1: %v", matches, req.Errors())
+	}
+}

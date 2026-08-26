@@ -22,7 +22,7 @@ gofmt -l .                      # check formatting; run `gofmt -w <file>` on cha
 go vet ./...
 ```
 
-There is no Makefile, lint config, or CI workflow in this repo, and no test suite to run (`go test ./...` will currently report "no test files"). If you add tests, place them as standard `_test.go` files next to the package they cover and run with `go test ./...` or `go test ./internal/<pkg>/...`.
+There is no Makefile, lint config, or CI workflow in this repo. `go test ./...` runs a real suite (see [B2]/[B9] in `TODO.md`); note `internal/llmconnector`'s `TestChatAIInvocationClient_LiveInvokeLLM` makes a real, billable call to the ChatAI backend whenever `ACADEMIC_CLOUD_API_KEY` is set (which `godotenv/autoload` picks up from a `.env` file), so a plain `go test ./...` in a configured checkout is not free. Place new tests as standard `_test.go` files next to the package they cover and run with `go test ./...` or `go test ./internal/<pkg>/...`.
 
 Docker:
 ```sh

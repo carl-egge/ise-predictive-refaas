@@ -119,7 +119,9 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 	if task.CanApply != nil {
 		if applyErr := task.CanApply.Apply(runner, req); applyErr != nil {
 			log.Errorf("failed to apply task (%s): %s", task.ID, applyErr)
-			return fmt.Errorf("task (%s) precondition failed - %v", task.ID, applyErr)
+			err := fmt.Errorf("task (%s) precondition failed - %v", task.ID, applyErr)
+			req.AddError(err)
+			return err
 		}
 	}
 
@@ -265,7 +267,9 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 	// Execute next tasks in the pipeline
 	for _, next := range task.Next {
 		if err := p.executeTask(runner, req, next); err != nil {
-			req.AddError(err)
+			// next's own executeTask call already recorded this error (at
+			// its point of origin); re-adding here would duplicate it once
+			// per level as it propagates back up the Next chain.
 			return err
 		}
 	}

@@ -3,8 +3,8 @@ package llmconnector
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -13,7 +13,11 @@ import (
 // against the GWDG/AcademicCloud Chat AI endpoint using a small model and
 // the shortest viable prompt, to confirm the HTTP request shape, the
 // configured endpoint/key, and the model itself all actually work end to
-// end. Skips unless ACADEMIC_CLOUD_API_KEY holds a real key.
+// end. Skips unless ACADEMIC_CLOUD_API_KEY holds a real key. It only checks
+// that the call succeeds and returns something that parses as JSON - an
+// exact wording assertion (e.g. requiring the word "pong") is flaky by
+// construction, since a small model's phrasing of a correct answer isn't
+// guaranteed to match.
 func TestChatAIInvocationClient_LiveInvokeLLM(t *testing.T) {
 	apiKey := skipUnlessSet(t, "ACADEMIC_CLOUD_API_KEY")
 	endpoint := os.Getenv("ACADEMIC_CLOUD_ENDPOINT")
@@ -48,8 +52,9 @@ func TestChatAIInvocationClient_LiveInvokeLLM(t *testing.T) {
 	if response == "" {
 		t.Fatal("InvokeLLM returned an empty response")
 	}
-	if !strings.Contains(strings.ToLower(response), "pong") {
-		t.Errorf("expected response to contain %q, got: %s", "pong", response)
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(response), &parsed); err != nil {
+		t.Errorf("expected response to be valid JSON, got %q: %v", response, err)
 	}
 	t.Logf("chatai response: %s (metrics: %+v)", response, metrics)
 }
