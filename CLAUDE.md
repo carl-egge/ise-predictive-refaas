@@ -17,7 +17,7 @@ go build ./...                 # build everything
 go run ./cmd/refaas             # run the service locally (listens on :8080)
 go run ./cmd/energy runs/*.jsonl   # energy report over archived runs (add -sweep/-json)
 go run ./cmd/runtime -artifacts evaluation/evaluation_set -packages runs/packages-<id>.zip   # Go vs Python energy (H6)
-go run ./cmd/pyscan evaluation/evaluation_set/*.zip   # ex-ante feature table (add -json/-hints)
+go run ./cmd/pyscan evaluation/evaluation_set/*.zip   # ex-ante feature table (add -json/-hints/-groups)
 gofmt -l .                      # check formatting; run `gofmt -w <file>` on changed files
 go vet ./...
 ```
@@ -55,7 +55,8 @@ cmd/runtime/           analysis tool: measures the Go translation against the Py
                        conversion. Harnesses live in evaluation/harness (one package,
                        so the two sides cannot drift apart).
 cmd/pyscan/           analysis tool: artifact(s) -> feature CSV/JSON for the prediction
-                       dataset. Never runs during a conversion.
+                       dataset, plus the near-duplicate leakage audit (group_id).
+                       Never runs during a conversion.
 cmd/refaas/main.go
   -> internal/service       HTTP API, job queue, background worker, metrics, reconfigure
        -> internal/pipeline Runner: holds compiled Pipeline + LLM Client, executes ConversionRequests
@@ -105,7 +106,8 @@ cmd/refaas/main.go
 - The `pyScan` **converter lives in `internal/pipeline/pyscan.go`**, not in `internal/pyscan` — `pyscan` imports nothing from the pipeline, so it stays a pure library usable by `cmd/pyscan` and any future predictor. (Same shape as `testrouter.go`; the opposite direction would be an import cycle.)
 - **Failure policy:** the stage *enriches* a prompt, so a missing interpreter or unparseable source degrades to a warning and no hints, rather than failing the conversion. `task_args.required: true` inverts that — set in `default.json` so a benchmark run cannot silently record a job without a feature vector.
 - Every job records its vector on `Metrics.Features` (`domain.FeatureVector`, carrying names + schema version, since a run log outlives the code that wrote it). This is what makes the run log directly usable as `(features → outcome)` training data ([I1]/[I4]) instead of requiring artifacts to be re-scanned later with a possibly-changed scanner.
-- `cmd/pyscan` is the offline CLI (`go run ./cmd/pyscan evaluation/evaluation_set/*.zip > features.csv`, plus `-json`/`-hints`). It never runs during a conversion — same separation `cmd/energy` keeps. It also reports **constant feature columns** to stderr: on `evaluation_set`, 8 of 56 are constant-zero, including `has_infeasible_lib`, which means baseline B4's blocklist ([I5]) cannot skip a single function on this corpus.
+- `cmd/pyscan` is the offline CLI (`go run ./cmd/pyscan evaluation/evaluation_set/*.zip > features.csv`, plus `-json`/`-hints`/`-groups`). It never runs during a conversion — same separation `cmd/energy` keeps. It also reports **constant feature columns** to stderr: on `evaluation_set`, 8 of 56 are constant-zero, including `has_infeasible_lib`, which means baseline B4's blocklist ([I5]) cannot skip a single function on this corpus.
+- **Near-duplicate audit ([I11]), `similarity.go`:** `extract.py` emits `code_line_hashes` — hashes of the AST-canonicalised source (unparsed with docstrings stripped, so comments/docstrings/formatting are gone). Jaccard over those, union-find at `DefaultSimilarityThreshold` (0.70), plus a same-repo rule, produces the `group_id` column of the feature table. On `evaluation_set`: **16 functions in 7 groups, effective N = 86 not 95**. Critically, **4 of the 7 groups cross repository boundaries** (copied AWS/Alexa samples, one fork) — `f50`/`f59` are structurally *identical* — so grouping on `repo_uri` alone would miss the worst offenders. Cross-validation must split on `group_id`; `calibration_test.go` pins the four similarity-only groups so a fingerprint regression fails the build instead of silently restoring the leakage.
 
 ### Runtime energy measurement (`cmd/runtime` + `evaluation/harness`) — [H6]
 

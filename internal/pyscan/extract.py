@@ -22,12 +22,13 @@ byte. See internal/pyscan/calibration_test.go, which pins both.
 """
 
 import ast
+import hashlib
 import io
 import json
 import sys
 import tokenize
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Modules that ship with CPython. sys.stdlib_module_names exists on 3.10+;
 # the fallback covers older interpreters. Anything not in here and not
@@ -499,7 +500,57 @@ def analyze(source):
         "boto3_services": sorted(v.boto3_services),
         "dynamic_calls": v.dynamic_calls,
         "top_level_functions": v.top_level_functions,
+        "code_line_hashes": code_line_hashes(tree),
     }
+
+
+def code_line_hashes(tree):
+    """Structural fingerprint of the source, as hashes of canonical code lines.
+
+    Used by the near-duplicate audit ([I11]): the evaluation corpus is scraped
+    from public repositories and contains the *same* AWS sample code copied
+    into different projects, so two functions can be near-identical while
+    their repo_uri values differ. Splitting such a pair across a
+    train/test boundary lets a model "predict" a function it has effectively
+    already seen.
+
+    Canonicalisation is what makes the comparison meaningful: the tree is
+    unparsed after its docstrings are removed, which erases comments,
+    docstrings and all formatting differences and leaves the code structure.
+    Two copies of the same sample that differ only in commentary then compare
+    as identical rather than as merely similar - which is the honest answer,
+    and the difference between catching such a pair and missing it.
+
+    Hashes rather than the lines themselves: the fingerprint travels in the
+    feature table and the run log, and neither should carry a copy of the
+    uploaded source. Jaccard over the hash sets is identical to Jaccard over
+    the lines.
+    """
+    if not hasattr(ast, "unparse"):  # pragma: no cover - Python < 3.9
+        return []
+    try:
+        stripped = strip_docstrings(tree)
+        lines = {line.strip() for line in ast.unparse(stripped).splitlines() if line.strip()}
+    except Exception:
+        # A fingerprint is an analysis nicety; never fail a scan for it.
+        return []
+    return sorted(hashlib.sha1(line.encode("utf-8")).hexdigest()[:16] for line in lines)
+
+
+def strip_docstrings(tree):
+    """Remove the docstring from every module, class and function body."""
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        body = node.body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            node.body = body[1:] or [ast.Pass()]
+    return tree
 
 
 def main():

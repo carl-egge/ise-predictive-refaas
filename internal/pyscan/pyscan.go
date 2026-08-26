@@ -41,7 +41,7 @@ import (
 // SchemaVersion is the contract version between extract.py and this package.
 // Bump both together; Scan rejects a mismatch rather than silently reading a
 // differently-shaped object.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // DefaultTimeout bounds one scan. Parsing is linear and fast, so this only
 // ever fires on a pathological input or a wedged interpreter; without it a
@@ -71,6 +71,10 @@ type Result struct {
 	Boto3Services []string           `json:"boto3_services"`
 	DynamicCalls  map[string]int     `json:"dynamic_calls"`
 	TopLevelFuncs []string           `json:"top_level_functions"`
+	// CodeLineHashes is the AST-canonicalised structural fingerprint used by
+	// the near-duplicate audit ([I11]). Hashes, not lines: the fingerprint
+	// travels in the feature table and must not carry a copy of the source.
+	CodeLineHashes []string `json:"code_line_hashes,omitempty"`
 }
 
 // Metric returns a numeric metric by name, or 0 when absent. Absence is not

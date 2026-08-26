@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -246,4 +247,75 @@ func median(v []float64) float64 {
 		return c[n/2]
 	}
 	return (c[n/2-1] + c[n/2]) / 2
+}
+
+// TestLeakageAuditOnEvaluationSet pins [I11]'s result against the real
+// corpus.
+//
+// This is an acceptance test, not a characterisation test: the groups it
+// asserts were confirmed by reading the sources. f50/f59 are the same Alexa
+// skill template, f92/f94 the same tool vendored into a fork, f35/f44 the
+// same CDK handler, and f9/f12/f33/f93 four copies of the AWS Lex booking
+// sample - all from *different* repositories except f35/f44. A change to the
+// fingerprint that stopped finding them would not fail any other test, and
+// would quietly restore the leakage this item exists to remove.
+func TestLeakageAuditOnEvaluationSet(t *testing.T) {
+	requireScanner(t)
+	functions := loadDataset(t)
+	if len(functions) < 90 {
+		t.Skipf("only %d usable artifacts found", len(functions))
+	}
+
+	ctx := context.Background()
+	members := make([]GroupMember, 0, len(functions))
+	for _, fn := range functions {
+		r, err := Scan(ctx, fn.source)
+		if err != nil {
+			t.Fatalf("%s: %v", fn.name, err)
+		}
+		if len(r.CodeLineHashes) == 0 {
+			t.Fatalf("%s: no structural fingerprint; the audit cannot work without one", fn.name)
+		}
+		// Repo grouping is deliberately left out here: this asserts what
+		// *similarity alone* finds, which is the part repo grouping misses.
+		members = append(members, GroupMember{
+			FunctionID: strings.TrimSuffix(fn.name, ".zip"),
+			Scan:       r,
+		})
+	}
+
+	g := GroupFunctions(members, DefaultSimilarityThreshold)
+
+	want := map[string][]string{
+		"f12": {"f12", "f33", "f9", "f93"},
+		"f35": {"f35", "f44"},
+		"f50": {"f50", "f59"},
+		"f92": {"f92", "f94"},
+	}
+	got := map[string][]string{}
+	for _, ids := range g.Groups {
+		got[ids[0]] = ids
+	}
+
+	t.Logf("similarity-only audit: %d groups, effective size %d of %d", len(g.Groups), g.EffectiveSize(), len(members))
+
+	if len(got) != len(want) {
+		t.Errorf("found %d similarity groups, want %d: %v", len(got), len(want), g.Groups)
+	}
+	for head, ids := range want {
+		found, ok := got[head]
+		if !ok {
+			t.Errorf("group headed by %s was not found - these are confirmed copies of one source", head)
+			continue
+		}
+		if strings.Join(found, ",") != strings.Join(ids, ",") {
+			t.Errorf("group %s = %v, want %v", head, found, ids)
+		}
+	}
+
+	// The headline claim of [I11]: the worst offender crosses a repository
+	// boundary, so grouping by repo_uri alone is not a sufficient defence.
+	if g.GroupID["f92"] != g.GroupID["f94"] {
+		t.Error("f92/f94 come from different repositories (a fork) and must still be grouped")
+	}
 }

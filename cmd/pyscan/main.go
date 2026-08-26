@@ -33,13 +33,23 @@ import (
 )
 
 type row struct {
-	FunctionID string             `json:"function_id"`
-	Artifact   string             `json:"artifact"`
-	Bucket     string             `json:"bucket,omitempty"`
-	AWS        bool               `json:"aws"`
-	Features   map[string]float64 `json:"features"`
-	Hints      *hints             `json:"hints,omitempty"`
-	Error      string             `json:"error,omitempty"`
+	FunctionID string `json:"function_id"`
+	Artifact   string `json:"artifact"`
+	Bucket     string `json:"bucket,omitempty"`
+	AWS        bool   `json:"aws"`
+	// GroupID is the leakage-audit unit ([I11]): functions that are
+	// structural near-duplicates or share a source repository get one id, and
+	// a grouped cross-validation must split on this rather than on
+	// function_id.
+	GroupID  string             `json:"group_id,omitempty"`
+	Features map[string]float64 `json:"features"`
+	Hints    *hints             `json:"hints,omitempty"`
+	Error    string             `json:"error,omitempty"`
+
+	// Carried for the audit, not serialised: the structural fingerprint and
+	// the source repository this row is grouped on.
+	scan    *pyscan.Result
+	repoURI string
 }
 
 type hints struct {
@@ -51,11 +61,14 @@ type hints struct {
 func main() {
 	asJSON := flag.Bool("json", false, "emit JSON instead of CSV")
 	withHints := flag.Bool("hints", false, "include the prompt-facing hint text (implies -json)")
+	showGroups := flag.Bool("groups", false, "print the near-duplicate leakage audit in full ([I11])")
+	similarity := flag.Float64("similarity", pyscan.DefaultSimilarityThreshold,
+		"Jaccard threshold at or above which two functions are treated as one unit")
 	flag.Parse()
 
 	paths := flag.Args()
 	if len(paths) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: pyscan [-json] [-hints] <artifact.zip>...")
+		fmt.Fprintln(os.Stderr, "usage: pyscan [-json] [-hints] [-groups] <artifact.zip>...")
 		os.Exit(2)
 	}
 	if !pyscan.Available() {
@@ -74,6 +87,12 @@ func main() {
 		rows = append(rows, r)
 	}
 
+	// Grouping happens before output so group_id ships as a column of the
+	// same table: [I4]'s dataset builder must not have to join it in from a
+	// second file, and [I7]'s splitter must not have to be trusted to
+	// remember.
+	grouping := assignGroups(rows, *similarity)
+
 	var err error
 	if *asJSON || *withHints {
 		err = writeJSON(rows)
@@ -86,6 +105,7 @@ func main() {
 	}
 
 	reportConstantColumns(rows)
+	reportGrouping(grouping, *showGroups)
 
 	// A partial table is worse than a loud failure: a function silently
 	// missing from the features file becomes a function silently missing
@@ -155,6 +175,7 @@ func scanArtifact(path string, wantHints bool) row {
 	if pkg.Meta != nil {
 		r.Bucket = pkg.Meta.Bucket
 		r.AWS = pkg.Meta.AWS
+		r.repoURI = repoURI(pkg.Meta.Raw)
 	}
 
 	result, err := pyscan.Scan(context.Background(), pkg.RootFile)
@@ -162,6 +183,7 @@ func scanArtifact(path string, wantHints bool) row {
 		r.Error = err.Error()
 		return r
 	}
+	r.scan = result
 
 	// Fixtures are part of the feature vector ([I3] family 4). An artifact
 	// whose fixtures do not parse still yields source features, but the row
@@ -195,7 +217,7 @@ func writeCSV(rows []row) error {
 	w := csv.NewWriter(os.Stdout)
 	defer w.Flush()
 
-	header := append([]string{"function_id", "artifact", "bucket", "aws"}, names...)
+	header := append([]string{"function_id", "artifact", "bucket", "aws", "group_id"}, names...)
 	if err := w.Write(header); err != nil {
 		return err
 	}
@@ -203,7 +225,7 @@ func writeCSV(rows []row) error {
 		if r.Features == nil {
 			continue
 		}
-		rec := []string{r.FunctionID, r.Artifact, r.Bucket, strconv.FormatBool(r.AWS)}
+		rec := []string{r.FunctionID, r.Artifact, r.Bucket, strconv.FormatBool(r.AWS), r.GroupID}
 		for _, n := range names {
 			rec = append(rec, formatValue(r.Features[n]))
 		}

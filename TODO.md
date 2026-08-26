@@ -93,7 +93,7 @@
 *Order: [C8]/[I3] scanner + [H6] runtime harness → [I1] one run (+[I11] in parallel) → [I2] → [I4]–[I7].*
 - [x] [I3] Deterministic ex-ante feature extractor — **shipped 2026-08-24**; cc 92/95 exact vs `meta.json` (r=0.9998), 56 columns
 - [ ] [I1] Labelled corpus: one full `evaluation_set` pass; label = `all_tests_passed` **(P0 — blocks [I2], [I4]–[I9])**
-- [ ] [I11] Leakage audit: `f92`/`f94` and `f35`/`f44` are confirmed near-duplicates; build the `group_id` key **(P0)**
+- [x] [I11] Leakage audit — **done 2026-08-26**: 16 functions in 7 groups, effective corpus size **86 not 95**; repo grouping alone would miss 4 of the 7
 - [ ] [I1a] Bare-metal run checklist — Python deps (only 23/95 import on stdlib), RAPL perms, thermals, Floci, module cache **(P0 — do on the measurement machine first)**
 - [ ] [I2] Signal check: confirm the base rate leaves anything to predict, before modelling **(P0)**
 - [ ] [I4] One feature/label table every method and baseline consumes **(P0)**
@@ -1139,7 +1139,7 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
   - **Primary estimate: repeated stratified k-fold cross-validation** over all 95 — 5 folds × 10 repeats, stratified jointly on `all_tests_passed` and `bucket`. Every function serves as test data in exactly one fold per repeat, so all 95 contribute to the estimate; the 10 repeats give a mean **and a spread**, which is the number that actually supports a claim of contribution.
   - **Why this is unbiased here:** CV is optimistically biased when the same data drives hyperparameter or feature selection. [I6] fixes hyperparameters a priori and [I3] fixes the feature set a priori, so there is no selection loop to leak through — that a-priori rule is not stylistic, it is what licenses the plain (non-nested) protocol. **If any tuning is added later, the protocol must become nested CV**, or the estimate stops being honest.
   - **Everything fitted goes inside the fold** — standardization, class weighting, B3's `cc` threshold, any calibration, and the [I8] operating point. The single most common way a study like this quietly invalidates itself is choosing the decision threshold on the test fold.
-  - **Grouping is mandatory, not optional:** use `GroupKFold`/`StratifiedGroupKFold` on [I11]'s `group_id`, because the corpus contains near-duplicate function pairs (evidence in [I11]) that would otherwise straddle the train/test boundary and inflate every method equally.
+  - **Grouping is mandatory, not optional:** split with `StratifiedGroupKFold` on the `group_id` column `cmd/pyscan` now emits. [I11] measured it: **16 functions in 7 groups, effective N = 86**, and four of those groups cross repository boundaries, so grouping on `repo_uri` would not have caught them. Splitting on `function_id` puts near-duplicates on both sides of the boundary and inflates every method equally, which is exactly the kind of error that does not look anomalous in the results.
   - **Independent confirmation set:** the 14-function `function_set` is a genuinely separate corpus and can serve as a one-shot external check of the model trained on all 95 — a *different-corpus* generalization test, which is more informative than a random slice of the same one. Caveat that must travel with it: `function_set` expectations were never executed against the Python originals (EVALUATION_DATASET.md §4), so its labels are noisier than `evaluation_set`'s. Report it as corroboration, never as the headline number.
 - **Then: accuracy is the wrong headline metric.** The two error types have wildly asymmetric costs and accuracy weights them equally. A **false positive** (translating a function that fails) wastes one translation — measurable, bounded, ~4–10 kJ. A **false negative** (skipping a function that would have succeeded) forgoes the entire lifetime saving of that function — unbounded in `N`, the invocation count.
   - **Threshold-free metrics**: ROC-AUC and average precision, so the model comparison does not depend on where the operating point is placed.
@@ -1184,7 +1184,7 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 - Why: it demonstrates the mechanism end to end without letting an experimental model become load-bearing in the evaluation pipeline. The default-off rule is what protects every number already recorded.
 - Architecture impact: Local (fits the registry architecture by design) | Effort: M | Priority: P2 (after the offline comparison is decided — integrating before knowing which model wins is wasted work)
 
-### [ ] [I11] Leakage audit: near-duplicate functions in `evaluation_set` and the grouping key
+### [x] [I11] Leakage audit: near-duplicate functions in `evaluation_set` and the grouping key
 - Category: Prediction (data)
 - Affected component(s): `evaluation/evaluation_set`, [I4]'s table (`group_id` column), [I7]'s CV splitter
 - Problem / current state — **measured 2026-08-24, this is not hypothetical**: the corpus is scraped from The Stack and contains related functions.
@@ -1197,12 +1197,33 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 - Why: it is a half-hour script that protects the headline comparison from a defect already confirmed to exist in the data, and its by-product is the only label-noise evidence available under the one-run decision.
 - Architecture impact: None (analysis) | Effort: S | Priority: **P0 (blocks [I7]'s splitter; do it while [I1] runs)**
 
+- **Status: implemented 2026-08-26.** Fingerprinting in `internal/pyscan/extract.py` (`code_line_hashes`, schema v2), similarity and union-find grouping in `internal/pyscan/similarity.go`, wired into `cmd/pyscan` as a `group_id` **column of the same table** — [I4]'s builder does not have to join it in from a second file and [I7]'s splitter does not have to be trusted to remember. `go run ./cmd/pyscan -groups evaluation/evaluation_set/*.zip` prints the full audit.
+- **Result on `evaluation_set`: 16 functions fall into 7 groups. Effective corpus size is 86 independent units, not 95 rows.** That is the number a grouped cross-validation splits over, and the number the write-up should state.
+
+  | group | why | similarity |
+  |:---|:---|---:|
+  | `f50 f59` | same Alexa skill template, different repos | **1.000** |
+  | `f92 f94` | same tool, a repo and its fork | 0.978 |
+  | `f35 f44` | same CDK handler, same repo | 0.950 |
+  | `f9 f12 f33 f93` | four copies of the AWS Lex booking sample, four different repos | 0.75–0.89 |
+  | `f2 f75` | same repo, different code | 0.493 |
+  | `f13 f47` | same repo, different code | 0.275 |
+  | `f29 f60` | same repo, different code | 0.038 |
+
+- **The headline finding: grouping by `repo_uri` is not a sufficient defence.** Four of the seven groups — ten of the sixteen functions, including the *most* similar pairs — were found by structural similarity alone and come from **different repositories**. `f50`/`f59` are structurally identical (Jaccard 1.000) and share nothing in their metadata. A repo-only rule would have caught three groups covering six functions and missed the worst offenders entirely.
+- **Why AST canonicalisation and not text.** The fingerprint is `ast.unparse` of the tree with docstrings stripped, hashed per line. A line-based comparison scored `f50`/`f59` at 0.759 and the `f70`/`f71` bootcamp pair at 0.650 — the latter differs *only* in docstrings — which put real duplicates in the same band as ordinary Lambda boilerplate (every function here imports boto3, defines `lambda_handler` and returns a `statusCode`, which alone buys 0.4–0.6 between unrelated functions). Canonicalising first separates the two populations cleanly. Hashes rather than lines because the fingerprint travels in the feature table and must not carry a copy of the source.
+- **Threshold 0.70**, chosen from the measured distribution: scores fall away sharply after the genuine duplicates, with a gap between 0.750 and 0.678, and every threshold in 0.65–0.75 yields the *same* connected components on this corpus — so the choice is not delicately balanced. `-similarity` overrides it.
+- Same-repo pairs are merged regardless of similarity: same author, same house style, not independent observations. It costs three extra merges and is the conservative choice.
+- Merging is transitive (union-find), which is what the four-copy Lex cluster needs; group ids are the lexically smallest member so the committed table is stable across runs and input orderings.
+- Tests: 13 unit tests covering the Jaccard maths, threshold behaviour, transitivity, determinism, same-repo merging, and — via the real scanner — that the fingerprint is invariant to comments, docstrings and formatting while still separating genuinely different functions. `TestLeakageAuditOnEvaluationSet` pins the four similarity-only groups against the real corpus, so a fingerprint regression that stopped finding them fails the build rather than quietly restoring the leakage.
+- **Still open, deferred to [I4] by necessity:** whether any grouped pair *disagrees* on its label. That needs [I1]'s labels, which do not exist yet. The mechanism is in place — with `group_id` in the table it is a one-line check — and it is the only partial evidence of translation stochasticity available under the single-run decision, so it is worth doing the moment labels land.
+
 ### Threats to validity (write these into the thesis, not just here)
 
 1. **N = 95, one corpus.** Any accuracy figure carries a confidence interval of roughly ±10 points. Report intervals, not point estimates, and never rank two methods whose intervals overlap.
 2. **Single-run, stochastic labels.** Per the [I1] decision, labels come from one pass and their reproducibility is unmeasured, so no noise ceiling is available to contextualise any accuracy figure. State it as a limitation with the named mitigation (a 20-function re-run) rather than leaving it implicit. [I11]'s near-duplicate label agreement is the only partial evidence available in the meantime.
 3. **The predictor learns *this* pipeline, not *translatability*.** Labels come from one pipeline configuration (`default.json`), one model (`devstral-2-123b-instruct-2512`), one prompt set. Improve the prompts and the labels shift. The honest claim is "predicts what this pipeline fails at", and it should be stated in exactly those words.
-4. **Corpus bias.** `evaluation_set` is scraped AWS Lambda code from The Stack, 58/95 using AWS; the class balance and feature distribution of production traffic will differ. It also contains near-duplicates ([I11]).
+4. **Corpus bias.** `evaluation_set` is scraped AWS Lambda code from The Stack, 58/95 using AWS; the class balance and feature distribution of production traffic will differ. It also contains **copied sample code**: 16 of the 95 are near-duplicates or same-repo siblings, so the corpus provides **86 independent units, not 95** ([I11]) — report that as the effective N.
 5. **Fixture quality bounds the label.** EVALUATION_DATASET.md §4 warns that functions are not certified correct and that expectations record behaviour including bugs; the paper-set pilot found 5 of 9 failures were fixture artefacts rather than translation defects. A label that says "failed" may mean "the fixture was unsatisfiable" — inspect the failures from [I1] before trusting the negative class.
 6. **The extractor is now on the translation path too.** With [C8]/[I3] shipped before the [I1] run, the labels are produced by a pipeline whose prompts already receive the scanner's hints. That is the intended configuration, but it means these labels are not comparable to `run-20260807-132133`'s — do not mix the two corpora when reporting success rates.
 
