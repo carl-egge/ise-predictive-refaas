@@ -149,7 +149,14 @@ func Build(cfg *Config, jobs []TranslationEnergy, runtime map[string]RuntimeMeas
 			agg.Executions += s.Executions
 			agg.Failures += s.Failures
 			agg.LLMCalls += s.LLMCalls
-			if s.ModelAssumed {
+			// Only a stage that consumed tokens can be mis-costed by a missing
+			// config entry; its joules are derived from them. Build/test
+			// stages report no model because they call no LLM, and flagging
+			// those raised a permanent "(unrecorded)" warning on every run -
+			// which reads as "the configured coefficients were not applied"
+			// when they were, on a run where every LLM stage was costed
+			// correctly.
+			if s.ModelAssumed && (s.PromptTokens > 0 || s.EvalTokens > 0) {
 				name := s.Model
 				if name == "" {
 					// pre-[H3] records, or a connector that reported none
