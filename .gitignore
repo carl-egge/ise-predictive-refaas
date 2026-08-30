@@ -11,9 +11,13 @@ data
 /docs/*.bkp
 faasllm
 *.txt
-# ...except the Go test harness, which is source: it is //go:embed-ed by
-# internal/builder/builder.go, so a clone without it does not compile.
+# ...except the Go harnesses, which are source despite the extension: they are
+# //go:embed-ed (internal/builder/builder.go, evaluation/harness/harness.go),
+# so a clone without them does not compile. They are .txt rather than .go
+# because they reference handle(), which only exists once they are written next
+# to a translated package.
 !internal/builder/test_handler.txt
+!evaluation/harness/bench_handler.go.txt
 .env
 
 .claude

@@ -1060,7 +1060,22 @@ connector test only skips when `ACADEMIC_CLOUD_API_KEY` is *absent*, so on the m
 where the key will be set for the translation run — `go test ./...` makes a **live billable call**
 ([B9]).
 
-**8. Smoke-test the chain before committing the hours.** ~5 artifacts spanning the buckets plus one
+**8. Use `scripts/benchmark.json` — the run config is not a free choice.** Added 2026-08-26, because
+until then no committed config combined the canonical task graph with the evaluation backend:
+`default.json` had the right graph but ollama/`qwen2.5-coder:3b` dev settings, and
+`scripts/chatai.json` had chatai settings but a **stale graph with no `pyScan` and a bare
+`goTester`** — a run on it would have recorded no feature vectors ([I4] would have had nothing to
+join) and sent all 40 setup-declaring functions to the black-box tester, which ignores their
+assertions with a warning and passes. Both are fixed; `internal/pipeline/shipped_configs_test.go`
+now compiles every shipped config and pins the benchmark one's `pyScan required` root, its
+`testRouter` route, and its model. The model is pinned because
+`evaluation/energy.config.json`'s coefficients were derived for `devstral-2-123b-instruct-2512`
+specifically (123B, FP8, 2×H200 per the GWDG reply) — running a different model and costing it with
+these constants would put every energy figure in the thesis on coefficients belonging to something
+else. `run-benchmark.sh` applies the config itself and records its sha256 in the manifest, so a run
+cannot silently use the dev pipeline.
+
+**9. Smoke-test the chain before committing the hours.** ~5 artifacts spanning the buckets plus one
 AWS/setup case, end to end: `run-benchmark.sh` → `cmd/energy` → `cmd/runtime` → `cmd/energy
 -runtime`. This exercises every join in the pipeline (upload, poll, package archive, feature vector,
 provisioning, measurement, `N*`) at a cost of minutes.

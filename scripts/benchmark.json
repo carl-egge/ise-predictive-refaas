@@ -1,0 +1,92 @@
+{
+  "_comment": [
+    "The evaluation run configuration: default.json's canonical task graph on the",
+    "backend and model the energy constants were derived for.",
+    "",
+    "Why this file exists separately from default.json: default.json carries the",
+    "canonical *task graph* but ollama/qwen2.5-coder:3b LLM settings, which are dev",
+    "defaults. scripts/chatai.json carries chatai settings but a stale graph. Neither",
+    "is the configuration the thesis run needs, and assembling it by hand each time is",
+    "how a run ends up unattributable.",
+    "",
+    "The model is NOT a free choice. evaluation/energy.config.json's coefficients were",
+    "derived for devstral-2-123b-instruct-2512 specifically (123B parameters, FP8, 2x",
+    "H200 - confirmed by GWDG 2026-08-22). Running a different model and costing the",
+    "result with these constants would put every energy figure in the thesis on",
+    "coefficients belonging to something else. If the model changes, energy.config.json",
+    "must change with it.",
+    "",
+    "Apply with: ./scripts/reconfigure.sh scripts/benchmark.json",
+    "or let scripts/run-benchmark.sh do it: ./scripts/run-benchmark.sh <dir> -c scripts/benchmark.json"
+  ],
+  "LLMClient": "chatai",
+  "options": {
+    "model_name": "devstral-2-123b-instruct-2512",
+    "temperature": 0.1,
+    "top_p": 0.8,
+    "num_ctx": 32768
+  },
+  "tasks": [
+    {
+      "_comment": "pyScan is required here, unlike the dev pipeline: a benchmark job without a feature vector is a row [I4] cannot use, and discovering that after a 3-hour run is worse than failing fast.",
+      "id": "root",
+      "task": "pyScan",
+      "task_args": { "required": true },
+      "maxRetryCount": 1,
+      "next": ["clean"]
+    },
+    {
+      "id": "clean",
+      "task": "cleaner",
+      "maxRetryCount": 2,
+      "next": ["convert"],
+      "validation": "canCompile"
+    },
+    {
+      "id": "convert",
+      "task": "coder",
+      "task_args": { "reader": "go" },
+      "maxRetryCount": 2,
+      "validation": "canCompile",
+      "next": ["builder"]
+    },
+    {
+      "id": "builder",
+      "task": "goBuilder",
+      "canApply": "canCompile",
+      "recovery": "gollmRecovery",
+      "maxRetryCount": 4,
+      "next": ["goTester"]
+    },
+    {
+      "id": "gollmRecovery",
+      "task": "fixer",
+      "canApply": "canCompile",
+      "task_args": { "reader": "go" },
+      "maxRetryCount": 6
+    },
+    {
+      "_comment": "testRouter, not goTester: 40 of the 95 evaluation_set functions declare setup/sideEffects and can only be validated through the Floci route. Naming goTester directly would send them to the black-box tester, which ignores those assertions with a warning and reports a pass that validated nothing.",
+      "id": "goTester",
+      "task": "testRouter",
+      "canApply": "canCompile",
+      "maxRetryCount": 5,
+      "recovery": "testRecovery"
+    },
+    {
+      "id": "testRecovery",
+      "task": "realign",
+      "canApply": "canCompile",
+      "task_args": { "reader": "go" },
+      "maxRetryCount": 3,
+      "next": ["testRecoveryBuild"]
+    },
+    {
+      "id": "testRecoveryBuild",
+      "canApply": "canCompile",
+      "task": "goBuilder",
+      "recovery": "gollmRecovery",
+      "maxRetryCount": 3
+    }
+  ]
+}

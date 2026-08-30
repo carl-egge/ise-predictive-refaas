@@ -11,6 +11,11 @@
 # Usage:
 #   ./scripts/run-benchmark.sh evaluation/evaluation_set            # full set
 #   ./scripts/run-benchmark.sh evaluation/function_set 20260824-1   # explicit run id
+#   ./scripts/run-benchmark.sh -c scripts/chatai.json evaluation/evaluation_set
+#
+# The pipeline config (default scripts/benchmark.json) is POSTed to /reconfigure
+# before the first upload. Without it the service would run the embedded dev
+# pipeline and produce a full set of results for the wrong experiment.
 #
 # Environment:
 #   REFAAS_URL     service base URL           (default http://localhost:8080)
@@ -29,14 +34,26 @@
 
 set -euo pipefail
 
-ARTIFACT_DIR="${1:-}"
-RUN_ID="${2:-$(date +%Y%m%d-%H%M%S)}"
+CONFIG="scripts/benchmark.json"
+SKIP_RECONFIGURE=""
+POSITIONAL=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -c|--config) CONFIG="$2"; shift 2 ;;
+        --no-reconfigure) SKIP_RECONFIGURE=1; shift ;;
+        -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+        *) POSITIONAL+=("$1"); shift ;;
+    esac
+done
+
+ARTIFACT_DIR="${POSITIONAL[0]:-}"
+RUN_ID="${POSITIONAL[1]:-$(date +%Y%m%d-%H%M%S)}"
 REFAAS_URL="${REFAAS_URL:-http://localhost:8080}"
 JOB_TIMEOUT="${JOB_TIMEOUT:-1800}"
 POLL_INTERVAL="${POLL_INTERVAL:-3}"
 
 if [ -z "$ARTIFACT_DIR" ] || [ ! -d "$ARTIFACT_DIR" ]; then
-    echo "Usage: $0 <artifact-dir> [run-id]" >&2
+    echo "Usage: $0 [-c config.json] [--no-reconfigure] <artifact-dir> [run-id]" >&2
     exit 1
 fi
 
@@ -73,9 +90,40 @@ if [ "${REQUIRE_META:-}" != "true" ] && [ "${REQUIRE_META:-}" != "1" ]; then
     echo "         and its result will not be attributable to a dataset element." >&2
 fi
 
+# Apply the pipeline configuration before anything is uploaded.
+#
+# This is not a convenience. A freshly started service runs the *embedded
+# default.yaml* - the deliberately short dev pipeline on a 3B model - so a run
+# that forgets to reconfigure produces a full set of results for the wrong
+# experiment, and nothing in the output says so. /reconfigure also wipes the
+# in-memory metrics, so it has to happen before the first upload rather than
+# after.
+CONFIG_SHA="(not applied)"
+if [ -n "$SKIP_RECONFIGURE" ]; then
+    echo "WARNING: --no-reconfigure: using whatever pipeline the service already has." >&2
+    echo "         A freshly started service runs the dev pipeline (default.yaml, 3B model)." >&2
+else
+    if [ ! -f "$CONFIG" ]; then
+        echo "ERROR: pipeline config ${CONFIG} not found (pass -c <file>, or --no-reconfigure)" >&2
+        exit 1
+    fi
+    code=$(curl -s -o /tmp/reconfigure-out.$$ -w "%{http_code}" -X POST \
+        -H "Content-Type: application/json" -d "@${CONFIG}" "${REFAAS_URL}/reconfigure" || echo "000")
+    if [ "$code" != "201" ]; then
+        echo "ERROR: /reconfigure with ${CONFIG} returned HTTP ${code}:" >&2
+        head -c 500 "/tmp/reconfigure-out.$$" >&2; echo >&2
+        rm -f "/tmp/reconfigure-out.$$"
+        exit 1
+    fi
+    rm -f "/tmp/reconfigure-out.$$"
+    CONFIG_SHA="$(sha256sum "$CONFIG" 2>/dev/null | cut -c1-16)"
+    echo "Applied pipeline config: ${CONFIG} (sha256 ${CONFIG_SHA})"
+fi
+
 {
     echo "run_id:        ${RUN_ID}"
     echo "started:       $(date -Is)"
+    echo "config:        ${CONFIG} (sha256 ${CONFIG_SHA})"
     echo "artifacts:     ${ARTIFACT_DIR} (${#ARTIFACTS[@]} functions)"
     echo "service:       ${REFAAS_URL}"
     echo "host:          $(uname -srm) / $(hostname)"

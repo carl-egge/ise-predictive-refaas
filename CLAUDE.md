@@ -35,7 +35,8 @@ A `.env` file in the working directory is also picked up directly by the binary 
 Helper scripts (`scripts/`):
 - `reconfigure.sh <config.json>` — POSTs a JSON `ConverterOptions` body to `/reconfigure` (see `scripts/chatai.json` for an example that switches the runner to the `chatai` LLM client).
 - `store-metrics.sh` — GETs `/metrics` and saves the JSON into `examples/metrics/`.
-- `run-benchmark.sh <artifact-dir> [run-id]` — drives a whole artifact set through a running service one function at a time, and archives `runs/batch-<id>.csv`, `runs/packages-<id>.zip` (what `cmd/runtime -packages` consumes), `runs/metrics-<id>.json` and a `manifest-<id>.txt` recording host, git commit and the env that shaped the run. Resumable: a function whose package is already downloaded is skipped, so a run that dies at 70/95 does not redo 69.
+- `benchmark.json` — **the evaluation run configuration**: `default.json`'s canonical task graph (pyScan root + testRouter) on `chatai`/`devstral-2-123b-instruct-2512`. The model is not a free choice — `evaluation/energy.config.json`'s coefficients were derived for it specifically, so changing one without the other puts every thesis energy figure on the wrong constants. `internal/pipeline/shipped_configs_test.go` pins both facts.
+- `run-benchmark.sh [-c config.json] <artifact-dir> [run-id]` — drives a whole artifact set through a running service one function at a time, POSTs the config to `/reconfigure` first (default `scripts/benchmark.json`; without it a fresh service runs the embedded *dev* pipeline and produces a full set of results for the wrong experiment), and archives `runs/batch-<id>.csv`, `runs/packages-<id>.zip` (what `cmd/runtime -packages` consumes), `runs/metrics-<id>.json` and a `manifest-<id>.txt` recording host, git commit and the env that shaped the run. Resumable: a function whose package is already downloaded is skipped, so a run that dies at 70/95 does not redo 69.
 
 ## Architecture
 

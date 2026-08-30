@@ -9,6 +9,12 @@
   "tasks": [
     {
       "id": "root",
+      "task": "pyScan",
+      "maxRetryCount": 1,
+      "next": ["clean"]
+    },
+    {
+      "id": "clean",
       "task": "cleaner",
       "maxRetryCount": 2,
       "next": ["convert"],
@@ -39,7 +45,7 @@
     },
     {
       "id": "goTester",
-      "task": "goTester",
+      "task": "testRouter",
       "canApply": "canCompile",
       "maxRetryCount": 2,
       "recovery": "testRecovery"

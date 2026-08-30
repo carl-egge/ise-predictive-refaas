@@ -1,0 +1,95 @@
+package main
+
+// Go-side measurement harness for [H6] - the mirror of
+// evaluation/harness/handler.py, and the multi-payload sibling of
+// internal/builder/test_handler.txt.
+//
+// It differs from the validation harness in exactly one respect: it reads
+// *one JSON payload per line* and emits one envelope per payload, instead of
+// consuming stdin whole for a single call. That is what lets the driver run
+// the same executable once with 1 payload and once with N and separate cold
+// start from steady state by difference, without putting a clock inside
+// either harness (which would measure Go's runtime clock against Python's
+// time module and bias the very comparison being made).
+//
+// Everything else is deliberately identical to the validation harness: the
+// same marker, the same {"response": ...} / {"error": ...} envelope, the same
+// stdout discipline ([A18]). The Python harness matches it line for line.
+//
+// This file is a .txt template rather than .go for the same reason
+// test_handler.txt is: it references handle(), which only exists once it is
+// written next to a translated package.
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+)
+
+// harnessOutputMarker must stay in sync with the constant in
+// internal/builder/test_handler.txt, internal/builder/validator.go and
+// evaluation/harness/handler.py.
+const harnessOutputMarker = "__REFAAS_HARNESS_OUTPUT__"
+
+func main() {
+	// stdout belongs to the harness; the function gets stderr. See the long
+	// note in test_handler.txt for why the marker is needed on top of this.
+	stdout := os.Stdout
+	os.Stdout = os.Stderr
+
+	ctx := context.Background()
+	writer := bufio.NewWriter(stdout)
+
+	scanner := bufio.NewScanner(os.Stdin)
+	// Fixture payloads are small, but a generous buffer beats a silent
+	// truncation that would be charged to the runtime rather than to the
+	// harness.
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+
+	invocations := 0
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		// The payload is copied because Scanner reuses its buffer and the
+		// function may retain what it is handed.
+		event := make(json.RawMessage, len(line))
+		copy(event, line)
+
+		output := make(map[string]interface{})
+		response, err := handle(ctx, event)
+		if err != nil {
+			output["error"] = err.Error()
+		} else {
+			output["response"] = response
+		}
+
+		encoded, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			encoded = []byte(fmt.Sprintf(`{"error":"unserializable response: %v"}`, err))
+		}
+
+		fmt.Fprintln(writer, harnessOutputMarker)
+		fmt.Fprintln(writer, string(encoded))
+		invocations++
+	}
+	if err := scanner.Err(); err != nil {
+		log.Fatalf("harness: reading payloads: %v", err)
+	}
+
+	// Flushed once at the end rather than per invocation, and the Python
+	// harness does the same. The driver measures whole processes, so a
+	// per-line flush on one side only would charge it a write syscall per
+	// invocation that the other side never pays - which would show up as a
+	// runtime difference while being purely an artefact of the harness.
+	if err := writer.Flush(); err != nil {
+		log.Fatalf("harness: flushing output: %v", err)
+	}
+	if invocations == 0 {
+		log.Fatal("harness: no payloads on stdin")
+	}
+}
