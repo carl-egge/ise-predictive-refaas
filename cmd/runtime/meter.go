@@ -110,6 +110,12 @@ func NewMeter(kind string, watts float64) (Meter, error) {
 // Package domains only: the per-domain children (core/uncore/dram) partly
 // overlap their parent, so summing everything would double-count. DRAM is
 // picked up where it is exposed as a sibling package-level domain.
+//
+// The "psys" domain is skipped for the same reason one level up. It is a
+// top-level sibling of package-0, but it meters the whole SoC and *contains*
+// the package domains, so adding it to them counts CPU energy twice. Hosts
+// that expose psys (many recent Intel laptops) would otherwise report roughly
+// double the joules of a host that does not, which is not comparable.
 type raplMeter struct {
 	domains []raplDomain
 }
@@ -132,6 +138,10 @@ func newRAPLMeter() (*raplMeter, error) {
 		if strings.Count(filepath.Base(dir), ":") != 1 {
 			continue
 		}
+		if domainName(dir) == "psys" {
+			// Overlaps the package domains; see the type comment.
+			continue
+		}
 		energyPath := filepath.Join(dir, "energy_uj")
 		if _, err := readUint(energyPath); err != nil {
 			// Unreadable counters are the common case on locked-down hosts;
@@ -142,17 +152,22 @@ func newRAPLMeter() (*raplMeter, error) {
 		if err != nil {
 			maxRange = 0
 		}
-		name := filepath.Base(dir)
-		if n, err := os.ReadFile(filepath.Join(dir, "name")); err == nil {
-			name = strings.TrimSpace(string(n))
-		}
-		m.domains = append(m.domains, raplDomain{name: name, path: energyPath, maxRange: maxRange})
+		m.domains = append(m.domains, raplDomain{name: domainName(dir), path: energyPath, maxRange: maxRange})
 	}
 	if len(m.domains) == 0 {
 		return nil, fmt.Errorf("no readable top-level RAPL package domains")
 	}
 	sort.Slice(m.domains, func(i, j int) bool { return m.domains[i].path < m.domains[j].path })
 	return m, nil
+}
+
+// domainName returns the powercap domain's human-readable name ("package-0",
+// "psys", "dram"), falling back to the sysfs directory name.
+func domainName(dir string) string {
+	if n, err := os.ReadFile(filepath.Join(dir, "name")); err == nil {
+		return strings.TrimSpace(string(n))
+	}
+	return filepath.Base(dir)
 }
 
 func (m *raplMeter) Kind() MeterKind { return MeterRAPL }
