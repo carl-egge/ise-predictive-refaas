@@ -1,0 +1,4 @@
+function,job_id,http_upload,final_status,elapsed_s
+f22,ac290514-4aa3-4bd2-9825-9abe0619b469,201,finished:dl200,616
+f24,225a2295-4ca9-43d7-8aaa-def9c4d88fd8,201,finished:dl200,301
+f83,47be1433-10e0-49a0-b7f6-b74b323ced64,201,finished:dl406,145

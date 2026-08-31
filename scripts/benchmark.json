@@ -31,24 +31,34 @@
       "_comment": "pyScan is required here, unlike the dev pipeline: a benchmark job without a feature vector is a row [I4] cannot use, and discovering that after a 3-hour run is worse than failing fast.",
       "id": "root",
       "task": "pyScan",
-      "task_args": { "required": true },
+      "task_args": {
+        "required": true
+      },
       "maxRetryCount": 1,
-      "next": ["clean"]
+      "next": [
+        "clean"
+      ]
     },
     {
       "id": "clean",
       "task": "cleaner",
       "maxRetryCount": 2,
-      "next": ["convert"],
+      "next": [
+        "convert"
+      ],
       "validation": "canCompile"
     },
     {
       "id": "convert",
       "task": "coder",
-      "task_args": { "reader": "go" },
+      "task_args": {
+        "reader": "go"
+      },
       "maxRetryCount": 2,
       "validation": "canCompile",
-      "next": ["builder"]
+      "next": [
+        "builder"
+      ]
     },
     {
       "id": "builder",
@@ -56,13 +66,19 @@
       "canApply": "canCompile",
       "recovery": "gollmRecovery",
       "maxRetryCount": 4,
-      "next": ["goTester"]
+      "next": [
+        "goTester"
+      ]
     },
     {
       "id": "gollmRecovery",
       "task": "fixer",
       "canApply": "canCompile",
-      "task_args": { "reader": "go" },
+      "task_args": {
+        "reader": "go",
+        "temperature": 0.5,
+        "top_p": 0.95
+      },
       "maxRetryCount": 6
     },
     {
@@ -77,9 +93,15 @@
       "id": "testRecovery",
       "task": "realign",
       "canApply": "canCompile",
-      "task_args": { "reader": "go" },
+      "task_args": {
+        "reader": "go",
+        "temperature": 0.5,
+        "top_p": 0.95
+      },
       "maxRetryCount": 3,
-      "next": ["testRecoveryBuild"]
+      "next": [
+        "testRecoveryBuild"
+      ]
     },
     {
       "id": "testRecoveryBuild",

@@ -123,6 +123,23 @@ func (cc *GolangBuilder) build(requests *domain.ConversionRequest, dir string, c
 }
 
 func (cc *GolangBuilder) doBuild(code *domain.DeploymentPackage, dir string, ctx context.Context) (string, error) {
+	out, err := cc.runBuildCmds(code, dir, ctx)
+	if err == nil {
+		return out, nil
+	}
+	log.Debugf("failed to run build commands: %+v", err)
+	if isGoModFailure(err) {
+		return cc.rebuildWithFreshGoMod(code, dir, ctx)
+	}
+	if fixedOut, fixedErr, handled := cc.rebuildWithoutUnusedVars(code, dir, ctx, err); handled {
+		return fixedOut, fixedErr
+	}
+	return out, err
+}
+
+// runBuildCmds prepares the build directory from the package and runs its
+// build command list, stopping at the first failure.
+func (cc *GolangBuilder) runBuildCmds(code *domain.DeploymentPackage, dir string, ctx context.Context) (string, error) {
 	if err := cc.prepareBuildFolder(dir, code); err != nil {
 		log.Debugf("failed to prepare build folder: %s", err.Error())
 		return "", err
@@ -130,14 +147,89 @@ func (cc *GolangBuilder) doBuild(code *domain.DeploymentPackage, dir string, ctx
 	for _, cmd := range code.BuildCmd {
 		out, err := cc.runBuildCommands(ctx, dir, cmd)
 		if err != nil {
-			log.Debugf("failed to run build commands: %+v", err)
-			if isGoModFailure(err) {
-				return cc.rebuildWithFreshGoMod(code, dir, ctx)
-			}
 			return out, err
 		}
 	}
 	return "", nil
+}
+
+// maxUnusedVarPasses bounds the strip/rebuild loop below. The compiler
+// reports "declared and not used" a few at a time, so clearing one round
+// commonly reveals the next; five rounds cleared every case observed in the
+// 2026-08-30 run without letting a pathological file spin.
+const maxUnusedVarPasses = 5
+
+// rebuildWithoutUnusedVars applies the deterministic "declared and not used"
+// repair (see unusedvars.go) and rebuilds, repeating while the compiler keeps
+// naming more unused variables. It reports whether it handled the failure at
+// all - when the error names none, or the source does not parse, the caller
+// falls through to the LLM fixer unchanged.
+//
+// On a build that still fails for other reasons the rewritten source is kept
+// rather than reverted: blanking a name preserves the right-hand side, so the
+// rewrite cannot change behaviour, and the fixer is better off seeing the
+// genuine remaining diagnostics than the same list with mechanical noise on
+// top. The one rewrite that *can* break a build is blanking a name in a short
+// declaration whose every other name was already declared, leaving ":=" with
+// nothing new on the left; that error is recognised explicitly and reverts
+// the whole attempt.
+func (cc *GolangBuilder) rebuildWithoutUnusedVars(code *domain.DeploymentPackage, dir string, ctx context.Context, buildErr error) (string, error, bool) {
+	original := code.RootFile
+	current := buildErr
+	applied := 0
+
+	for pass := 0; pass < maxUnusedVarPasses; pass++ {
+		vars := unusedVarDiagnostics(current.Error())
+		if len(vars) == 0 {
+			break
+		}
+		rewritten, changed := stripUnusedVars(code.RootFile, vars)
+		if !changed {
+			break
+		}
+		code.RootFile = rewritten
+		applied += len(vars)
+		log.Debugf("build: stripped %d unused variable(s) deterministically (pass %d), rebuilding", len(vars), pass+1)
+
+		out, err := cc.rerunAfterRepair(code, dir, ctx)
+		if err == nil {
+			log.Debugf("build: unused-variable repair fixed the build after %d pass(es)", pass+1)
+			return out, nil, true
+		}
+		if strings.Contains(err.Error(), "no new variables on left side of") {
+			// Introduced by the rewrite itself - undo it entirely so the
+			// fixer never sees a problem this repair created.
+			log.Debugf("build: unused-variable repair would break the declaration, reverting")
+			code.RootFile = original
+			if perr := cc.prepareBuildFolder(dir, code); perr != nil {
+				log.Debugf("build: failed to restore original source: %v", perr)
+			}
+			return "", nil, false
+		}
+		current = err
+	}
+
+	if applied == 0 {
+		return "", nil, false
+	}
+	log.Debugf("build: stripped %d unused variable(s); build still fails for other reasons", applied)
+	return "", current, true
+}
+
+// rerunAfterRepair re-runs the build command list after the source was
+// rewritten. "go mod init" refuses to run against a directory that already
+// has a go.mod, which it does whenever rebuildWithFreshGoMod has already
+// swapped the command list - so the generated module files are cleared first
+// and regenerated, exactly as that fallback does.
+func (cc *GolangBuilder) rerunAfterRepair(code *domain.DeploymentPackage, dir string, ctx context.Context) (string, error) {
+	for _, cmd := range code.BuildCmd {
+		if strings.HasPrefix(strings.TrimSpace(cmd), "go mod init") {
+			_ = os.Remove(filepath.Join(dir, "go.mod"))
+			_ = os.Remove(filepath.Join(dir, "go.sum"))
+			break
+		}
+	}
+	return cc.runBuildCmds(code, dir, ctx)
 }
 
 // isGoModFailure reports whether a build error points at a broken or

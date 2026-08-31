@@ -1,0 +1,17 @@
+run_id:        uv-v3
+started:       2026-08-31T13:19:32+02:00
+config:        scripts/benchmark.json (sha256 e82fbaf96615a679)
+artifacts:     /tmp/claude-1000/-home-carl-eikermann-ise-predictive-refaas/e401961e-7cda-46e7-b86a-e0c213596731/scratchpad/uvsubset (3 functions)
+service:       http://localhost:8080
+host:          Linux 7.0.0-30-generic x86_64 / carl-eikermann-UX310UAK
+git_commit:    4df6c8e468f523964e24d68bdbc76363d31f400b
+git_dirty:     yes
+job_timeout_s: 1800
+require_meta:  true
+floci_enabled: true
+llm_interval:  2s
+finished:      2026-08-31T13:54:59+02:00
+completed:     0
+failed:        3
+errors:        0
+skipped:       0
