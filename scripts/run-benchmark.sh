@@ -82,13 +82,70 @@ if [ "${#ARTIFACTS[@]}" -eq 0 ]; then
     exit 1
 fi
 
+# -- service environment ---------------------------------------------------
+# REQUIRE_META, FLOCI_ENABLED and LLM_CALL_INTERVAL are read by the *service*
+# process, not by this script. Recording them from this shell records what the
+# operator happened to export here, which is not what shaped the run: in the
+# 2026-08-30 evaluation run all three were set on the service and the manifest
+# still said "unset" - exactly the silent mismatch a manifest exists to
+# prevent, and it only shows up later when two runs are compared.
+#
+# So read them from the service's own /proc entry when the service is local,
+# and say "unknown" rather than guess when it is not. Never print a value that
+# was not observed on the process that actually used it.
+
+service_url_part() { printf '%s' "$REFAAS_URL" | sed -E 's#^[a-z]+://##; s#/.*##'; }
+
+find_service_pid() {
+    case "$(service_url_part | sed -E 's#:.*##')" in
+        localhost|127.0.0.1|::1|"") ;;
+        *) return 1 ;;
+    esac
+    local port pid
+    port="$(service_url_part | sed -nE 's#.*:([0-9]+)$#\1#p')"
+    [ -n "$port" ] || port=8080
+    pid=$(ss -ltnpH "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
+    if [ -z "$pid" ]; then
+        # ss missing or the socket hidden; fall back to the binary name.
+        pid=$(pgrep -f '[r]efaas' 2>/dev/null | tail -1)
+    fi
+    [ -n "$pid" ] || return 1
+    [ -r "/proc/${pid}/environ" ] || return 1
+    printf '%s' "$pid"
+}
+
+SERVICE_PID="$(find_service_pid || true)"
+
+# service_env <VAR> - the value the service process was started with.
+service_env() {
+    local val
+    if [ -z "$SERVICE_PID" ]; then
+        echo "unknown (service not local or not inspectable)"
+        return
+    fi
+    val=$(tr '\0' '\n' < "/proc/${SERVICE_PID}/environ" 2>/dev/null | grep -m1 "^$1=" | cut -d= -f2-)
+    if [ -z "$val" ]; then echo "unset (service env)"; else echo "$val"; fi
+}
+
+SVC_REQUIRE_META="$(service_env REQUIRE_META)"
+SVC_FLOCI_ENABLED="$(service_env FLOCI_ENABLED)"
+SVC_LLM_INTERVAL="$(service_env LLM_CALL_INTERVAL)"
+
 # Benchmark mode makes a missing meta.json a 400 instead of an unattributable
 # result. Warn rather than fail: the service owns that setting, not this script.
-if [ "${REQUIRE_META:-}" != "true" ] && [ "${REQUIRE_META:-}" != "1" ]; then
-    echo "WARNING: REQUIRE_META is not set in this shell. If the *service* was started" >&2
-    echo "         without it, an artifact missing meta.json will be translated anyway" >&2
-    echo "         and its result will not be attributable to a dataset element." >&2
-fi
+case "$SVC_REQUIRE_META" in
+    true|1) ;;
+    unknown*)
+        echo "WARNING: could not read the service's REQUIRE_META (service not local?)." >&2
+        echo "         If it was started without it, an artifact missing meta.json is" >&2
+        echo "         translated anyway and is not attributable to a dataset element." >&2
+        ;;
+    *)
+        echo "WARNING: the running service was started WITHOUT REQUIRE_META. An artifact" >&2
+        echo "         missing meta.json will be translated anyway and its result will" >&2
+        echo "         not be attributable to a dataset element." >&2
+        ;;
+esac
 
 # Apply the pipeline configuration before anything is uploaded.
 #
@@ -130,9 +187,9 @@ fi
     echo "git_commit:    $(git rev-parse HEAD 2>/dev/null || echo unknown)"
     echo "git_dirty:     $(test -n "$(git status --porcelain 2>/dev/null)" && echo yes || echo no)"
     echo "job_timeout_s: ${JOB_TIMEOUT}"
-    echo "require_meta:  ${REQUIRE_META:-unset}"
-    echo "floci_enabled: ${FLOCI_ENABLED:-unset}"
-    echo "llm_interval:  ${LLM_CALL_INTERVAL:-unset}"
+    echo "require_meta:  ${SVC_REQUIRE_META}"
+    echo "floci_enabled: ${SVC_FLOCI_ENABLED}"
+    echo "llm_interval:  ${SVC_LLM_INTERVAL}"
 } > "$MANIFEST"
 
 echo "Run ${RUN_ID}: ${#ARTIFACTS[@]} artifacts from ${ARTIFACT_DIR}"

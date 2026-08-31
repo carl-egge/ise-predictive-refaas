@@ -1,0 +1,17 @@
+run_id:        smoke
+started:       2026-08-30T19:57:20+02:00
+config:        scripts/benchmark.json (sha256 6ac5439c3c9507a5)
+artifacts:     /tmp/claude-1000/-home-carl-eikermann-ise-predictive-refaas/e401961e-7cda-46e7-b86a-e0c213596731/scratchpad/smoke (5 functions)
+service:       http://localhost:8080
+host:          Linux 7.0.0-30-generic x86_64 / carl-eikermann-UX310UAK
+git_commit:    831b1f816ea7b639106875a669db3f8106c62476
+git_dirty:     yes
+job_timeout_s: 1800
+require_meta:  unset
+floci_enabled: unset
+llm_interval:  unset
+finished:      2026-08-30T20:31:37+02:00
+completed:     1
+failed:        4
+errors:        0
+skipped:       0

@@ -86,8 +86,9 @@
 - [ ] [H5] Account for or bound local compute energy (build/test/Floci)
 - [x] [H6] Go vs. Python runtime measurement harness — **shipped 2026-08-24 as `cmd/runtime` + `evaluation/harness`**
 - [ ] [H7] Verify token accounting across connector-internal retries
-- [ ] [H8] `cmd/energy` reports a coefficient assumption for stages that consumed no tokens
+- [x] [H8] `cmd/energy` reports a coefficient assumption for stages that consumed no tokens
 - [x] [H9] Integrate the GWDG infrastructure reply into the energy constants
+- [ ] [H10] `cmd/runtime` has no timeout on the measured invocation; one hanging translation stalls the pass
 
 **I. Prediction & candidate selection** (new 2026-08-24, decisions settled the same day — *nothing here exists in code yet*)
 *Order: [C8]/[I3] scanner + [H6] runtime harness → [I1] one run (+[I11] in parallel) → [I2] → [I4]–[I7].*
@@ -919,7 +920,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why this improves the evaluation: a cheap guard on the one place where the energy accounting could silently under-count, in code that already has fake-backend test infrastructure. Based on reasoning; no external source needed.
 - Architecture impact: Local | Effort: S | Priority: P2
 
-### [ ] [H8] `cmd/energy` reports a coefficient assumption for stages that consumed no tokens
+### [x] [H8] `cmd/energy` reports a coefficient assumption for stages that consumed no tokens
 - Category: Evaluation
 - Affected component(s): `cmd/energy/energy.go` (`ModelAssumed`), `cmd/energy/report.go` (the `assumed` set and the `WARNING:` line)
 - Problem / current state: `ModelAssumed` is set whenever a stage's model is missing from `evaluation/energy.config.json`, which includes the non-LLM stages (`builder`, `goTester`, `testRecoveryBuild`) that record no model and no tokens by design. Their zero tokens cost zero under any coefficients, but the report still prints `WARNING: costed with default coefficients (no config entry): (unrecorded)`.
@@ -927,6 +928,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Proposed change: set `ModelAssumed` only when the stage actually consumed something (`LLMCalls > 0`, or non-zero tokens). Keep the `(unrecorded)` label for the case it was written for — a stage that did make calls but reported no model, i.e. a pre-[H3] record.
 - Why this improves the evaluation: the warning is the tool's one signal that a number in the thesis rests on a substituted coefficient. Firing it on a run where nothing was substituted devalues it, and a reader has no way to tell a genuinely assumed coefficient from this noise.
 - Architecture impact: None (separate tool) | Effort: S | Priority: P2
+- **Status: implemented 2026-08-31.** `report.go` now flags a stage only when it consumed tokens (`PromptTokens > 0 || EvalTokens > 0`), the token-based variant of the two options above. Keying on `LLMCalls > 0` was tried first and rejected: `TestEvaluateFlagsUnknownModel`'s record has 100 prompt tokens and no call count, and a stage that consumed tokens *was* costed on a substituted coefficient whether or not the call counter survived — tokens are what the joules derive from, so they are the honest trigger. The existing test passes unchanged. Confirmed on the `evaluation_set` run `run-20260830-210122`: the warning is gone and every LLM stage was costed on the configured `devstral-2-123b-instruct-2512` coefficients.
 
 ### [x] [H9] Integrate the GWDG infrastructure reply into the energy constants
 - Category: Evaluation
@@ -940,6 +942,16 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Verification: `TestSupersededCoefficientsStillDerive` pins the pre-reply figures (e_in 0.41, e_out 2.6, prefill 4900 tok/s, decode step 41 ms) against the current formula, so the claim "only the inputs changed, not the method" is testable rather than asserted. `TestShippedConfigIsValid` now also fails if the config silently reverts to BF16, loses either new sweep axis, or drops the market intensity. Two new tests cover the dual-CO₂ reporting and the case where no market intensity is configured (no fabricated zero).
 - Architecture impact: None (constants + separate tool) | Effort: M | Priority: **P0** (every energy figure in the thesis is linear in these)
 - Follow-up left open: node power and current PUE are still unanswered and worth one short follow-up mail — neither is likely sensitive, and node power is now the second-largest uncertainty. Concurrency is **not** worth pursuing: the refusal was explicit.
+
+### [ ] [H10] `cmd/runtime` has no timeout on the measured invocation; one hanging translation stalls the whole pass
+- Category: Fault Tolerance / Evaluation
+- Affected component(s): `cmd/runtime` (the measurement exec path), alongside the existing timeouts in `cmd/runtime/provision.go`
+- Problem / current state: the only timeouts in the tool guard the Floci provisioner — a 10 s endpoint probe and a 60 s `prepare` per function. The measured invocation itself is unbounded, so a translated binary that does not terminate blocks the pass forever. It cannot even be distinguished from slow-but-progressing work, because N escalation ([H6]) legitimately makes some runs long.
+- Evidence (2026-08-31, `evaluation_set` pass over `packages-20260830-230152.zip`): f52's `fn` ran **25 minutes at ~45% CPU** with the log frozen at f51, having consumed its payloads and then not exited. The pass had to be unstuck by killing the child by hand; it then recorded `f52 SKIP go: 200-invocation run: signal: terminated` and continued normally through the remaining ~40 functions. Left alone overnight it would have produced a partial `runtime.json` and no summary — and this pass is the input to every `N*` in the thesis.
+- Why this is not covered by [F1]: that item put per-test and per-build-command timeouts into `internal/builder`, on the *conversion* path. `cmd/runtime` is separate tooling with its own exec calls and inherited none of them. A non-terminating translation is not a rare pathology to design around either — it is an ordinary LLM translation defect, and the corpus contains at least one.
+- Proposed change: run both the Python and the Go measured invocations under `exec.CommandContext` with a per-run deadline, scaled with N so escalation cannot trip it (e.g. a base budget plus a per-invocation allowance, or a multiple of the observed `T(1)`). On expiry, kill the process **group** — a bare `Cmd.Process.Kill` leaves grandchildren — and record the function as skipped with a distinct reason (`TIMEOUT`, not the generic "not runnable"), so a hang is visible in the report rather than silently absent. Apply the same deadline to both sides so it cannot bias the comparison by cutting one side off sooner.
+- Why this improves the evaluation: the measurement pass is long, unattended and run rarely on a machine with real RAPL counters; a single hang currently costs a whole run. A distinct `TIMEOUT` reason also carries real information — a translation that compiles, deploys and then hangs is a different failure class from one that does not build, and [I1]'s labels should be able to tell them apart.
+- Architecture impact: None (separate tool) | Effort: S | Priority: P1 (before the next full measurement pass)
 
 ---
 

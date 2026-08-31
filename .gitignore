@@ -21,4 +21,18 @@ faasllm
 .env
 
 .claude
-runs/
+# Evaluation run records. The directory is ignored by default, but the files
+# that make a run reproducible and comparable across machines are tracked:
+# the manifest (host, git commit, config sha256), the per-function outcome
+# CSV, the append-only run log ([I1]'s feature->outcome training data), and
+# the translated packages (so cmd/runtime can be re-measured on another host
+# without paying for the translation again).
+#
+# Service logs stay ignored on purpose: they are large, and logs written
+# before [F6] contain API keys in plaintext (see runs/service-20260807-*.log
+# on the original dev machine). Never force-add one.
+runs/*
+!runs/manifest-*.txt
+!runs/batch-*.csv
+!runs/run-*.jsonl
+!runs/packages-*.zip
