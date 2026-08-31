@@ -82,6 +82,23 @@ if [ "${#ARTIFACTS[@]}" -eq 0 ]; then
     exit 1
 fi
 
+# working_tree_dirty - is the *code* that produced this run uncommitted?
+#
+# Deliberately ignores runs/ . Since the run records became tracked files,
+# this script writes the manifest, the CSV and the packages into the working
+# tree as it goes, so a plain `git status --porcelain` reports "dirty" on
+# every run by construction - including a run made from a pristine checkout.
+# That made the field useless exactly when it matters: telling a reader
+# whether git_commit above fully describes the code under test.
+working_tree_dirty() {
+    local out
+    # Porcelain v1: two status chars then a space, then the path - so match on
+    # the path field rather than anywhere in the line, or a file like
+    # docs/runs/x.md would be excluded too.
+    out=$(git status --porcelain 2>/dev/null | awk 'substr($0,4) !~ /^runs\//') || true
+    [ -n "$out" ] && echo yes || echo no
+}
+
 # -- service environment ---------------------------------------------------
 # REQUIRE_META, FLOCI_ENABLED and LLM_CALL_INTERVAL are read by the *service*
 # process, not by this script. Recording them from this shell records what the
@@ -185,7 +202,7 @@ fi
     echo "service:       ${REFAAS_URL}"
     echo "host:          $(uname -srm) / $(hostname)"
     echo "git_commit:    $(git rev-parse HEAD 2>/dev/null || echo unknown)"
-    echo "git_dirty:     $(test -n "$(git status --porcelain 2>/dev/null)" && echo yes || echo no)"
+    echo "git_dirty:     $(working_tree_dirty)"
     echo "job_timeout_s: ${JOB_TIMEOUT}"
     echo "require_meta:  ${SVC_REQUIRE_META}"
     echo "floci_enabled: ${SVC_FLOCI_ENABLED}"
