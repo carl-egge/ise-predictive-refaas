@@ -1,0 +1,17 @@
+run_id:        subset-v2
+started:       2026-08-31T11:53:25+02:00
+config:        scripts/benchmark.json (sha256 6ac5439c3c9507a5)
+artifacts:     /tmp/claude-1000/-home-carl-eikermann-ise-predictive-refaas/e401961e-7cda-46e7-b86a-e0c213596731/scratchpad/subset (7 functions)
+service:       http://localhost:8080
+host:          Linux 7.0.0-30-generic x86_64 / carl-eikermann-UX310UAK
+git_commit:    e48bb687ff7148c25d5918a86f67f99036bfd779
+git_dirty:     yes
+job_timeout_s: 1800
+require_meta:  true
+floci_enabled: true
+llm_interval:  2s
+finished:      2026-08-31T12:47:08+02:00
+completed:     4
+failed:        3
+errors:        0
+skipped:       0

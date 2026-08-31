@@ -1,0 +1,8 @@
+function,job_id,http_upload,final_status,elapsed_s
+f9,b1f27aa7-6f52-4bcb-a71f-520f4f4803dc,201,finished:dl406,1412
+f42,3a0ce486-5d4b-4b0e-b0b5-0e4a3cebab9a,201,finished:dl406,1074
+f53,55cc7567-c5e8-40d2-acde-1a14bf92e2d7,201,finished:dl406,160
+f70,9e90b5c8-809f-403d-8cb0-f701e3fc68c6,201,finished:dl200,100
+f73,d3279ecc-7443-473e-beaf-f7fc332becd8,201,finished:dl200,102
+f76,54b36ebd-654a-4e65-bd7e-d54b74757d58,201,finished:dl200,239
+f77,720691a9-95f9-4c79-9a73-a21f8bb88a4e,201,finished:dl200,136

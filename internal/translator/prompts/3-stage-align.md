@@ -30,7 +30,7 @@ And have already produced the **current** Go version:
 # Format Rules
 *Critical*:
 1. Only return the complete corrected Go code as a single `main.go` without any further commenting or code descriptions. Do not include `go.mod` or `go.sum` — dependencies are resolved automatically from your imports.
-2. Make absolutely sure that the handler function matches this interface `func handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyResponse, error)`.
+2. Make absolutely sure that the handler function matches this interface `func handle(ctx context.Context, event json.RawMessage) (any, error)`, returning the same shape the Python original returns (an API Gateway dict, any other dict, or `nil` where Python returns `None`).
 3. Important! Do not include a main function in the output.
 4. Use `package main` for the Go file.
 5. Return the full corrected file even if only small parts changed.
@@ -39,6 +39,6 @@ And have already produced the **current** Go version:
 ### EXAMPLE JSON OUTPUT:
 ```json
 {
-"main.go": "package main\n\nimport (\n\"github.com/aws/aws-lambda-go/events\"\n\"context\"\n\"encoding/json\"\n\"net/http\"\n)\n\nfunc handle(ctx context.Context, event json.RawMessage) (events.APIGatewayProxyResponse, error) {\n\t//The code implementing the logic from the Python functions\n}"
+"main.go": "package main\n\nimport (\n\"context\"\n\"encoding/json\"\n)\n\nfunc handle(ctx context.Context, event json.RawMessage) (any, error) {\n\t//The code implementing the logic from the Python functions\n}"
 }
 ```
