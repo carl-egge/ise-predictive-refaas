@@ -93,10 +93,10 @@
 **I. Prediction & candidate selection** (new 2026-08-24, decisions settled the same day — *nothing here exists in code yet*)
 *Order: [C8]/[I3] scanner + [H6] runtime harness → [I1] one run (+[I11] in parallel) → [I2] → [I4]–[I7].*
 - [x] [I3] Deterministic ex-ante feature extractor — **shipped 2026-08-24**; cc 92/95 exact vs `meta.json` (r=0.9998), 56 columns
-- [x] [I1] Labelled corpus: one full `evaluation_set` pass; label = `all_tests_passed` — **run 2026-08-30/31, 11/95 (11.6%)**
+- [x] [I1] Labelled corpus: one full `evaluation_set` pass; label = `all_tests_passed` — **use `run-20260831-170746`, 42/95 (44.2%)**; first pass 11/95 kept as provenance
 - [x] [I11] Leakage audit — **done 2026-08-26**: 16 functions in 7 groups, effective corpus size **86 not 95**; repo grouping alone would miss 4 of the 7
 - [x] [I1a] Bare-metal run checklist — done 2026-08-30 on the Ubuntu host (real RAPL, venv, Floci, module cache)
-- [~] [I2] Signal check — **answered 2026-08-31: abort criterion MET.** Base rate 11.6%, buckets flat (p=1.00); AWS is the one signal (5.2% vs 21.6%, p=0.021). Take the fallback: pivot to [I9]
+- [x] [I2] Signal check — **answered 2026-08-31 on the second pass: criterion PASSES.** Base rate 44.2%; complexity still no signal (A vs D+ p=0.37), AWS strong (27.6% vs 70.3%, p=0.0001). Modelling is worth doing; beat the skip-AWS baseline, not always-translate
 - [ ] [I4] One feature/label table every method and baseline consumes **(P0)**
 - [ ] [I5] Baselines: always-translate, never, majority, `cc` threshold, infeasibility rule list
 - [ ] [I6] Candidate methods: M1 logistic regression + M2 random forest (M3 LLM-judge optional; MLP deferred) **(P0)**
@@ -1028,6 +1028,16 @@ few-shot are the four highest-leverage changes; most are small, local patches.
   - **Effective positives are 10, not 11**: `f92`/`f94` are one [I11] near-duplicate group (similarity 0.978). No other success falls inside a group.
   - Run log, batch CSV, manifest and packages are now tracked in git (see the `runs/*` negations in `.gitignore`) so runs are comparable across machines; service logs stay ignored because pre-[F6] ones carry API keys in plaintext.
 
+- **Status: SECOND pass 2026-08-31, `run-20260831-170746.jsonl` (run id `20260831-190900`) — this is the corpus to use.** 95 attempted, 0 skipped, 0 errors; **42 completed (44.2%)**, against 11 (11.6%) on the first pass. Same host, same model, same corpus; what changed was the pipeline, not the data — see the three fixes below. The first pass is kept above as provenance (and because [I2]'s superseded conclusion rests on it), but every downstream item ([I4]–[I9]) should consume this one.
+  - **The two labels agree exactly again**: `all_tests_passed` and `completed` both select the same 42 functions, so [I2]'s revised findings are again independent of the label definition.
+  - **Effective positives are 38, not 42** after [I11] grouping: 8 successes fall inside near-duplicate groups (`f2 f9 f12 f33 f59 f60 f75 f93`). Effective base rate 38/86 = 44.2% — coincidentally the same as the raw rate.
+  - **Cost per successful translation fell 4.4x: 44.70 Wh -> 10.17 Wh**, and the run produced ~4x the successes for *less* total spend (427.2 Wh vs 491.6 Wh). Wasted share 95.7% -> 68.5%.
+  - **What changed (three pipeline fixes, all landed 2026-08-31 before this run).** The delta cannot be attributed to any one of them individually — they shipped together:
+    1. **The translate/repair/align prompts mandated `(events.APIGatewayProxyResponse, error)` as the handler signature.** That type always serialises as `{"statusCode",...,"multiValueHeaders",...}`, but only **28 of 95** functions expect an API Gateway envelope — 43 expect a plain object (Alexa/Lex and custom dicts), 20 expect `null` (Python returning `None`), 11 something else. The model was being *instructed* to produce a shape that cannot match two thirds of the fixtures, and was obeying. This accounted for **137 of 201 output mismatches (68%)**, and for **28 functions whose every failing case was this artifact**. Signature is now `(any, error)` with explicit per-shape rules; the harness never required the type (`response, err := handle(...)`; it marshals whatever comes back), so this was purely a prompt defect. **Envelope mismatches: 137 -> 0**; output mismatches overall 201 -> 45.
+    2. **Deterministic unused-variable repair** (`internal/builder/unusedvars.go`): 10 functions had failed to build on `declared and not used` alone. Fired 22 times this run and **fixed 11 builds with no LLM call at all**; the "would break the declaration" guard reverted once, catching the `:=`-with-no-new-names case. Build failures from unused variables: 10 -> 1.
+    3. **Repair-stage sampling** (`temperature: 0.5`, `top_p: 0.95` on `gollmRecovery`/`testRecovery` in `scripts/benchmark.json`, config sha `6ac5439c` -> `e82fbaf9`). [E3]'s `retry_temperature` is structurally inert on those stages — they never *fail* (122 executions, 0 failures), so their `RetryCount` never advances and `CurrentAttempt` is permanently 1 — while making 56% of all LLM calls. Stagnation flags 75 -> 47, aborts 124 -> 68: improved, not solved. **[E3] itself should be fixed to key off invocations rather than `RetryCount`; filed as a follow-up.**
+  - **Remaining 53 failures are overwhelmingly genuine**: value mismatch 17, execution error 14, undefined SDK symbol 8, other build 7, type mismatch 4, side-effect 2, unused variable 1. The mechanical classes are gone; what is left is semantic difficulty concentrated in AWS SDK translation.
+
 ### [x] [I1a] Bare-metal run checklist (prerequisites for [I1] and the [H6] measurement)
 
 Verified 2026-08-26 against the real corpus; these are measurements, not guesses. Work through
@@ -1110,7 +1120,7 @@ provisioning, measurement, `N*`) at a cost of minutes.
 **Order of operations is fixed**: translation pass first — it produces both the labels ([I1]) and the
 translated packages `cmd/runtime` needs — then the measurement pass against `runs/packages-<id>.zip`.
 
-### [~] [I2] Signal check: confirm there is anything to predict before spending the day
+### [x] [I2] Signal check: confirm there is anything to predict before spending the day
 - Category: Prediction (data)
 - Affected component(s): the `evaluation_set` pass from [I1]
 - Problem / current state: the entire premise assumes the success rate sits somewhere in the middle. It might not. The paper-set pilot came out 8/14 (~57%), which is ideal — but that set was hand-built and half its failures were bad fixtures, not bad translations. If `evaluation_set` comes out at 90%+ success, "always translate" is near-optimal, there is almost nothing to gain, and any classifier will look good on accuracy while saving no energy. If it comes out at 10%, the same in reverse.
@@ -1119,7 +1129,7 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 - Why: this is a one-day modelling budget under thesis time pressure. Half a day spent training models on a corpus with no separable structure is half a day lost; the check costs an hour of analysis on data [I1] produces anyway.
 - Architecture impact: None (analysis) | Effort: S | Priority: **P0 (gate on [I6])**
 
-- **RESULT 2026-08-31 (from [I1]'s `run-20260830-210122`): the pre-registered abort criterion is met on both of its two clauses.** Base rate **11.6% (11/95)**, below the [20%, 85%] band; and per-bucket rates are **flat**. Both labels agree (see [I1]), so this does not turn on the label definition.
+- **[SUPERSEDED - see the revised result at the end of this item. Kept because the envelope defect was found by chasing exactly this number, and because a pre-registered criterion that fires must be recorded as having fired, not quietly deleted.]** **RESULT 2026-08-31 (from [I1]'s first pass `run-20260830-210122`): the pre-registered abort criterion is met on both of its two clauses.** Base rate **11.6% (11/95)**, below the [20%, 85%] band; and per-bucket rates are **flat**. Both labels agree (see [I1]), so this does not turn on the label definition.
 
   | split | rate | Fisher exact (two-sided) |
   |---|---|---|
@@ -1134,9 +1144,9 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 
 - **What does separate the classes is the library/API surface, not the size or shape of the code.** AWS users succeed at a quarter the rate of non-users. The observed failures are consistent with that being a real mechanism rather than a proxy: the recurring build errors are boto3→`aws-sdk-go-v2` translation defects (`undefined: smithy.As`, `aws.Bool(...)` used as a `bool`, `undefined: lambdacontext.RemainingTime`), i.e. the model mis-renders a large, version-sensitive SDK surface.
 
-- **Cross-corpus corroboration (`function_set`, 14 functions, same service/config/model, run back-to-back 2026-08-31, `run-20260831-084331`): 10/14 = 71.4% vs 11.6%, Fisher p = 5.4e-06.** `function_set` is **100% non-AWS** and 12/14 bucket A. So the corpus gap is explained by the same axis: absence of AWS, not simplicity of control flow. This also rules out a setup/regression explanation for the low `evaluation_set` rate — the pipeline reaches 71% on the same machine, minutes apart. Energy contrast: cost per success **1.45 Wh** (`function_set`) vs **44.70 Wh** (`evaluation_set`); wasted share 57.2% vs 95.7%.
+- **Cross-corpus corroboration (`function_set`, 14 functions, same service/config/model, run back-to-back 2026-08-31, `run-20260831-084331`): 10/14 = 71.4% vs the first pass's 11.6%, Fisher p = 5.4e-06.** (This comparison was what first suggested the gap was ours rather than the corpus's; against the second pass's 44.2% the contrast is much smaller and the `function_set` run was made on the *pre-fix* pipeline, so do not restate it as a current figure.) `function_set` is **100% non-AWS** and 12/14 bucket A. So the corpus gap is explained by the same axis: absence of AWS, not simplicity of control flow. This also rules out a setup/regression explanation for the low `evaluation_set` rate — the pipeline reaches 71% on the same machine, minutes apart. Energy contrast: cost per success **1.45 Wh** (`function_set`) vs **44.70 Wh** (`evaluation_set`); wasted share 57.2% vs 95.7%.
 
-- **What the trivial AWS rule would actually buy** (relevant to [I5]'s baselines, computed on this run): "skip anything whose `meta.aws` is set" cuts 95 attempts to 37, keeps 8 of 11 successes, and drops inference energy **468.3 Wh → 207.6 Wh (−56%)**, improving cost per success **42.6 → 26.0 Wh**. That is a one-line rule with no model, no features and no training, and any learned predictor has to beat *it*, not "always translate". Note this is **not** [I5]'s B4 blocklist — `pyScan` reports `has_infeasible_lib` constant-zero on this corpus, so B4 skips nothing; this is a different, `meta`-derived rule and it should be added to the baseline set explicitly.
+- **What the trivial AWS rule would actually buy** (relevant to [I5]'s baselines, computed on the **first pass** - the second-pass figures below supersede these): "skip anything whose `meta.aws` is set" cuts 95 attempts to 37, keeps 8 of 11 successes, and drops inference energy **468.3 Wh → 207.6 Wh (−56%)**, improving cost per success **42.6 → 26.0 Wh**. That is a one-line rule with no model, no features and no training, and any learned predictor has to beat *it*, not "always translate". Note this is **not** [I5]'s B4 blocklist — `pyScan` reports `has_infeasible_lib` constant-zero on this corpus, so B4 skips nothing; this is a different, `meta`-derived rule and it should be added to the baseline set explicitly.
 
 - **Caveats that must travel with these numbers.**
   - Only **10 independent positives** after [I11] grouping (`f92`/`f94` collapse). The AWS split rests on 3 and 8 positives; Wilson 95% CIs are [1.8%, 14.1%] and [11.4%, 37.2%] — they barely fail to overlap, and one reclassified function moves the conclusion.
@@ -1144,7 +1154,32 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
   - **Bucket is stratified by design (25/25/25/20); AWS is not.** AWS functions may fail because SDK translation is hard, *or* because they are longer and more side-effecting. This data cannot separate those, and [I7] must say so.
   - Labels are single-run and their reproducibility is unmeasured ([I1]); at an 11.6% base rate, a handful of flips is a large relative change.
 
-- **Recommendation: take this item's own fallback.** With the base rate at 11.6% and buckets flat, "always translate" is not the thing to beat — *"never translate"* is 88.4% accurate, and the honest framing is that ex-ante selection on this corpus reduces to a library-surface rule. Pivot the primary objective to [I9]'s energy worthwhileness, which the [H6] measurements now support with real data: a function can be perfectly translatable and still never pay back — 3 of 11 `evaluation_set` and 6 of 10 `function_set` completed translations report "never pays back" outright. Before committing modelling time, the cheap next step is [I4]'s table plus [I5]'s baselines, so the AWS rule above is measured properly rather than argued from a 2x2.
+- **[WITHDRAWN 2026-08-31 by the revised result below - do not act on this paragraph.]** ~~Recommendation: take this item's own fallback.~~ With the base rate at 11.6% and buckets flat, "always translate" is not the thing to beat — *"never translate"* is 88.4% accurate, and the honest framing is that ex-ante selection on this corpus reduces to a library-surface rule. Pivot the primary objective to [I9]'s energy worthwhileness, which the [H6] measurements now support with real data: a function can be perfectly translatable and still never pay back — 3 of 11 `evaluation_set` and 6 of 10 `function_set` completed translations report "never pays back" outright. Before committing modelling time, the cheap next step is [I4]'s table plus [I5]'s baselines, so the AWS rule above is measured properly rather than argued from a 2x2.
+
+---
+
+- **REVISED RESULT 2026-08-31, second pass (`run-20260831-170746`, 42/95 = 44.2%): the abort criterion no longer fires, and the modelling day is worth spending.** The first pass tripped both clauses; chasing *why* found that the low base rate was largely a prompt defect of ours, not a property of the corpus (see [I1]'s second status block). With that fixed the picture changes qualitatively, not just numerically.
+
+  | split | first pass | second pass |
+  |---|---|---|
+  | overall | 11/95 = 11.6% | **42/95 = 44.2%** |
+  | bucket A | 3/25 = 12.0% | 13/25 = 52.0% |
+  | bucket B | 3/25 = 12.0% | 10/25 = 40.0% |
+  | bucket C | 3/25 = 12.0% | 12/25 = 48.0% |
+  | bucket D+ | 2/20 = 10.0% | 7/20 = 35.0% |
+  | A vs D+ | p = 1.00 | **p = 0.37** |
+  | **uses AWS** | 3/58 = 5.2% | **16/58 = 27.6%** |
+  | **no AWS** | 8/37 = 21.6% | **26/37 = 70.3%** |
+  | AWS split | p = 0.021 | **p = 0.0001** |
+  | `goTester` route | 27.0% | 78.7% |
+  | `flociTester` route | 3.3% | 17.9% |
+
+  - **Base rate 44.2% is inside the pre-registered [20%, 85%] band**, on 42 positives (38 independent after [I11] grouping) rather than 11. Both labels agree exactly, as on the first pass.
+  - **The complexity negative result survives, and is now credible rather than degenerate.** Buckets spread a little (52/40/48/35) but A vs D+ is p = 0.37. At 11.6% "no bucket signal" was arguably just a floor effect; at 44.2% it is a real measurement, and it says `cc`-derived complexity — the axis this corpus is *stratified on*, and the one [I3]'s `pyScan` reproduces to 92/95 — does not predict translation success. Report it as a finding.
+  - **The library-surface signal strengthened sharply**: 27.6% vs 70.3%, p = 0.0001, with non-overlapping Wilson intervals ([17.8, 40.2] vs [54.2, 82.5]). This is no longer "worth pursuing" — it is the structure the predictor exists to exploit.
+  - **The bar for a learned model rose at the same time, and this is the number [I7] must quote.** "Never translate" fell from 88.4% to **55.8%** accurate, so accuracy is finally a meaningful axis. But the trivial skip-AWS rule ([I5]) is now a *worse* trade than it looked: it forgoes **16 of 42 real successes** to save 54% of spend (188.7 Wh / 26 successes = 7.3 Wh per success, against 9.7 Wh for always-translate). A learned predictor has to beat that trade, not the old one.
+  - **Caveats unchanged and still binding**: single-run labels of unmeasured stability ([I1]); the second pass bundles three pipeline fixes so its delta attributes to none of them individually; AWS is not stratified by design the way bucket is, so "hard SDK" and "longer, more side-effecting" remain unseparated; the p-values are uncorrected across the handful of splits inspected.
+  - **What this says about method, beyond the number:** the first pass would have produced a defensible-looking negative result — "ex-ante selection cannot beat always-translate on this corpus" — that was substantially an artifact of our own prompt. The lesson worth carrying into the write-up is that a base rate near a floor should be interrogated as a possible pipeline defect *before* it is reported as a property of the corpus.
 
 ### [x] [I3] Deterministic ex-ante feature extractor — built as [C8]'s `pyScan`, accurate variant
 - **Status: implemented 2026-08-24 together with [C8]** — one scanner, both consumers, as this item specified. Full result, the calibration numbers, the constant-column finding and its consequences for [I5]/[I7] are recorded under [C8] rather than duplicated here.
