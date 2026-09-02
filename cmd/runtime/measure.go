@@ -90,11 +90,11 @@ func measureSide(m Meter, r runner, payloads [][]byte, invocations, reps, maxInv
 	// One untimed run first: it pays the page-cache and (for Go) any
 	// first-exec cost, so the measured points are not charged for warming
 	// the machine rather than the runtime.
-	if _, err := runOnce(m, r, single); err != nil {
+	if _, err := runOnce(m, r, single, runBudget(1)); err != nil {
 		return out, fmt.Errorf("%s: warm-up failed: %w", r.name, err)
 	}
 
-	point1, err := bestOf(m, r, single, reps)
+	point1, err := bestOf(m, r, single, reps, runBudget(1))
 	if err != nil {
 		return out, fmt.Errorf("%s: single-invocation run: %w", r.name, err)
 	}
@@ -113,7 +113,7 @@ func measureSide(m Meter, r runner, payloads [][]byte, invocations, reps, maxInv
 	// zero to invent.
 	for {
 		out.Invocations = invocations
-		pointN, err := bestOf(m, r, buildStream(payloads, invocations), reps)
+		pointN, err := bestOf(m, r, buildStream(payloads, invocations), reps, runBudget(invocations))
 		if err != nil {
 			return out, fmt.Errorf("%s: %d-invocation run: %w", r.name, invocations, err)
 		}
@@ -158,10 +158,10 @@ func measureSide(m Meter, r runner, payloads [][]byte, invocations, reps, maxInv
 // desktop.
 const minResolvableSeconds = 0.001
 
-func bestOf(m Meter, r runner, input []byte, reps int) (Sample, error) {
+func bestOf(m Meter, r runner, input []byte, reps int, budget time.Duration) (Sample, error) {
 	var best, worst Sample
 	for i := 0; i < reps; i++ {
-		s, err := runOnce(m, r, input)
+		s, err := runOnce(m, r, input, budget)
 		if err != nil {
 			return Sample{}, err
 		}
@@ -176,16 +176,18 @@ func bestOf(m Meter, r runner, input []byte, reps int) (Sample, error) {
 	return best, nil
 }
 
-func runOnce(m Meter, r runner, input []byte) (Sample, error) {
+func runOnce(m Meter, r runner, input []byte, budget time.Duration) (Sample, error) {
 	cmd := r.command(input)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.Stdout = &nullWriter{}
 
 	// perf can only account for a process it spawns itself, so it needs the
-	// command handed over rather than a closure.
+	// command handed over rather than a closure. The budget goes with it, so
+	// a hang under perf is bounded exactly as it is under the other meters.
 	if pm, ok := m.(*perfMeter); ok {
 		pm.PrepareCommand(cmd)
+		pm.SetBudget(budget)
 		sample, err := pm.Measure(nil)
 		if err != nil {
 			return sample, err
@@ -193,7 +195,7 @@ func runOnce(m Meter, r runner, input []byte) (Sample, error) {
 		return sample, nil
 	}
 
-	sample, runErr := m.Measure(func() error { return cmd.Run() })
+	sample, runErr := m.Measure(func() error { return runWithTimeout(cmd, budget) })
 	if runErr != nil {
 		return sample, fmt.Errorf("%w: %s", runErr, truncate(stderr.String(), 400))
 	}

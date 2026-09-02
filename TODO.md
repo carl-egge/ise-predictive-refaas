@@ -88,7 +88,7 @@
 - [ ] [H7] Verify token accounting across connector-internal retries
 - [x] [H8] `cmd/energy` reports a coefficient assumption for stages that consumed no tokens
 - [x] [H9] Integrate the GWDG infrastructure reply into the energy constants
-- [ ] [H10] `cmd/runtime` has no timeout on the measured invocation; one hanging translation stalls the pass
+- [x] [H10] `cmd/runtime` invocation timeout — **implemented 2026-09-02**; budget scales with N, kills the process group, reports `TIMEOUT`
 
 **I. Prediction & candidate selection** (new 2026-08-24, decisions settled the same day — *nothing here exists in code yet*)
 *Order: [C8]/[I3] scanner + [H6] runtime harness → [I1] one run (+[I11] in parallel) → [I2] → [I4]–[I7].*
@@ -921,7 +921,24 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 
   The derived method **overstated** Go's steady-state advantage and **understated** its cold-start advantage. This matters because `runtime.json` deliberately carries the steady-state figure into `N*`, so the derived constants were flattering the payback case: on the measured numbers 6 of 10 completed paper-set translations report **"never pays back" (Go not faster)**, against a median steady-state speedup of 1.3x with some functions at 0.6x. Consistent with this item's own note that the paper set is trivial by design — but the direction is worth stating plainly, because it makes `N*` worse, not better, and the write-up must not quote the 1.9x/15.0x pair.
   - `evaluation_set` measured the same day: 57 of 95 measurable, median **1.7x** steady / **55.4x** cold; `N*` median 7.76e6 over 8 functions, 3 never paying back. Files: `evaluation/runtime.json` (57 entries) and `evaluation/runtime-functionset.json` (14) — kept apart deliberately, since one `-out` overwrites the other.
-  - **A hang in the measurement path was found during the `evaluation_set` pass and is filed as [H10]** — f52's translated binary ran 25 min at ~45% CPU and stalled the whole pass; there is no timeout on the measured invocation. Both passes above were completed with a manual kill plus an external watchdog, not with tooling that can be trusted to run unattended.
+  - **A hang in the measurement path was found during the `evaluation_set` pass and filed as [H10]** — f52's translated binary ran 25 min at ~45% CPU and stalled the whole pass. Both passes *above* were completed with a manual kill plus an external watchdog, not with tooling that could be trusted to run unattended. **[H10] was implemented 2026-09-02**, so the second-pass measurement below needed neither.
+
+- **Second-pass measurement 2026-09-02 (`runtime-20260831-190900.json`, promoted to `evaluation/runtime.json`) — this is the measurement to quote.** Run against [I1]'s second-pass packages (`packages-20260831-190900.zip`), same host, `performance` governor, on AC, `rapl`/`package-0`. **66 of 95 measured** (against 57 on the first pass), 23 provisioned through fixture setup, 1 killed by the new [H10] timeout and reported `TIMEOUT`.
+
+  | | first pass (11 successes) | **second pass (42 successes)** |
+  |---|---|---|
+  | measured | 57 | **66** |
+  | steady state, median | 1.7x | **2.0x** |
+  | cold start, median | 55.4x | **47.2x** |
+  | `N*` computed for | 8 | **25** |
+  | `N*` median | 7.76e6 | **1.17e7** |
+  | never pays back | 3 | **17** |
+
+  - **Every one of the 42 completed translations has a runtime measurement**, so the `N*` figures cover the whole success set rather than a subset of it.
+  - **`N*` got *worse* as the pipeline got *better*, and this needs saying explicitly rather than smoothing over.** The second pass completes harder functions - bucket D+ costs **10.03 Wh** per completed translation against **1.17 Wh** for bucket A - while the steady-state speedup only moved 1.7x -> 2.0x. Translation success and translation worthwhileness are not the same property and do not move together.
+  - **Payback distribution over the 42 successes**: within 100k invocations 7 (17%), within 1M 11 (26%), within 10M 12 (29%), within 100M 21 (50%); **17 (40%) never pay back at all** because Go is not faster at steady state. Cheapest: f76 (14.9k), f77 (26.9k), f30 (35.0k), f45 (55.3k), f40 (86.3k).
+  - **Go's advantage is concentrated where the SDK is**: by AWS usage, median speedup **2.9x (AWS, n=35)** vs **1.0x (non-AWS, n=31)**. By bucket: A 1.7x, B 3.0x, C 1.4x, D+ 2.8x.
+  - Cold start fell 55.4x -> 47.2x between passes. Both are measurements of *different translated code*, not a regression: the first pass largely measured translations that failed their tests, so its sample was Go that ran fast while computing the wrong answer. Prefer the second-pass figure and do not present the two as a time series.
 
 ### [ ] [H7] Verify token accounting across connector-internal retries
 - Category: Evaluation
@@ -954,7 +971,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Architecture impact: None (constants + separate tool) | Effort: M | Priority: **P0** (every energy figure in the thesis is linear in these)
 - Follow-up left open: node power and current PUE are still unanswered and worth one short follow-up mail — neither is likely sensitive, and node power is now the second-largest uncertainty. Concurrency is **not** worth pursuing: the refusal was explicit.
 
-### [ ] [H10] `cmd/runtime` has no timeout on the measured invocation; one hanging translation stalls the whole pass
+### [x] [H10] `cmd/runtime` has no timeout on the measured invocation; one hanging translation stalls the whole pass
 - Category: Fault Tolerance / Evaluation
 - Affected component(s): `cmd/runtime` (the measurement exec path), alongside the existing timeouts in `cmd/runtime/provision.go`
 - Problem / current state: the only timeouts in the tool guard the Floci provisioner — a 10 s endpoint probe and a 60 s `prepare` per function. The measured invocation itself is unbounded, so a translated binary that does not terminate blocks the pass forever. It cannot even be distinguished from slow-but-progressing work, because N escalation ([H6]) legitimately makes some runs long.
@@ -963,6 +980,14 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Proposed change: run both the Python and the Go measured invocations under `exec.CommandContext` with a per-run deadline, scaled with N so escalation cannot trip it (e.g. a base budget plus a per-invocation allowance, or a multiple of the observed `T(1)`). On expiry, kill the process **group** — a bare `Cmd.Process.Kill` leaves grandchildren — and record the function as skipped with a distinct reason (`TIMEOUT`, not the generic "not runnable"), so a hang is visible in the report rather than silently absent. Apply the same deadline to both sides so it cannot bias the comparison by cutting one side off sooner.
 - Why this improves the evaluation: the measurement pass is long, unattended and run rarely on a machine with real RAPL counters; a single hang currently costs a whole run. A distinct `TIMEOUT` reason also carries real information — a translation that compiles, deploys and then hangs is a different failure class from one that does not build, and [I1]'s labels should be able to tell them apart.
 - Architecture impact: None (separate tool) | Effort: S | Priority: P1 (before the next full measurement pass)
+- **Status: implemented 2026-09-02** in `cmd/runtime/timeout.go` (+ `timeout_unix.go` / `timeout_other.go`), wired through `runOnce`/`bestOf` in `measure.go` and into `perf.go`. It was filed after f52 stalled the first pass for 25 minutes; before it was implemented **f51 stalled the second pass and cost the maintainer a run**, which is what finally forced it.
+  - **Budget scales with N** as the item required: `90s + 50ms x invocations`, capped at 15 min. [H6]'s escalation legitimately makes late rounds far longer than early ones, so a fixed deadline would be either uselessly loose at N=1 or would cut off honest work at N=100000.
+  - **Identical budget for both language sides.** It is a pure function of N, tested as such: a timeout that cut one side off sooner than the other would bias the very comparison the tool exists to measure.
+  - **Kills the process group, not the process.** A translated function that shells out would otherwise leave a grandchild holding the stdout/stderr pipes and `Wait` would block on them even after the direct child died. `timeout_unix.go` sets `Setpgid` and signals `-pgid`; the non-unix fallback kills the single process, which is adequate because measurement needs RAPL or perf and both are Linux.
+  - **Covers every meter, not just the primary one.** `perfMeter` builds its own wrapped `perf stat` command rather than running the one it is handed, so the budget had to be threaded to it explicitly (`SetBudget`); leaving it uncovered would have been a known hole in a rarely exercised path.
+  - **`TIMEOUT` is a distinct skip reason** (`skipReason` in `main.go`), not folded into the generic "not runnable" - a translation that builds, starts and then hangs is a different failure class from one that never compiled, and [I1]'s labels should be able to tell them apart.
+  - **Five tests**, including one that spawns an actual grandchild (`sh -c "sleep 300 & wait"`) - the case the group kill exists for; it returns in 0.30 s instead of hanging. Also covers budget monotonicity/cap, an ordinary non-zero exit not being mislabelled as a timeout, and the `TIMEOUT` labelling itself.
+  - **Effect on the 2026-09-02 pass**: 95 attempted, 66 measured, **1 killed and reported `TIMEOUT`**, no manual intervention and no watchdog. Notably f51 - the function that hung the aborted run - measured cleanly this time (1.6x), so the hang is sampling-dependent, which is exactly why a timeout is the right mechanism rather than a blocklist.
 
 ---
 
@@ -1037,6 +1062,11 @@ few-shot are the four highest-leverage changes; most are small, local patches.
     2. **Deterministic unused-variable repair** (`internal/builder/unusedvars.go`): 10 functions had failed to build on `declared and not used` alone. Fired 22 times this run and **fixed 11 builds with no LLM call at all**; the "would break the declaration" guard reverted once, catching the `:=`-with-no-new-names case. Build failures from unused variables: 10 -> 1.
     3. **Repair-stage sampling** (`temperature: 0.5`, `top_p: 0.95` on `gollmRecovery`/`testRecovery` in `scripts/benchmark.json`, config sha `6ac5439c` -> `e82fbaf9`). [E3]'s `retry_temperature` is structurally inert on those stages — they never *fail* (122 executions, 0 failures), so their `RetryCount` never advances and `CurrentAttempt` is permanently 1 — while making 56% of all LLM calls. Stagnation flags 75 -> 47, aborts 124 -> 68: improved, not solved. **[E3] itself should be fixed to key off invocations rather than `RetryCount`; filed as a follow-up.**
   - **Remaining 53 failures are overwhelmingly genuine**: value mismatch 17, execution error 14, undefined SDK symbol 8, other build 7, type mismatch 4, side-effect 2, unused variable 1. The mechanical classes are gone; what is left is semantic difficulty concentrated in AWS SDK translation.
+  - **Energy and payback for this pass** (full report: `go run ./cmd/energy -runtime evaluation/runtime.json runs/run-20260831-170746.jsonl`):
+    - 42 translations cost **134.62 Wh** (mean 3.21, median 1.64); 53 failures cost **292.55 Wh**, i.e. **68.5%** of the run's spend, down from 95.7%. **Cost per success 10.17 Wh**, down from 44.70.
+    - **Repair is now the largest cost centre**: `testRecovery` 27.2% + `gollmRecovery` 17.3% = **44.5%** of inference energy, against `convert` 31.6% and `clean` 24.0%. [G2] (right-sizing repair payloads) is therefore worth more now than when it was filed.
+    - **Complexity predicts cost even though it does not predict success.** Mean energy per completed translation: A 1.17 Wh, B 2.14, C 2.31, **D+ 10.03** - about 8.6x across the range - while success is flat across the same buckets ([I2], A vs D+ p = 0.37). `cc` is a *cost* feature, not a *feasibility* feature; that is the more defensible use for it and it feeds [I9] directly rather than [I6].
+    - **Break-even ([H6]'s second-pass measurement): median N* = 1.17e7 invocations; 17 of the 42 successes never pay back.** Only ~26% repay within 1M invocations. So on this corpus most successful translations are not worth performing on energy grounds - which is the [I9] argument, now resting on measured data for every success rather than on 8 functions.
 
 ### [x] [I1a] Bare-metal run checklist (prerequisites for [I1] and the [H6] measurement)
 

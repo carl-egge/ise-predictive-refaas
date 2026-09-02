@@ -26,6 +26,8 @@ type perfMeter struct {
 	// pending is the command the next Measure call should wrap. Set by
 	// PrepareCommand immediately before Measure, so the two cannot drift.
 	pending *exec.Cmd
+	// budget bounds the wrapped run ([H10]); set alongside pending.
+	budget time.Duration
 }
 
 func newPerfMeter() (*perfMeter, error) {
@@ -71,6 +73,9 @@ func (m *perfMeter) Describe() string {
 // PrepareCommand registers the process the next Measure call must wrap.
 func (m *perfMeter) PrepareCommand(cmd *exec.Cmd) { m.pending = cmd }
 
+// SetBudget sets the wall-clock limit for the next wrapped run.
+func (m *perfMeter) SetBudget(d time.Duration) { m.budget = d }
+
 // Measure wraps the pending command in perf stat. fn is ignored except as the
 // signal to run: the command itself was handed over by PrepareCommand, since
 // perf can only account for a process it spawns.
@@ -103,8 +108,13 @@ func (m *perfMeter) Measure(fn func() error) (Sample, error) {
 	wrapped.Stdout = cmd.Stdout
 	wrapped.Stderr = cmd.Stderr
 
+	budget := m.budget
+	m.budget = 0
+	if budget <= 0 {
+		budget = runBudget(1)
+	}
 	start := time.Now()
-	runErr := wrapped.Run()
+	runErr := runWithTimeout(wrapped, budget)
 	elapsed := time.Since(start)
 
 	joules, err := parsePerfEnergy(statPath)

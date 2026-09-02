@@ -27,6 +27,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -308,22 +309,22 @@ func measureFunction(opt options, meter Meter, prov *provisioner, python, harnes
 	// fastest path through itself, so an unchecked failure would not merely
 	// lose a data point, it would bias the comparison toward the failing side.
 	if err := checkRuns(py, payloads[0]); err != nil {
-		result.Skipped = fmt.Sprintf("python side not runnable: %v", err)
+		result.Skipped = skipReason("python side", err)
 		return result
 	}
 	if err := checkRuns(gorun, payloads[0]); err != nil {
-		result.Skipped = fmt.Sprintf("go side not runnable: %v", err)
+		result.Skipped = skipReason("go side", err)
 		return result
 	}
 
 	pyMeasurement, err := measureSide(meter, py, payloads, opt.invocations, opt.reps, opt.maxInvocations)
 	if err != nil {
-		result.Skipped = err.Error()
+		result.Skipped = skipReason("python side", err)
 		return result
 	}
 	goMeasurement, err := measureSide(meter, gorun, payloads, opt.invocations, opt.reps, opt.maxInvocations)
 	if err != nil {
-		result.Skipped = err.Error()
+		result.Skipped = skipReason("go side", err)
 		return result
 	}
 	result.Python = &pyMeasurement
@@ -417,4 +418,16 @@ func writeJSONFile(path string, v any) error {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+// skipReason labels why a side could not be measured. A run killed for
+// exceeding its budget is reported as TIMEOUT rather than folded into the
+// generic "not runnable" text ([H10]): a translation that builds, starts and
+// then hangs is a different failure from one that never compiled, and the
+// distinction is worth carrying into [I1]'s labels.
+func skipReason(side string, err error) string {
+	if errors.Is(err, errRunTimeout) {
+		return fmt.Sprintf("TIMEOUT: %s did not terminate within its budget: %v", side, err)
+	}
+	return fmt.Sprintf("%s not runnable: %v", side, err)
 }
