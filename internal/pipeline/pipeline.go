@@ -157,6 +157,16 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 				req.AddError(err)
 				return cancelErr
 			}
+			if domain.IsPredictionSkip(err) {
+				// The prediction gate declined this candidate ([I10]). That is
+				// a decision, not a failure: the feature vector is
+				// deterministic, so a retry re-scores the same numbers to the
+				// same answer, and invoking a recovery task would spend
+				// exactly the LLM budget the gate just decided not to spend.
+				log.Debugf("task (%s) declined by the prediction gate: %v", task.ID, err)
+				req.AddError(err)
+				return err
+			}
 			log.Debugf("task (%s) retry (%d) failed - %s", task.ID, task.RetryCount, err)
 			if task.RetryCount+1 < task.MaxRetryCount {
 				log.Errorf("task (%s) retrying...", task.ID)

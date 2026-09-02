@@ -1,0 +1,1217 @@
+{
+  "translations": [
+    {
+      "function_id": "pf1",
+      "job_id": "f792ed76-8623-453c-87ba-bb0dd902a261",
+      "bucket": "A",
+      "uses_aws": false,
+      "completed": true,
+      "stages": [
+        {
+          "task": "builder",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "clean",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 420,
+          "eval_tokens": 358,
+          "joules": 435.8460409823985
+        },
+        {
+          "task": "convert",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 2178,
+          "eval_tokens": 255,
+          "joules": 806.7413446658666
+        },
+        {
+          "task": "goTester",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "root",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        }
+      ],
+      "prompt_tokens": 2598,
+      "eval_tokens": 613,
+      "compute_joules": 1242.5873856482651,
+      "facility_joules": 1304.7167549306785,
+      "co2e_grams": 0.1315589394555101,
+      "repair_joules": 0,
+      "tests_passed": 1,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    },
+    {
+      "function_id": "pf2",
+      "job_id": "db22c24d-1387-4e51-9e73-cda222ebc7c0",
+      "bucket": "A",
+      "uses_aws": false,
+      "completed": true,
+      "stages": [
+        {
+          "task": "builder",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "clean",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 249,
+          "eval_tokens": 420,
+          "joules": 446.9448664098029
+        },
+        {
+          "task": "convert",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 1627,
+          "eval_tokens": 493,
+          "joules": 877.1928840060215
+        },
+        {
+          "task": "goTester",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "root",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        }
+      ],
+      "prompt_tokens": 1876,
+      "eval_tokens": 913,
+      "compute_joules": 1324.1377504158245,
+      "facility_joules": 1390.3446379366158,
+      "co2e_grams": 0.1401930843252754,
+      "repair_joules": 0,
+      "tests_passed": 3,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    },
+    {
+      "function_id": "pf3",
+      "job_id": "38287755-bd72-4bb9-87b1-c1c0c96cf8c2",
+      "bucket": "B",
+      "uses_aws": false,
+      "completed": true,
+      "stages": [
+        {
+          "task": "builder",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "clean",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 387,
+          "eval_tokens": 574,
+          "joules": 623.1603885064004
+        },
+        {
+          "task": "convert",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 2480,
+          "eval_tokens": 745,
+          "joules": 1331.2147305825752
+        },
+        {
+          "task": "goTester",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "root",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        }
+      ],
+      "prompt_tokens": 2867,
+      "eval_tokens": 1319,
+      "compute_joules": 1954.3751190889757,
+      "facility_joules": 2052.0938750434248,
+      "co2e_grams": 0.2069194657335453,
+      "repair_joules": 0,
+      "tests_passed": 4,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    },
+    {
+      "function_id": "pf4",
+      "job_id": "506513b8-b928-4106-88ec-1e4779eb6f60",
+      "bucket": "A",
+      "uses_aws": false,
+      "completed": true,
+      "stages": [
+        {
+          "task": "builder",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "clean",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 296,
+          "eval_tokens": 482,
+          "joules": 515.6280778907696
+        },
+        {
+          "task": "convert",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 3809,
+          "eval_tokens": 536,
+          "joules": 1492.5897812447363
+        },
+        {
+          "task": "goTester",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "root",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        }
+      ],
+      "prompt_tokens": 4105,
+      "eval_tokens": 1018,
+      "compute_joules": 2008.217859135506,
+      "facility_joules": 2108.6287520922815,
+      "co2e_grams": 0.2126200658359717,
+      "repair_joules": 0,
+      "tests_passed": 3,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    },
+    {
+      "function_id": "pf5",
+      "job_id": "7e61a352-b81f-405d-9fdf-9168872a0a28",
+      "bucket": "A",
+      "uses_aws": false,
+      "completed": true,
+      "stages": [
+        {
+          "task": "builder",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "clean",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 314,
+          "eval_tokens": 554,
+          "joules": 585.7265019685867
+        },
+        {
+          "task": "convert",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 3899,
+          "eval_tokens": 573,
+          "joules": 1549.942578717155
+        },
+        {
+          "task": "goTester",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "root",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        }
+      ],
+      "prompt_tokens": 4213,
+      "eval_tokens": 1127,
+      "compute_joules": 2135.6690806857414,
+      "facility_joules": 2242.452534720029,
+      "co2e_grams": 0.2261139639176029,
+      "repair_joules": 0,
+      "tests_passed": 3,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    },
+    {
+      "function_id": "pf6",
+      "job_id": "9538d7bf-3aea-4f05-ab3d-f6f90e9cb6b6",
+      "bucket": "A",
+      "uses_aws": false,
+      "completed": true,
+      "stages": [
+        {
+          "task": "builder",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "clean",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 297,
+          "eval_tokens": 267,
+          "joules": 320.7685285339818
+        },
+        {
+          "task": "convert",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 3642,
+          "eval_tokens": 510,
+          "joules": 1424.8806175783222
+        },
+        {
+          "task": "goTester",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "root",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        }
+      ],
+      "prompt_tokens": 3939,
+      "eval_tokens": 777,
+      "compute_joules": 1745.6491461123042,
+      "facility_joules": 1832.9316034179194,
+      "co2e_grams": 0.18482060334464023,
+      "repair_joules": 0,
+      "tests_passed": 3,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    },
+    {
+      "function_id": "pf7",
+      "job_id": "40b4e247-6992-456e-afb2-5a2eed09946a",
+      "bucket": "A",
+      "uses_aws": false,
+      "completed": true,
+      "stages": [
+        {
+          "task": "builder",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "clean",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 871,
+          "eval_tokens": 1094,
+          "joules": 1222.9353748210374
+        },
+        {
+          "task": "convert",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 4471,
+          "eval_tokens": 1550,
+          "joules": 2587.713940384453
+        },
+        {
+          "task": "goTester",
+          "model_assumed": true,
+          "executions": 2,
+          "failures": 1,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "root",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "testRecovery",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 4152,
+          "eval_tokens": 1581,
+          "joules": 2531.5846643664727,
+          "is_repair": true
+        },
+        {
+          "task": "testRecoveryBuild",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0,
+          "is_repair": true
+        }
+      ],
+      "prompt_tokens": 9494,
+      "eval_tokens": 4225,
+      "compute_joules": 6342.233979571964,
+      "facility_joules": 6659.345678550562,
+      "co2e_grams": 0.6714840225871817,
+      "repair_joules": 2531.5846643664727,
+      "tests_passed": 5,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    },
+    {
+      "function_id": "pf9",
+      "job_id": "816df73d-5486-49b5-a691-6aa12ede4131",
+      "bucket": "A",
+      "uses_aws": false,
+      "completed": true,
+      "stages": [
+        {
+          "task": "builder",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "clean",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 347,
+          "eval_tokens": 319,
+          "joules": 381.16866486125144
+        },
+        {
+          "task": "convert",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 2053,
+          "eval_tokens": 895,
+          "joules": 1354.5561080143589
+        },
+        {
+          "task": "goTester",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "root",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        }
+      ],
+      "prompt_tokens": 2400,
+      "eval_tokens": 1214,
+      "compute_joules": 1735.7247728756104,
+      "facility_joules": 1822.5110115193909,
+      "co2e_grams": 0.18376986032820522,
+      "repair_joules": 0,
+      "tests_passed": 3,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    },
+    {
+      "function_id": "pf12",
+      "job_id": "9443b083-cb78-4959-a897-07421d6a3bfd",
+      "bucket": "A",
+      "uses_aws": false,
+      "completed": true,
+      "stages": [
+        {
+          "task": "builder",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "clean",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 397,
+          "eval_tokens": 503,
+          "joules": 561.3656761885211
+        },
+        {
+          "task": "convert",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 2028,
+          "eval_tokens": 928,
+          "joules": 1377.9016127673908
+        },
+        {
+          "task": "goTester",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "root",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        }
+      ],
+      "prompt_tokens": 2425,
+      "eval_tokens": 1431,
+      "compute_joules": 1939.267288955912,
+      "facility_joules": 2036.2306534037075,
+      "co2e_grams": 0.2053199242182072,
+      "repair_joules": 0,
+      "tests_passed": 3,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    },
+    {
+      "function_id": "pf13",
+      "job_id": "b7a3cbdc-fb20-4b51-905c-69c07d47cf88",
+      "bucket": "A",
+      "uses_aws": false,
+      "completed": true,
+      "stages": [
+        {
+          "task": "builder",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "clean",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 269,
+          "eval_tokens": 198,
+          "joules": 250.7512751073774
+        },
+        {
+          "task": "convert",
+          "model": "devstral-2-123b-instruct-2512",
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 1,
+          "prompt_tokens": 1391,
+          "eval_tokens": 268,
+          "joules": 610.654605124642
+        },
+        {
+          "task": "goTester",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        },
+        {
+          "task": "root",
+          "model_assumed": true,
+          "executions": 1,
+          "failures": 0,
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "eval_tokens": 0,
+          "joules": 0
+        }
+      ],
+      "prompt_tokens": 1660,
+      "eval_tokens": 466,
+      "compute_joules": 861.4058802320194,
+      "facility_joules": 904.4761742436204,
+      "co2e_grams": 0.09120134756956506,
+      "repair_joules": 0,
+      "tests_passed": 1,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    }
+  ],
+  "failed_attempts": {
+    "count": 4,
+    "function_ids": [
+      "pf8",
+      "pf10",
+      "pf11",
+      "pf14"
+    ],
+    "prompt_tokens": 42688,
+    "eval_tokens": 18930,
+    "facility_joules": 29878.731394683236,
+    "co2e_grams": 3.0127720822972264,
+    "share_of_total_spend": 0.5720337437338755,
+    "joules_per_success": 5223.246307054147,
+    "translations": [
+      {
+        "function_id": "pf8",
+        "job_id": "8070afea-7d98-4e26-847e-82c6bc8ee167",
+        "bucket": "B",
+        "uses_aws": false,
+        "completed": false,
+        "stages": [
+          {
+            "task": "builder",
+            "model_assumed": true,
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0
+          },
+          {
+            "task": "clean",
+            "model": "devstral-2-123b-instruct-2512",
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 1,
+            "prompt_tokens": 535,
+            "eval_tokens": 716,
+            "joules": 791.1267712017853
+          },
+          {
+            "task": "convert",
+            "model": "devstral-2-123b-instruct-2512",
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 1,
+            "prompt_tokens": 1929,
+            "eval_tokens": 1288,
+            "joules": 1678.469655339397
+          },
+          {
+            "task": "goTester",
+            "model_assumed": true,
+            "executions": 3,
+            "failures": 3,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0
+          },
+          {
+            "task": "root",
+            "model_assumed": true,
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0
+          },
+          {
+            "task": "testRecovery",
+            "model": "devstral-2-123b-instruct-2512",
+            "executions": 2,
+            "failures": 0,
+            "llm_calls": 2,
+            "prompt_tokens": 4126,
+            "eval_tokens": 2556,
+            "joules": 3409.580083059626,
+            "is_repair": true
+          },
+          {
+            "task": "testRecoveryBuild",
+            "model_assumed": true,
+            "executions": 2,
+            "failures": 0,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0,
+            "is_repair": true
+          }
+        ],
+        "prompt_tokens": 6590,
+        "eval_tokens": 4560,
+        "compute_joules": 5879.176509600808,
+        "facility_joules": 6173.135335080849,
+        "co2e_grams": 0.6224578129539855,
+        "repair_joules": 3409.580083059626,
+        "tests_passed": 2,
+        "tests_failed": 1,
+        "shape_only_tests": 0,
+        "failure_kinds": {
+          "output mismatch": 1
+        }
+      },
+      {
+        "function_id": "pf10",
+        "job_id": "9a9b7773-30b6-44d1-9983-c6bcbab99a5b",
+        "bucket": "A",
+        "uses_aws": false,
+        "completed": false,
+        "stages": [
+          {
+            "task": "builder",
+            "model_assumed": true,
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0
+          },
+          {
+            "task": "clean",
+            "model": "devstral-2-123b-instruct-2512",
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 1,
+            "prompt_tokens": 576,
+            "eval_tokens": 625,
+            "joules": 719.3696225734798
+          },
+          {
+            "task": "convert",
+            "model": "devstral-2-123b-instruct-2512",
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 1,
+            "prompt_tokens": 2354,
+            "eval_tokens": 1416,
+            "joules": 1906.8994599545224
+          },
+          {
+            "task": "goTester",
+            "model_assumed": true,
+            "executions": 3,
+            "failures": 3,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0
+          },
+          {
+            "task": "root",
+            "model_assumed": true,
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0
+          },
+          {
+            "task": "testRecovery",
+            "model": "devstral-2-123b-instruct-2512",
+            "executions": 2,
+            "failures": 0,
+            "llm_calls": 2,
+            "prompt_tokens": 4920,
+            "eval_tokens": 2823,
+            "joules": 3861.630445853335,
+            "is_repair": true
+          },
+          {
+            "task": "testRecoveryBuild",
+            "model_assumed": true,
+            "executions": 2,
+            "failures": 0,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0,
+            "is_repair": true
+          }
+        ],
+        "prompt_tokens": 7850,
+        "eval_tokens": 4864,
+        "compute_joules": 6487.899528381337,
+        "facility_joules": 6812.294504800405,
+        "co2e_grams": 0.6869063625673741,
+        "repair_joules": 3861.630445853335,
+        "tests_passed": 2,
+        "tests_failed": 1,
+        "shape_only_tests": 0,
+        "failure_kinds": {
+          "output mismatch": 1
+        }
+      },
+      {
+        "function_id": "pf11",
+        "job_id": "95f302a5-58fd-495a-909c-d1016e9e61eb",
+        "bucket": "A",
+        "uses_aws": false,
+        "completed": false,
+        "stages": [
+          {
+            "task": "builder",
+            "model_assumed": true,
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0
+          },
+          {
+            "task": "clean",
+            "model": "devstral-2-123b-instruct-2512",
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 1,
+            "prompt_tokens": 377,
+            "eval_tokens": 502,
+            "joules": 555.1751529076132
+          },
+          {
+            "task": "convert",
+            "model": "devstral-2-123b-instruct-2512",
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 1,
+            "prompt_tokens": 1810,
+            "eval_tokens": 722,
+            "joules": 1133.361497547162
+          },
+          {
+            "task": "goTester",
+            "model_assumed": true,
+            "executions": 3,
+            "failures": 3,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0
+          },
+          {
+            "task": "root",
+            "model_assumed": true,
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0
+          },
+          {
+            "task": "testRecovery",
+            "model": "devstral-2-123b-instruct-2512",
+            "executions": 2,
+            "failures": 0,
+            "llm_calls": 2,
+            "prompt_tokens": 3343,
+            "eval_tokens": 1306,
+            "joules": 2068.3116565079163,
+            "is_repair": true
+          },
+          {
+            "task": "testRecoveryBuild",
+            "model_assumed": true,
+            "executions": 2,
+            "failures": 0,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0,
+            "is_repair": true
+          }
+        ],
+        "prompt_tokens": 5530,
+        "eval_tokens": 2530,
+        "compute_joules": 3756.8483069626914,
+        "facility_joules": 3944.690722310826,
+        "co2e_grams": 0.3977563144996749,
+        "repair_joules": 2068.3116565079163,
+        "tests_passed": 1,
+        "tests_failed": 2,
+        "shape_only_tests": 0,
+        "failure_kinds": {
+          "output mismatch": 2
+        }
+      },
+      {
+        "function_id": "pf14",
+        "job_id": "ae7f16a5-e61d-4df4-9ea3-96b00787542b",
+        "bucket": "A",
+        "uses_aws": false,
+        "completed": false,
+        "stages": [
+          {
+            "task": "builder",
+            "model_assumed": true,
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0
+          },
+          {
+            "task": "clean",
+            "model": "devstral-2-123b-instruct-2512",
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 1,
+            "prompt_tokens": 831,
+            "eval_tokens": 1300,
+            "joules": 1399.325161592555
+          },
+          {
+            "task": "convert",
+            "model": "devstral-2-123b-instruct-2512",
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 1,
+            "prompt_tokens": 3554,
+            "eval_tokens": 1418,
+            "joules": 2225.6928359756607
+          },
+          {
+            "task": "goTester",
+            "model_assumed": true,
+            "executions": 4,
+            "failures": 4,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0
+          },
+          {
+            "task": "root",
+            "model_assumed": true,
+            "executions": 1,
+            "failures": 0,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0
+          },
+          {
+            "task": "testRecovery",
+            "model": "devstral-2-123b-instruct-2512",
+            "executions": 3,
+            "failures": 0,
+            "llm_calls": 3,
+            "prompt_tokens": 18333,
+            "eval_tokens": 4258,
+            "joules": 8706.992319090028,
+            "is_repair": true
+          },
+          {
+            "task": "testRecoveryBuild",
+            "model_assumed": true,
+            "executions": 3,
+            "failures": 0,
+            "llm_calls": 0,
+            "prompt_tokens": 0,
+            "eval_tokens": 0,
+            "joules": 0,
+            "is_repair": true
+          }
+        ],
+        "prompt_tokens": 22718,
+        "eval_tokens": 6976,
+        "compute_joules": 12332.010316658245,
+        "facility_joules": 12948.610832491158,
+        "co2e_grams": 1.3056515922761918,
+        "repair_joules": 8706.992319090028,
+        "tests_passed": 1,
+        "tests_failed": 2,
+        "shape_only_tests": 0,
+        "failure_kinds": {
+          "output mismatch": 2
+        }
+      }
+    ]
+  },
+  "count": 10,
+  "total_facility_joules": 22353.73167585823,
+  "mean_facility_joules": 2235.373167585823,
+  "median_facility_joules": 1934.5811284108136,
+  "total_co2e_grams": 2.2540012773157048,
+  "total_co2e_grams_market": 0,
+  "total_prompt_tokens": 35577,
+  "total_eval_tokens": 13103,
+  "repair_share": 0.11891365326065814,
+  "by_stage": [
+    {
+      "task": "convert",
+      "joules": 13413.388203085524,
+      "share": 0.6300539801347985,
+      "executions": 10,
+      "failures": 0,
+      "llm_calls": 10,
+      "is_repair": false
+    },
+    {
+      "task": "clean",
+      "joules": 5344.295395270127,
+      "share": 0.2510323666045432,
+      "executions": 10,
+      "failures": 0,
+      "llm_calls": 10,
+      "is_repair": false
+    },
+    {
+      "task": "testRecovery",
+      "joules": 2531.5846643664727,
+      "share": 0.11891365326065814,
+      "executions": 1,
+      "failures": 0,
+      "llm_calls": 1,
+      "is_repair": true
+    },
+    {
+      "task": "root",
+      "joules": 0,
+      "share": 0,
+      "executions": 10,
+      "failures": 0,
+      "llm_calls": 0,
+      "is_repair": false
+    },
+    {
+      "task": "testRecoveryBuild",
+      "joules": 0,
+      "share": 0,
+      "executions": 1,
+      "failures": 0,
+      "llm_calls": 0,
+      "is_repair": true
+    },
+    {
+      "task": "builder",
+      "joules": 0,
+      "share": 0,
+      "executions": 10,
+      "failures": 0,
+      "llm_calls": 0,
+      "is_repair": false
+    },
+    {
+      "task": "goTester",
+      "joules": 0,
+      "share": 0,
+      "executions": 11,
+      "failures": 1,
+      "llm_calls": 0,
+      "is_repair": false
+    }
+  ],
+  "by_bucket": [
+    {
+      "group": "A",
+      "count": 9,
+      "mean_joules": 2255.7375334238673,
+      "tests_passed": 25,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    },
+    {
+      "group": "B",
+      "count": 1,
+      "mean_joules": 2052.0938750434248,
+      "tests_passed": 4,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    }
+  ],
+  "by_aws_usage": [
+    {
+      "group": "non-aws",
+      "count": 10,
+      "mean_joules": 2235.373167585823,
+      "tests_passed": 29,
+      "tests_failed": 0,
+      "shape_only_tests": 0
+    }
+  ],
+  "break_even": {
+    "computed": 4,
+    "never_pays_back": [
+      "pf12",
+      "pf3",
+      "pf4",
+      "pf5",
+      "pf6",
+      "pf7"
+    ],
+    "per_function": {
+      "pf1": 3964336.1024147007,
+      "pf13": 8151703.662366983,
+      "pf2": 318471288.0984648,
+      "pf9": 11558.88945877844
+    },
+    "median": 6058019.882390842,
+    "min": 11558.88945877844,
+    "max": 318471288.0984648
+  }
+}

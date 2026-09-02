@@ -43,9 +43,20 @@ type runLogRecord struct {
 	// failed jobs were archived contain completed jobs only, so defaulting to
 	// false would retroactively mark every historical translation as a
 	// failure.
-	Completed *bool           `json:"completed,omitempty"`
-	Metrics   *domain.Metrics `json:"metrics,omitempty"`
-	Note      string          `json:"note,omitempty"`
+	Completed *bool `json:"completed,omitempty"`
+
+	// Skipped reports that the ex-ante prediction gate declined this function
+	// ([I10]) rather than the pipeline failing on it. Both are `completed:
+	// false`, but they are not the same event and must not share a
+	// denominator: a skip spent no LLM tokens, so counting it among the failed
+	// attempts would depress cost-per-success by adding a free failure.
+	//
+	// A plain bool (unlike Completed) because absent-means-false is the
+	// correct reading for every log written before the gate existed.
+	Skipped bool `json:"skipped,omitempty"`
+
+	Metrics *domain.Metrics `json:"metrics,omitempty"`
+	Note    string          `json:"note,omitempty"`
 }
 
 // runLog appends one JSON object per finished job to runs/<run-id>.jsonl.
@@ -172,12 +183,14 @@ func (rl *runLog) recordJob(req *domain.ConversionRequest, llmClient string) {
 
 	metrics := *req.Metrics
 	completed := req.Completed
+	skipped := metrics.Prediction != nil && metrics.Prediction.Skipped
 	rl.append(runLogRecord{
 		Type:       runLogJob,
 		JobID:      req.Id.String(),
 		FunctionID: metrics.FunctionID,
 		LLMClient:  llmClient,
 		Completed:  &completed,
+		Skipped:    skipped,
 		Metrics:    &metrics,
 	})
 }

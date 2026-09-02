@@ -36,3 +36,7 @@ runs/*
 !runs/batch-*.csv
 !runs/run-*.jsonl
 !runs/packages-*.zip
+
+# Python bytecode from evaluation/prediction's offline tooling
+__pycache__/
+*.pyc

@@ -89,6 +89,7 @@ The codebase follows Standard Go Project Layout with a thin entrypoint and inter
 | `/stop/{uuid}` | POST | - | `202 Accepted` if the job was queued or running<br/>`404 Not Found` if unknown or already finished | Cancel a queued or in-progress conversion so it stops spending further build/test/LLM resources. |
 | `/metrics` | GET | - | `200 OK` + JSON with metrics | Retrieve conversion processing metrics for all jobs. |
 | `/reconfigure` | POST | JSON body with `ConverterOptions` | `201 Created` on success<br/>`500 Internal Server Error` on failure | Reconfigure the conversion pipeline at runtime. |
+| `/predict` | POST | Multipart form with field `file` (same `.zip` as `/`) | `200 OK` + JSON `{function_id, score, threshold, translate, model, features}`<br/>`501 Not Implemented` when prediction is disabled (the default)<br/>Errors: `400`, `415`, `500` | Score an artifact's translatability **without translating it** — no job is queued and no LLM token is spent. The answer is the one the `predictGate` stage would act on, since both go through the same scorer. |
 
 ---
 
@@ -216,6 +217,52 @@ Enable it with `floci.enabled=true` (in a `/reconfigure` body) or
 `FLOCI_ENABLED=true`. See [docs/floci-integration.md](docs/floci-integration.md)
 for test-case format, the built-in S3/DynamoDB checkers, and how to add new
 assertion types.
+
+### Ex-ante prediction gate (optional, off by default)
+
+The `predictGate` stage scores an uploaded function's static feature vector
+*before the first LLM call* and can decline candidates it expects to fail. Like
+Floci it is fully opt-in: with `predict.enabled` unset the stage is a no-op and
+every existing measurement stays reproducible.
+
+The model is fitted offline (`evaluation/prediction/`, scikit-learn) and shipped
+as a JSON vector of coefficients, so `go.mod` gains no ML dependency and
+`internal/predictor` is a reader — the same separation `cmd/energy` keeps for its
+constants. `internal/predictor`'s parity test scores the whole corpus against
+scikit-learn's own probabilities and requires agreement to 1e-9, so the deployed
+classifier is provably the one that was evaluated.
+
+```sh
+# 1. export a model from the offline evaluation
+python3 evaluation/prediction/evaluate.py \
+    --dataset evaluation/prediction/dataset-20260831-190900.csv \
+    --export-model evaluation/prediction/model-20260831-190900.json
+
+# 2. run with the gate scoring every job but changing no outcome
+PREDICT_ENABLED=true PREDICT_MODEL=evaluation/prediction/model-20260831-190900.json \
+    go run ./cmd/refaas
+
+# 3. score an artifact without translating it
+curl -X POST -F file=@evaluation/evaluation_set/f1.zip http://localhost:8080/predict
+
+# or apply the shipped pipeline that includes the stage
+./scripts/reconfigure.sh scripts/predict.json
+```
+
+`PREDICT_ENFORCE=true` (or `predict.enforce`) makes a below-threshold score
+actually stop the job, which the pipeline reports as a `domain.PredictionSkip`
+and `cmd/energy` counts apart from failed attempts — a skip spent no tokens.
+**Leave enforcement off for any run whose numbers are meant to be comparable to
+the existing baselines**: an enforcing gate changes the denominator, and it
+destroys the "would this have succeeded?" evidence for exactly the functions it
+refuses. Scoring without enforcing records the decision either way, which is how
+a deployment grows the labelled corpus over time.
+
+The `predictGate` task must be a descendant of `pyScan` — it reads the vector
+that stage records rather than scanning again, which is what keeps its marginal
+cost the inference alone (~1.6 mJ against a translation's ~16 kJ). It fails
+closed rather than passing a job through when the model or the vector is
+missing.
 
 
 This will start the service running on port 8080. However, for isolation, it is recommended to run the service in a Docker container, see [Docker](#docker) for more details.

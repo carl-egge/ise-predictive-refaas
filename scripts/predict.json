@@ -1,0 +1,128 @@
+{
+  "_comment": [
+    "The evaluation run configuration WITH the ex-ante prediction gate ([I10]).",
+    "",
+    "Identical to scripts/benchmark.json except that a predictGate task sits between",
+    "pyScan and the first LLM stage, so the gate scores every job before a single",
+    "token is spent. It reads the vector pyScan already recorded rather than scanning",
+    "again, which is what makes its marginal cost the inference alone (~1.6 mJ, [I8]).",
+    "",
+    "IMPORTANT - enforce defaults to FALSE here on purpose. In this configuration the",
+    "gate scores and records every job and changes no outcome, so the run stays",
+    "directly comparable to every section-H baseline AND accumulates (score -> outcome)",
+    "rows. Turning enforcement on produces a different denominator and destroys the",
+    "evidence for exactly the functions it refuses; do it only when the point of the",
+    "run is to demonstrate the gate acting, and never for a baseline.",
+    "",
+    "Requires: predict.enabled true and a model exported by",
+    "  python3 evaluation/prediction/evaluate.py ... --export-model evaluation/prediction/model-<run>.json",
+    "",
+    "Apply with: ./scripts/reconfigure.sh scripts/predict.json"
+  ],
+  "LLMClient": "chatai",
+  "options": {
+    "model_name": "devstral-2-123b-instruct-2512",
+    "temperature": 0.1,
+    "top_p": 0.8,
+    "num_ctx": 32768
+  },
+  "tasks": [
+    {
+      "_comment": "pyScan is required here, unlike the dev pipeline: a benchmark job without a feature vector is a row [I4] cannot use, and discovering that after a 3-hour run is worse than failing fast.",
+      "id": "root",
+      "task": "pyScan",
+      "task_args": {
+        "required": true
+      },
+      "maxRetryCount": 1,
+      "next": [
+        "gate"
+      ]
+    },
+    {
+      "_comment": "Must be a descendant of pyScan: the gate reads the recorded feature vector and fails closed if there is none.",
+      "id": "gate",
+      "task": "predictGate",
+      "maxRetryCount": 1,
+      "next": [
+        "clean"
+      ]
+    },
+    {
+      "id": "clean",
+      "task": "cleaner",
+      "maxRetryCount": 2,
+      "next": [
+        "convert"
+      ],
+      "validation": "canCompile"
+    },
+    {
+      "id": "convert",
+      "task": "coder",
+      "task_args": {
+        "reader": "go"
+      },
+      "maxRetryCount": 2,
+      "validation": "canCompile",
+      "next": [
+        "builder"
+      ]
+    },
+    {
+      "id": "builder",
+      "task": "goBuilder",
+      "canApply": "canCompile",
+      "recovery": "gollmRecovery",
+      "maxRetryCount": 4,
+      "next": [
+        "goTester"
+      ]
+    },
+    {
+      "id": "gollmRecovery",
+      "task": "fixer",
+      "canApply": "canCompile",
+      "task_args": {
+        "reader": "go",
+        "temperature": 0.5,
+        "top_p": 0.95
+      },
+      "maxRetryCount": 6
+    },
+    {
+      "_comment": "testRouter, not goTester: 40 of the 95 evaluation_set functions declare setup/sideEffects and can only be validated through the Floci route. Naming goTester directly would send them to the black-box tester, which ignores those assertions with a warning and reports a pass that validated nothing.",
+      "id": "goTester",
+      "task": "testRouter",
+      "canApply": "canCompile",
+      "maxRetryCount": 5,
+      "recovery": "testRecovery"
+    },
+    {
+      "id": "testRecovery",
+      "task": "realign",
+      "canApply": "canCompile",
+      "task_args": {
+        "reader": "go",
+        "temperature": 0.5,
+        "top_p": 0.95
+      },
+      "maxRetryCount": 3,
+      "next": [
+        "testRecoveryBuild"
+      ]
+    },
+    {
+      "id": "testRecoveryBuild",
+      "canApply": "canCompile",
+      "task": "goBuilder",
+      "recovery": "gollmRecovery",
+      "maxRetryCount": 3
+    }
+  ],
+  "predict": {
+    "enabled": true,
+    "model": "evaluation/prediction/model-20260831-190900.json",
+    "enforce": false
+  }
+}

@@ -21,6 +21,13 @@ type Report struct {
 	// Nil when the run logs contain none.
 	FailedAttempts *FailedAttempts `json:"failed_attempts,omitempty"`
 
+	// Skipped accounts for jobs the ex-ante prediction gate declined ([I10]).
+	// Kept apart from FailedAttempts because a skip is a decision, not a
+	// failure: it spent no tokens, and folding it in would add a free failure
+	// that flatters every cost-per-success figure. Nil when the run logs
+	// contain none, which is every run made without the gate.
+	Skipped *SkippedAttempts `json:"skipped,omitempty"`
+
 	Count                int     `json:"count"`
 	TotalFacilityJoules  float64 `json:"total_facility_joules"`
 	MeanFacilityJoules   float64 `json:"mean_facility_joules"`
@@ -114,10 +121,11 @@ type BreakEvenReport struct {
 // separately by splitFailed. Both are kept, because the energy they cost was
 // really spent - see FailedAttempts.
 func Build(cfg *Config, jobs []TranslationEnergy, runtime map[string]RuntimeMeasurement) *Report {
-	translations, failed := splitFailed(jobs)
+	translations, failed, skipped := splitFailed(jobs)
 
 	r := &Report{Translations: translations, Count: len(translations)}
 	r.FailedAttempts = summariseFailed(failed)
+	r.Skipped = summariseSkipped(skipped)
 	if len(translations) == 0 {
 		// Nothing completed: the failure summary is the only result there is,
 		// and its per-success figure has no denominator.
@@ -211,17 +219,45 @@ func Build(cfg *Config, jobs []TranslationEnergy, runtime map[string]RuntimeMeas
 	return r
 }
 
-// splitFailed partitions costed jobs into completed translations and failed
-// attempts, preserving input order within each.
-func splitFailed(jobs []TranslationEnergy) (completed, failed []TranslationEnergy) {
+// splitFailed partitions costed jobs into completed translations, failed
+// attempts and gate-declined candidates, preserving input order within each.
+//
+// The skip test comes first because a skipped job is never completed: checking
+// completion first would be correct today but would silently reclassify skips
+// the moment a gate is ever placed after a stage that can produce output.
+func splitFailed(jobs []TranslationEnergy) (completed, failed, skipped []TranslationEnergy) {
 	for _, j := range jobs {
-		if j.Completed {
+		switch {
+		case j.Skipped:
+			skipped = append(skipped, j)
+		case j.Completed:
 			completed = append(completed, j)
-			continue
+		default:
+			failed = append(failed, j)
 		}
-		failed = append(failed, j)
 	}
-	return completed, failed
+	return completed, failed, skipped
+}
+
+// SkippedAttempts accounts for candidates the prediction gate declined.
+type SkippedAttempts struct {
+	Count          int      `json:"count"`
+	FunctionIDs    []string `json:"function_ids"`
+	FacilityJoules float64  `json:"facility_joules"`
+}
+
+// summariseSkipped totals what the gate declined. Returns nil when there were
+// none, so a run made without the gate prints no section at all.
+func summariseSkipped(skipped []TranslationEnergy) *SkippedAttempts {
+	if len(skipped) == 0 {
+		return nil
+	}
+	out := &SkippedAttempts{Count: len(skipped), FunctionIDs: make([]string, 0, len(skipped))}
+	for _, s := range skipped {
+		out.FunctionIDs = append(out.FunctionIDs, s.FunctionID)
+		out.FacilityJoules += s.FacilityJoules
+	}
+	return out
 }
 
 // summariseFailed totals the energy spent on jobs that produced no
@@ -365,6 +401,7 @@ func (r *Report) Write(w io.Writer, cfg *Config) {
 	fmt.Fprintln(w)
 
 	r.writeFailedAttempts(w)
+	r.writeSkipped(w)
 
 	fmt.Fprintln(w, "By stage:")
 	fmt.Fprintf(w, "  %-20s %12s %7s %6s %6s %6s\n", "task", "energy", "share", "execs", "fails", "calls")
@@ -420,6 +457,24 @@ func (r *Report) writeFailedAttempts(w io.Writer) {
 		formatJoules(f.FacilityJoules), f.CO2eGrams, f.ShareOfTotalSpend*100)
 	fmt.Fprintf(w, "  cost per successful translation, failures amortized in: %s\n\n",
 		formatJoules(f.JoulesPerSuccess))
+}
+
+// writeSkipped reports what the ex-ante prediction gate declined ([I10]).
+//
+// It prints nothing at all when no gate was active, so every run log made
+// before the gate existed produces a report byte-identical to the one it
+// produced before.
+func (r *Report) writeSkipped(w io.Writer) {
+	s := r.Skipped
+	if s == nil {
+		return
+	}
+	fmt.Fprintf(w, "Declined by the prediction gate: %d (never attempted; not counted as failures)\n", s.Count)
+	fmt.Fprintf(w, "  functions:     %s\n", strings.Join(s.FunctionIDs, ", "))
+	fmt.Fprintf(w, "  energy spent:  %s\n", formatJoules(s.FacilityJoules))
+	fmt.Fprintf(w, "  NOTE: these functions were never translated, so this run cannot say whether\n")
+	fmt.Fprintf(w, "        they would have succeeded. Run with the gate scoring but not enforcing\n")
+	fmt.Fprintf(w, "        to keep that question answerable.\n\n")
 }
 
 func writeGroups(w io.Writer, title string, groups []GroupAggregate) {

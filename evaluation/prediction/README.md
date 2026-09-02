@@ -49,12 +49,44 @@ python3 evaluation/prediction/build_dataset.py \
     --runtime evaluation/runtime-20260831-190900.json \
     --run-id  20260831-190900
 
-# 4. baselines, models, energy sweep  [I5]/[I6]/[I7]
+# 3b. the same table for the external corroboration corpus
+go run ./cmd/pyscan evaluation/function_set/*.zip \
+    > evaluation/prediction/features-functionset.csv \
+    2> evaluation/prediction/features-functionset.stderr.txt
+go run ./cmd/energy -json -runtime evaluation/runtime-functionset.json \
+    runs/run-20260831-084331.jsonl \
+    > evaluation/prediction/energy-functionset-20260831.json
+python3 evaluation/prediction/build_dataset.py \
+    --features evaluation/prediction/features-functionset.csv \
+    --run-log runs/run-20260831-084331.jsonl \
+    --energy  evaluation/prediction/energy-functionset-20260831.json \
+    --runtime evaluation/runtime-functionset.json \
+    --run-id  functionset-20260831
+
+# 3c. confirm the two corpora share no near-duplicate group before using 3b as "external"
+go run ./cmd/pyscan evaluation/evaluation_set/*.zip evaluation/function_set/*.zip \
+    2>/dev/null | cut -d, -f1,5   # no group_id may contain both an f* and a pf*
+
+# 4. baselines, models, energy sweep, breakdowns  [I5]/[I6]/[I7]
 python3 evaluation/prediction/evaluate.py \
     --dataset evaluation/prediction/dataset-20260831-190900.csv \
-    --horizon 1e6 --permutations 200 \
+    --horizon 1e6 --permutations 200 --breakdown \
+    --external evaluation/prediction/dataset-functionset-20260831.csv \
     --json-out evaluation/prediction/results-20260831-190900.json \
     | tee evaluation/prediction/results-20260831-190900.txt
+
+# 4b. export the shipped model for internal/predictor  [I10]
+python3 evaluation/prediction/evaluate.py \
+    --dataset evaluation/prediction/dataset-20260831-190900.csv \
+    --horizon 1e6 \
+    --export-model evaluation/prediction/model-20260831-190900.json
+
+# 4c. refresh the Go-side parity fixture whenever the model is re-exported
+cp evaluation/prediction/model-20260831-190900.json internal/predictor/testdata/model.json
+python3 evaluation/prediction/export_parity.py \
+    --dataset evaluation/prediction/dataset-20260831-190900.csv \
+    --model   evaluation/prediction/model-20260831-190900.json
+go test ./internal/predictor/...   # asserts the Go reader matches scikit-learn to 1e-9
 
 # 5. the predictor's own energy, in energy.config.json's units  [I8]
 go build -o /tmp/pyscan ./cmd/pyscan
@@ -77,6 +109,10 @@ steps 3 and 4 need only the two Python packages.
 - **Two operating points are reported** because they optimise different things: `balanced`
   maximises balanced accuracy (the gate as a feasibility classifier) and `energy` maximises
   net joules at the stated horizon (the gate as an energy instrument). They differ a lot.
+- **`function_set` is corroboration, never the headline.** n = 14, its expectations were never
+  executed against the Python originals, and its run used a slightly different
+  `scripts/benchmark.json` (repair-stage `temperature`/`top_p`) from a dirty tree. It is a
+  cross-corpus *and* cross-configuration test.
 - **Labels are single-run and their stability is unmeasured** ([I1]). `f50`/`f59` are
   structurally identical source with opposite labels, so the ceiling is demonstrably below
   100% — see [I11]'s closure note for the caveat that their fixture sets also differ.

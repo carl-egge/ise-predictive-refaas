@@ -239,11 +239,22 @@ func writeCSV(rows []row) error {
 
 // formatValue keeps integers integral in the CSV so the table reads cleanly
 // and a downstream parser is not forced to treat every count as a float.
+//
+// Non-integers use 'g' with precision -1: the shortest decimal that round-trips
+// back to the same float64. This used to be six fixed decimals, which read more
+// tidily and was wrong in a way that only shows up at deployment. A model is
+// trained on the values in this file but scored, in the service, against the
+// values internal/pyscan produces directly — so any rounding here is a
+// train/serve skew. Measured on the evaluation_set model it moved probabilities
+// by ~1e-7 (via cc_per_lloc and halstead_difficulty, whose sixth decimal is
+// significant), which is far too small to notice and quite large enough to flip
+// a candidate sitting on the threshold. Exactness costs a few characters per
+// row.
 func formatValue(v float64) string {
 	if v == float64(int64(v)) {
 		return strconv.FormatInt(int64(v), 10)
 	}
-	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(v, 'f', 6, 64), "0"), ".")
+	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
 func writeJSON(rows []row) error {

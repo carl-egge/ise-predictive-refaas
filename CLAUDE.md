@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ReFaaS converts serverless functions from one language to another (currently Python → Go) using a configurable, LLM-assisted pipeline. A client uploads a `.zip` containing the source function and test fixtures; a background worker runs it through a pipeline of LLM translation and build/test validation stages and the converted package can be downloaded once the job completes.
 
-This is a research codebase (thesis project). The two open problems it's built around: (1) end-to-end validation that translated code is correct for non-trivial, side-effecting workloads, and (2) prediction mechanisms to avoid infeasible or energy-ineffective translation attempts before spending LLM/build time on them. The **predictor itself is not implemented**: there is no model, no scoring endpoint, no gate — don't assume one exists unless you find it in code. What *does* exist is its input side, `internal/pyscan` (the `pyScan` stage), which computes the deterministic ex-ante feature vector and records it on every job. Section I of `TODO.md` holds the plan and the settled decisions.
+This is a research codebase (thesis project). The two open problems it's built around: (1) end-to-end validation that translated code is correct for non-trivial, side-effecting workloads, and (2) prediction mechanisms to avoid infeasible or energy-ineffective translation attempts before spending LLM/build time on them. The predictor **now exists and is off by default** (2026-09-02, [I10]): `internal/predictor` reads a JSON model exported from `evaluation/prediction/`, the `predictGate` stage (`internal/pipeline/predictgate.go`) scores a job before the first LLM call, and `POST /predict` scores an artifact without translating it — all inert unless `predict.enabled`/`PREDICT_ENABLED` is set. Its input side is `internal/pyscan` (the `pyScan` stage), which computes the deterministic ex-ante feature vector and records it on every job. Section I of `TODO.md` holds the plan, the settled decisions and the measured results.
 
 **Verify before claiming.** Always grep for a symbol/converter/endpoint before describing it as existing — `docs/floci.md` in particular is third-party Floci reference documentation, not a description of this repo's own code. Note that `internal/floci` *does* now exist: it is the optional, opt-in Floci-backed Lambda integration testing stage (`flociTester` converter), gated by `ConverterOptions.Floci.Enabled` / `FLOCI_ENABLED`; see `docs/floci-integration.md`. It is a no-op unless explicitly enabled, so it never affects default translation/build/test runs.
 
@@ -58,11 +58,19 @@ cmd/runtime/           analysis tool: measures the Go translation against the Py
 cmd/pyscan/           analysis tool: artifact(s) -> feature CSV/JSON for the prediction
                        dataset, plus the near-duplicate leakage audit (group_id).
                        Never runs during a conversion.
+evaluation/prediction/ offline analysis tooling (Python + scikit-learn, never part of
+                       `go build`): builds the feature/label/cost table, replays the gate
+                       counterfactually against measured energy, and exports the shipped
+                       model as JSON. Never runs during a conversion.
 cmd/refaas/main.go
-  -> internal/service       HTTP API, job queue, background worker, metrics, reconfigure
+  -> internal/service       HTTP API, job queue, background worker, metrics, reconfigure,
+                            POST /predict (score an artifact without translating it)
        -> internal/pipeline Runner: holds compiled Pipeline + LLM Client, executes ConversionRequests
             -> internal/pyscan       deterministic Python AST analysis (pyScan stage): prompt
                                      hints + the ex-ante feature vector for prediction
+            -> internal/predictor    reads the exported JSON model and scores a feature
+                                     vector (predictGate stage); no ML dependency, and
+                                     off unless PREDICT_ENABLED / predict.enabled
             -> internal/translator   LLM-backed Converters (cleaner/coder/fixer/realign)
             -> internal/builder      build + test Converters/validators
             -> internal/llmconnector LLM Client implementations (ollama, gemini, chatai)
@@ -117,7 +125,7 @@ cmd/refaas/main.go
 - **Cold vs. steady is a two-point difference**, not a clock inside the harness: the same executable runs with 1 payload and with N, and `per_invocation = (T(N)-T(1))/(N-1)`. An in-harness clock would compare Go's runtime clock against Python's `time` module; the difference method also charges import-time/module-level work to startup, where Lambda charges it. Minimum of repetitions, never the mean.
 - **N escalates until the difference clears the measured repetition spread.** Most of this corpus does microseconds of work against a millisecond of startup, so at a fixed N the naive answer is a per-invocation cost of *zero* — which would enter `runtime.json` as "free to run" and make `N*` infinite. Unresolvable functions are reported `UNRESOLVED` and **omitted** from `runtime.json` (`cmd/energy` names a missing function, but would cost a zero as free).
 - **Fixture `setup` is applied before measuring** (`cmd/runtime/provision.go` → `floci.ApplySetup`): 40 of the 95 evaluation_set functions declare setup, and invoking one against an empty emulator measures its *error path* — the fastest path through it — which biases the comparison toward whichever side fails faster rather than merely losing a data point. Setup runs once per function, outside the timed region (the actions are idempotent, and a bucket creation charged to invocation 1 would land in the startup term). The emulator is probed with `Clients.Ping` before any function is measured, so a run cannot get an hour in before discovering it is down. `-no-provision` skips those functions explicitly instead.
-- **Three meters and no fabricated joules**: `rapl` (powercap sysfs, no root or perf needed — the primary), `perf`, and `time`. The `time` meter reports **no energy at all** unless `-watts` states a package power, and then tags every figure `energy_derived`. **Neither RAPL nor perf works under WSL2**, so measured energy needs a bare-metal Linux host; that run is still outstanding, and no absolute joule figure or `N*` should be quoted until it happens.
+- **Three meters and no fabricated joules**: `rapl` (powercap sysfs, no root or perf needed — the primary), `perf`, and `time`. The `time` meter reports **no energy at all** unless `-watts` states a package power, and then tags every figure `energy_derived`. **Neither RAPL nor perf works under WSL2**, so measured energy needs a bare-metal Linux host. **That run has since happened** (2026-08-31, run id `20260831-190900`, host `carl-eikermann-UX310UAK`): `evaluation/runtime-report-20260831-190900.json` records `meter: rapl` and `energy_derived: false`, so the joule figures and `N*` derived from it are measured rather than derived. Check that pair of fields before quoting any runtime figure — the older `runtime-report.json` files are not all measured.
 - First result (paper set, derived energy): Go is **1.9× median steady state but 15.0× median cold start**. `runtime.json` carries the *steady-state* figure deliberately — break-even concerns a deployed function, which at `N*` invocations is overwhelmingly warm — with the cold figures in `-report`.
 
 ### Build/test stages (`internal/builder`)

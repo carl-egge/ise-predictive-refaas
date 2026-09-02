@@ -201,6 +201,56 @@ type Metrics struct {
 	// re-scanning archived artifacts and hoping the scanner has not changed
 	// in between. Nil for jobs whose scan did not run.
 	Features *FeatureVector `json:"features,omitempty"`
+
+	// Prediction is the ex-ante gate's score for this job, recorded whenever
+	// a model was loaded - including when the gate was configured to score
+	// without acting on the result, and including when it said skip.
+	//
+	// Recording it unconditionally is the point ([I10]): a job that carries
+	// both a score and an outcome is one more labelled row, so the corpus
+	// grows as a by-product of running the service rather than requiring
+	// another 95-function pass. It is also what keeps "would this have
+	// succeeded?" answerable after a gate starts refusing work - without it,
+	// enabling the gate would destroy the very data needed to check it.
+	Prediction *PredictionRecord `json:"prediction,omitempty"`
+}
+
+// PredictionRecord is what the run log keeps about one gate decision.
+//
+// Skipped records whether the gate actually stopped the job, which is not the
+// same as !Translate: the gate can be configured to score and report without
+// enforcing, and that configuration is the one every existing section-H
+// baseline must keep running under.
+type PredictionRecord struct {
+	Score     float64 `json:"score"`
+	Threshold float64 `json:"threshold"`
+	Translate bool    `json:"translate"`
+	Skipped   bool    `json:"skipped"`
+	Model     string  `json:"model,omitempty"`
+}
+
+// GetFeatures returns the recorded feature vector, or nil when the scan did
+// not run. Nil-safe on the receiver so a caller need not know whether this
+// request carries metrics at all.
+func (m *Metrics) GetFeatures() *FeatureVector {
+	if m == nil {
+		return nil
+	}
+	return m.Features
+}
+
+// RecordPrediction attaches the gate's score to the run's metrics.
+func (m *Metrics) RecordPrediction(score, threshold float64, translate, skipped bool, model string) {
+	if m == nil {
+		return
+	}
+	m.Prediction = &PredictionRecord{
+		Score:     score,
+		Threshold: threshold,
+		Translate: translate,
+		Skipped:   skipped,
+		Model:     model,
+	}
 }
 
 // FeatureVector is one function's static feature vector, stored with its

@@ -1,5 +1,10 @@
 package domain
 
+import (
+	"errors"
+	"fmt"
+)
+
 // TestFailure kinds. The values are human-readable on purpose - they appear
 // verbatim in error summaries and in the {{ .failures }} evidence block that
 // repair/align prompts consume.
@@ -125,4 +130,36 @@ func (e LLMError) Error() string {
 // Unwrap exposes the wrapped error - see TestingError.Unwrap.
 func (e LLMError) Unwrap() error {
 	return e.err
+}
+
+// PredictionSkip reports that the ex-ante gate declined to translate a
+// function ([I10]). It is a distinct type because it is a *decision*, not a
+// failure: the pipeline did not break, it chose not to spend an LLM budget on
+// a candidate it scored below the operating point.
+//
+// Analysis depends on that separation. A run log that recorded a skip as an
+// ordinary error would make the gate look like it caused failures, and
+// cmd/energy would have to count a job that cost nothing among the failed
+// attempts whose tokens it amortizes over the successes.
+type PredictionSkip struct {
+	Score     float64
+	Threshold float64
+	Model     string
+}
+
+// NewPredictionSkip returns a PredictionSkip for the given score.
+func NewPredictionSkip(score, threshold float64, model string) PredictionSkip {
+	return PredictionSkip{Score: score, Threshold: threshold, Model: model}
+}
+
+func (e PredictionSkip) Error() string {
+	return fmt.Sprintf(
+		"prediction gate declined this function: score %.3f is below the threshold %.3f (model %s)",
+		e.Score, e.Threshold, e.Model)
+}
+
+// IsPredictionSkip reports whether err is (or wraps) a gate decision to skip.
+func IsPredictionSkip(err error) bool {
+	var skip PredictionSkip
+	return errors.As(err, &skip)
 }

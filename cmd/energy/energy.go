@@ -118,6 +118,11 @@ type TranslationEnergy struct {
 	// such claims.
 	ShapeOnlyTests int            `json:"shape_only_tests"`
 	FailureKinds   map[string]int `json:"failure_kinds,omitempty"`
+
+	// Skipped marks a job the prediction gate declined ([I10]). Such a job is
+	// not completed, but it is not a failed attempt either - see
+	// JobRecord.IsSkipped.
+	Skipped bool `json:"skipped,omitempty"`
 }
 
 // Evaluate costs one archived job record.
@@ -136,6 +141,7 @@ func Evaluate(cfg *Config, rec JobRecord) TranslationEnergy {
 		FunctionID:   rec.FunctionID,
 		JobID:        rec.JobID,
 		Completed:    rec.IsCompleted(),
+		Skipped:      rec.IsSkipped(),
 		FailureKinds: map[string]int{},
 	}
 	if out.FunctionID == "" {

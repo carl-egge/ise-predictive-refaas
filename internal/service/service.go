@@ -97,6 +97,7 @@ func MakeConverterService() error {
 	r.Path("/").Methods(http.MethodPost).HandlerFunc(sv.uploadHandler)
 	r.Path("/metrics").Methods(http.MethodGet).HandlerFunc(sv.metricsHandler)
 	r.Path("/reconfigure").Methods(http.MethodPost).HandlerFunc(sv.reconfigure)
+	r.Path("/predict").Methods(http.MethodPost).HandlerFunc(sv.predictHandler)
 	r.Path("/stop/{uuid}").Methods(http.MethodPost).HandlerFunc(sv.stopHandler)
 	r.Path("/{uuid}").Methods(http.MethodHead, http.MethodGet).HandlerFunc(sv.pollHandler)
 
@@ -275,31 +276,38 @@ func (service *ConverterService) pollHandler(w http.ResponseWriter, r *http.Requ
 	http.NotFound(w, r)
 }
 
-// uploadHandler accepts a multipart form with a .zip file and enqueues it for conversion.
-func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Request) {
+// readUpload parses the multipart .zip upload both POST / and POST /predict
+// accept, reads it into a package and validates it, writing the appropriate
+// error response itself. It returns ok=false when it has already responded.
+//
+// Shared by the two handlers so a package that /predict scores is exactly a
+// package / would have accepted: an endpoint that scored artifacts the
+// pipeline would have rejected would report on inputs that can never be
+// translated.
+func (service *ConverterService) readUpload(w http.ResponseWriter, r *http.Request) (*domain.DeploymentPackage, string, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
 		http.Error(w, "Error parsing form", http.StatusBadRequest)
-		return
+		return nil, "", false
 	}
 
 	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, "File not found in request", http.StatusBadRequest)
-		return
+		return nil, "", false
 	}
 	defer file.Close()
 
 	if len(fileHeader.Filename) < 4 || fileHeader.Filename[len(fileHeader.Filename)-4:] != ".zip" {
 		http.Error(w, "Only .zip files are allowed", http.StatusUnsupportedMediaType)
-		return
+		return nil, "", false
 	}
 
 	fileData, err := io.ReadAll(file)
 	if err != nil {
 		http.Error(w, "Error reading file", http.StatusInternalServerError)
-		return
+		return nil, "", false
 	}
 
 	dp, err := inputhandler.ReadFromBytes(fileData)
@@ -307,11 +315,11 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 		// malformed archives (bad zip, multiple root source files) are client
 		// errors and should say why instead of a generic 500.
 		http.Error(w, fmt.Sprintf("Error reading file: %v", err), http.StatusBadRequest)
-		return
+		return nil, "", false
 	}
 	if dp == nil {
 		http.Error(w, "Error reading file", http.StatusInternalServerError)
-		return
+		return nil, "", false
 	}
 
 	// Reject unusable packages before the pipeline spends any LLM or build
@@ -320,10 +328,72 @@ func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Re
 	if err := inputhandler.Validate(dp, service.validateOptions()); err != nil {
 		log.Warnf("rejecting upload %q: %v", fileHeader.Filename, err)
 		http.Error(w, fmt.Sprintf("Invalid package: %v", err), http.StatusBadRequest)
+		return nil, "", false
+	}
+
+	return dp, fileHeader.Filename, true
+}
+
+// predictHandler scores an uploaded artifact without translating it ([I10]).
+//
+// It is the cheap way to screen a corpus and the natural way to demonstrate the
+// gate: the answer is the same one the pipeline's predictGate stage would act
+// on, because both go through Runner.ScorePackage. It never enqueues a job and
+// never spends an LLM token.
+func (service *ConverterService) predictHandler(w http.ResponseWriter, r *http.Request) {
+	dp, filename, ok := service.readUpload(w, r)
+	if !ok {
 		return
 	}
 
-	request := pipeline.MakeConversionRequest(dp, fileHeader.Filename)
+	service.runnerMu.Lock()
+	runner := service.converter
+	service.runnerMu.Unlock()
+	if runner == nil {
+		http.Error(w, "no converter configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	prediction, features, err := runner.ScorePackage(dp)
+	if err != nil {
+		// A disabled gate is a configuration state, not a client error, and it
+		// is the default — so say so with a 501 rather than a 400 that implies
+		// the upload was at fault.
+		status := http.StatusInternalServerError
+		if !runner.PredictEnabled() {
+			status = http.StatusNotImplemented
+		}
+		log.Warnf("predict: scoring %q failed: %v", filename, err)
+		http.Error(w, fmt.Sprintf("prediction unavailable: %v", err), status)
+		return
+	}
+
+	var meta *domain.FunctionMeta
+	if dp != nil {
+		meta = dp.Meta
+	}
+	body := map[string]any{
+		"function_id": domain.ResolveFunctionID(meta, filename, uuid.Nil),
+		"score":       prediction.Score,
+		"threshold":   prediction.Threshold,
+		"translate":   prediction.Translate,
+		"model":       prediction.Model,
+		"features":    features,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		log.Warnf("predict: writing response for %q failed: %v", filename, err)
+	}
+}
+
+// uploadHandler accepts a multipart form with a .zip file and enqueues it for conversion.
+func (service *ConverterService) uploadHandler(w http.ResponseWriter, r *http.Request) {
+	dp, filename, ok := service.readUpload(w, r)
+	if !ok {
+		return
+	}
+
+	request := pipeline.MakeConversionRequest(dp, filename)
 
 	jobCtx, cancel := context.WithCancel(context.Background())
 	service.mutex.Lock()

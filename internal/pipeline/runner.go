@@ -26,6 +26,11 @@ type Runner struct {
 	// importing internal/floci, which stays an optional, blank-imported
 	// dependency.
 	floci FlociConfig
+	// predict is the prediction-gate configuration this Runner was built or
+	// reconfigured with, held here for the same reason as floci: the stage
+	// asks the Runner rather than re-reading the environment, so a
+	// /reconfigure toggle takes effect on the next job.
+	predict PredictConfig
 }
 
 // ctx returns the Runner's context, falling back to Background when it has
@@ -82,6 +87,17 @@ func (cc *Runner) FlociRegion() string {
 	return cc.floci.Region
 }
 
+// PredictEnabled reports whether the ex-ante prediction gate is turned on for
+// this Runner ([I10]). Off unless explicitly configured.
+func (cc *Runner) PredictEnabled() bool {
+	return cc.predict.Enabled
+}
+
+// PredictConfiguration returns the gate's configuration.
+func (cc *Runner) PredictConfiguration() PredictConfig {
+	return cc.predict
+}
+
 // WorkingDir returns the current working directory used for builds/tests.
 func (cc *Runner) WorkingDir() string {
 	return cc.workingDir
@@ -116,7 +132,43 @@ type ConverterOptions struct {
 	// no-op, so the feature is fully opt-in.
 	Floci FlociConfig `json:"floci,omitempty" yaml:"floci,omitempty"`
 
+	// Predict configures the optional ex-ante prediction gate ([I10]). Off by
+	// default and gated exactly like Floci: a pipeline with an active gate
+	// produces a different denominator, so every baseline recorded in section
+	// H must remain reproducible without touching this field. When disabled,
+	// the "predictGate" stage - if present in the pipeline - is a no-op.
+	Predict PredictConfig `json:"predict,omitempty" yaml:"predict,omitempty"`
+
 	CompiledPipeline *Pipeline `json:"compiledPipeline,omitempty"`
+}
+
+// PredictConfig holds the prediction gate's configuration. Like FlociConfig it
+// lives in the pipeline package (which imports no model code) so it can be
+// carried on ConverterOptions and handed to the stage without a cycle.
+type PredictConfig struct {
+	// Enabled turns the stage on at all. When false the stage does nothing -
+	// it does not even score - so a disabled gate costs zero.
+	Enabled bool `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+
+	// ModelPath is the exported JSON model (evaluation/prediction/model-*.json).
+	ModelPath string `json:"model,omitempty" yaml:"model,omitempty"`
+
+	// Enforce decides whether a below-threshold score actually stops the job.
+	// It is separate from Enabled because the two are genuinely different
+	// deployments, and the safer one must be reachable: with Enforce false the
+	// gate scores every job and records the score without changing any
+	// outcome, which is how a deployment collects labelled rows for the score
+	// it would have acted on. Turning enforcement on destroys exactly that
+	// evidence for the functions it refuses.
+	Enforce bool `json:"enforce,omitempty" yaml:"enforce,omitempty"`
+
+	// Threshold overrides the operating point carried in the model file.
+	// Negative (the zero value is 0, so this uses a pointer) means "use the
+	// model's own". Overriding it is a supported deployment knob but not a
+	// neutral one: the model's threshold was fitted inside the training folds
+	// ([I7]), and a hand-picked replacement is not covered by any number in
+	// the evaluation.
+	Threshold *float64 `json:"threshold,omitempty" yaml:"threshold,omitempty"`
 }
 
 // FlociConfig holds the configuration for the optional Floci integration. It
@@ -173,6 +225,33 @@ func (co *ConverterOptions) setDefaults() {
 		}
 	}
 	co.Floci.applyEnvDefaults()
+	co.Predict.applyEnvDefaults()
+}
+
+// applyEnvDefaults fills the prediction gate's config from the environment when
+// the caller did not set values explicitly: PREDICT_ENABLED (true/1),
+// PREDICT_MODEL (path to the exported model) and PREDICT_ENFORCE (true/1).
+//
+// PREDICT_THRESHOLD is deliberately *not* read from the environment. The
+// operating point is a fitted quantity that travels with the model file; making
+// it an ambient variable invites it to be tuned on whatever data is at hand,
+// which is the one move [I7] identifies as invalidating the whole evaluation.
+// A deployment that really needs a different point sets it in the
+// /reconfigure body, where it is explicit and recorded.
+func (pc *PredictConfig) applyEnvDefaults() {
+	if !pc.Enabled {
+		if v := os.Getenv("PREDICT_ENABLED"); v == "true" || v == "1" {
+			pc.Enabled = true
+		}
+	}
+	if pc.ModelPath == "" {
+		pc.ModelPath = os.Getenv("PREDICT_MODEL")
+	}
+	if !pc.Enforce {
+		if v := os.Getenv("PREDICT_ENFORCE"); v == "true" || v == "1" {
+			pc.Enforce = true
+		}
+	}
 }
 
 // applyEnvDefaults fills the Floci config from environment variables when the
@@ -237,6 +316,7 @@ func MakeCodeConverter(ops *ConverterOptions) (*Runner, error) {
 		pipeline: pipeline,
 		client:   apiClient,
 		floci:    ops.Floci,
+		predict:  ops.Predict,
 	}, nil
 }
 
@@ -301,6 +381,7 @@ func (cc *Runner) Reconfigure(ops *ConverterOptions) error {
 		cc.pipeline = ops.CompiledPipeline
 		cc.client = apiClient
 		cc.floci = ops.Floci
+		cc.predict = ops.Predict
 		return nil
 	}
 
@@ -317,6 +398,7 @@ func (cc *Runner) Reconfigure(ops *ConverterOptions) error {
 	cc.pipeline = pipeline
 	cc.client = apiClient
 	cc.floci = ops.Floci
+	cc.predict = ops.Predict
 
 	return nil
 }

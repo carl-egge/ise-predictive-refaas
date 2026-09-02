@@ -22,6 +22,7 @@ var shippedConfigs = []string{
 	filepath.Join("..", "..", "scripts", "benchmark.json"),
 	filepath.Join("..", "..", "scripts", "chatai.json"),
 	filepath.Join("..", "..", "scripts", "summary-pipeline.json"),
+	filepath.Join("..", "..", "scripts", "predict.json"),
 }
 
 func loadConfig(t *testing.T, path string) *ConverterOptions {
@@ -116,5 +117,81 @@ func TestBenchmarkConfigIsFitForTheEvaluationRun(t *testing.T) {
 	const costedModel = "devstral-2-123b-instruct-2512"
 	if got, _ := opts.Options["model_name"].(string); got != costedModel {
 		t.Errorf("model_name = %q, want %q - evaluation/energy.config.json's coefficients are derived for that model; change both together or not at all", got, costedModel)
+	}
+}
+
+// TestPredictConfigGatesAfterPyScan pins the two properties scripts/predict.json
+// exists to demonstrate, both of which are silent when broken.
+//
+// The gate must be a descendant of pyScan (it reads the vector that stage
+// records, and a gate placed before it would fail every job), and it must ship
+// with enforcement OFF - an enforcing benchmark config would produce a
+// different denominator from every figure in section H while looking, in the
+// run log, exactly like the runs those figures came from.
+func TestPredictConfigGatesAfterPyScan(t *testing.T) {
+	path := filepath.Join("..", "..", "scripts", "predict.json")
+	opts := loadConfig(t, path)
+
+	if !opts.Predict.Enabled {
+		t.Fatalf("%s should enable the gate; it is the config that demonstrates it", path)
+	}
+	if opts.Predict.Enforce {
+		t.Fatalf("%s must ship with enforce=false: an enforcing benchmark config "+
+			"silently changes the denominator of every section-H figure", path)
+	}
+	if opts.Predict.ModelPath == "" {
+		t.Fatalf("%s enables the gate but names no model", path)
+	}
+
+	byID := map[string]ConversionTaskStub{}
+	for _, task := range opts.Tasks {
+		byID[task.ID] = task
+	}
+	gateID := ""
+	for id, task := range byID {
+		if task.Task == "predictGate" {
+			gateID = id
+		}
+	}
+	if gateID == "" {
+		t.Fatalf("%s names no predictGate task", path)
+	}
+
+	// Walk forward from root and confirm pyScan is reached before the gate.
+	seenScan := false
+	visited := map[string]bool{}
+	var walk func(string) bool
+	walk = func(id string) bool {
+		if visited[id] {
+			return false
+		}
+		visited[id] = true
+		task, ok := byID[id]
+		if !ok {
+			return false
+		}
+		if task.Task == "pyScan" {
+			seenScan = true
+		}
+		if id == gateID {
+			return true
+		}
+		for _, next := range task.Next {
+			if walk(next) {
+				return true
+			}
+		}
+		return false
+	}
+	if !walk("root") {
+		t.Fatalf("%s: the predictGate task is unreachable from root", path)
+	}
+	if !seenScan {
+		t.Fatalf("%s: predictGate is reached without pyScan running first; "+
+			"the gate would fail closed on every job", path)
+	}
+
+	if _, err := compilePipeline(opts.PipelineFile); err != nil {
+		t.Fatalf("%s no longer compiles: %v", path, err)
 	}
 }

@@ -17,14 +17,18 @@ import (
 // is what a thesis artifact must stay readable by - and not on service
 // internals.
 type JobRecord struct {
-	Type       string          `json:"type"`
-	RunID      string          `json:"run_id"`
-	Timestamp  time.Time       `json:"timestamp"`
-	JobID      string          `json:"job_id"`
-	FunctionID string          `json:"function_id"`
-	LLMClient  string          `json:"llm_client"`
-	Completed  *bool           `json:"completed"`
-	Metrics    *domain.Metrics `json:"metrics"`
+	Type       string    `json:"type"`
+	RunID      string    `json:"run_id"`
+	Timestamp  time.Time `json:"timestamp"`
+	JobID      string    `json:"job_id"`
+	FunctionID string    `json:"function_id"`
+	LLMClient  string    `json:"llm_client"`
+	Completed  *bool     `json:"completed"`
+	// Skipped marks a job the ex-ante prediction gate declined ([I10]). Absent
+	// means false, which is the correct reading for every log written before
+	// the gate existed - unlike Completed, whose absence means true.
+	Skipped bool            `json:"skipped"`
+	Metrics *domain.Metrics `json:"metrics"`
 }
 
 // IsCompleted reports whether the record describes a job that produced a
@@ -38,6 +42,23 @@ type JobRecord struct {
 // distinguishable from "recorded as false".
 func (r JobRecord) IsCompleted() bool {
 	return r.Completed == nil || *r.Completed
+}
+
+// IsSkipped reports whether the prediction gate declined this function rather
+// than the pipeline failing on it.
+//
+// Both are `completed: false`, and conflating them would misreport the gate
+// twice over: a skip spent no tokens, so counting it among the failed attempts
+// adds a free failure that depresses the cost-per-success figure, and it would
+// credit the pipeline with a failure it never had the chance to produce.
+func (r JobRecord) IsSkipped() bool {
+	if r.Skipped {
+		return true
+	}
+	// Fall back to the metrics record, so a log written by a service that
+	// carried the prediction on Metrics but predates the top-level field is
+	// still classified correctly.
+	return r.Metrics != nil && r.Metrics.Prediction != nil && r.Metrics.Prediction.Skipped
 }
 
 // recordTypeJob is the run-log line type carrying a finished translation.

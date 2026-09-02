@@ -1355,9 +1355,53 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
   the energy result, because the translations that succeed are mostly not the translations that
   repay. That splits section I's two objectives cleanly — and it says the *secondary* one ([I9])
   is the load-bearing half, which is the reverse of the assumption the section opened with.
-- **Still open (deliberately, not blocked):** per-bucket / AWS-split breakdowns of model
-  performance, and the `function_set` external corroboration run. Both are reporting additions on
-  the existing table, not new measurements.
+- **Per-group generalisation (`--breakdown`), done 2026-09-02 — the model is not just "high `cc` → fail".**
+  M1's discrimination survives *inside* every complexity bucket, which is the question this item
+  asked:
+
+  | slice | n | base rate | M1 AUC | M2 AUC | M1 recall | M1 Wh/success |
+  |:---|---:|---:|---:|---:|---:|---:|
+  | all | 95 | 0.44 | 0.772 | 0.732 | 0.690 | 5.74 |
+  | bucket A | 25 | 0.52 | 0.846 | 0.929 | 0.846 | 1.76 |
+  | bucket B | 25 | 0.40 | 0.760 | 0.813 | 0.600 | 6.46 |
+  | bucket C | 25 | 0.48 | 0.705 | 0.756 | 0.667 | 7.32 |
+  | bucket D+ | 20 | 0.35 | 0.747 | **0.242** | 0.571 | 12.46 |
+  | aws=true | 58 | 0.28 | 0.740 | 0.735 | 0.500 | 5.38 |
+  | aws=false | 37 | 0.70 | 0.622 | 0.608 | 0.808 | 5.88 |
+
+  - **Predictability decays with complexity for M1 (0.85 → 0.75) but M2 inverts on D+ (0.242 —
+    materially worse than chance, n = 20).** The forest is anti-predictive exactly where the
+    functions are most expensive: D+ costs 12.5 Wh per success against bucket A's 1.8. That is a
+    concrete reason to prefer M1 as the shipped model beyond its calibration, and it should be
+    reported rather than averaged away — a single corpus-wide AUC hides it completely.
+  - **Discrimination lives mostly on the AWS subset** (0.740 at a 0.28 base rate) and is weak on
+    non-AWS (0.622 at 0.70). Consistent with the coefficients: the signal is effect-surface, and
+    non-AWS functions have little of it to vary over.
+- **External corroboration on `function_set` (`--external`), done 2026-09-02.** Trained on all 95
+  `evaluation_set` rows, tested once on the 14-function `function_set` (run `functionset-20260831`,
+  `runs/run-20260831-084331.jsonl`, RAPL, 10/14 = 71.4% base rate).
+  - **Leakage checked first**: `cmd/pyscan` over both corpora together produces **zero groups
+    spanning them**, so `function_set` is genuinely external and not a near-duplicate slice.
+  - **M1 transfers; M2 does not.** M1 reaches **AUC 0.850** and at the balanced point translates
+    13 of 14 while keeping **all 10** successes, for 10.9 Wh against B0's 14.5 (**−25% spend, zero
+    successes lost**). M2 reaches **AUC 0.525 — chance** — and its threshold degenerates to
+    translating everything. Combined with M2's bucket-D+ collapse above, **M1 is the model [I10]
+    should ship**, and this is the evidence for it.
+  - **The energy operating point does not transfer.** M1's energy-point threshold, fitted on
+    `evaluation_set` at N = 10⁶, is 1.000 — it translates *nothing* on `function_set`. The
+    balanced point transfers; the energy point is corpus-specific, because it encodes that
+    corpus's ΔE distribution as much as its labels. Say this explicitly rather than reporting only
+    the flattering row.
+  - **Three caveats, all binding, none of which the number can be quoted without.** (1) n = 14 with
+    10 positives — the AUC's confidence interval spans roughly ±0.2 and it must never be ranked
+    against the in-corpus 0.763. (2) `function_set` expectations were never executed against the
+    Python originals (EVALUATION_DATASET.md §4), so its labels are noisier than `evaluation_set`'s.
+    (3) **The two runs did not use an identical pipeline**: `scripts/benchmark.json` differed
+    (`temperature: 0.5`, `top_p: 0.95` were added to the `gollmRecovery` and `testRecovery` repair
+    stages for the `evaluation_set` run) and the `function_set` run was made from a dirty working
+    tree (`git_dirty: yes`, commit `34497186`). So this is a cross-corpus *and* cross-configuration
+    test, which makes a positive result more impressive and a negative one uninterpretable —
+    fortunately M1's is positive.
 - Category: Prediction (evaluation)
 - Affected component(s): `evaluation/prediction/`, reuses `cmd/energy`'s per-function costs and `N*` machinery
 - **Answering "don't we need a proper train/test split?" — yes to the principle, no to a single static holdout.** The requirement is that no information from the evaluation data reaches model fitting or model selection. A one-off 80/20 split is the textbook way to get that, and at N = 95 it is the *wrong* implementation of it: a 20% test set is **19 functions**, so a single accuracy estimate carries a standard error of roughly ±11 points — wide enough to reorder the methods by luck — and it throws away 19 of the 95 training examples the models can least afford to lose. The protocol below gets the same guarantee without either cost.
@@ -1445,7 +1489,48 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 - Why: it delivers the secondary objective at a fraction of the cost and avoids presenting an unvalidated regressor as a measurement. The framing — "we predict feasibility and *derive* worthwhileness" — is also the more defensible one.
 - Architecture impact: None | Effort: S | Priority: P1 (unblocked, now that [H6] precedes [I1])
 
-### [ ] [I10] Service integration: `internal/predictor` + a `predictGate` converter, off by default
+### [x] [I10] Service integration: `internal/predictor` + a `predictGate` converter, off by default
+- **Status: done 2026-09-02**, deliberately thin, exactly as this item scoped it.
+  - **`internal/predictor`** reads an exported JSON model (coefficients, standardizer, threshold,
+    provenance) and scores a vector. Pure stdlib — `go.mod` gains no ML dependency — and it
+    imports neither `internal/pipeline` nor `internal/domain`, so it stays usable offline.
+    **M1 is what ships**, on [I7]'s evidence: the forest does not transfer (AUC 0.525 on
+    `function_set`, 0.242 on bucket D+) and does not produce the calibrated probability [I9]
+    composes with.
+  - **`predictGate`** (`internal/pipeline/predictgate.go`, registered from an `init()` per the
+    repo convention) reads the vector `pyScan` already recorded rather than scanning again — that
+    is what makes the gate's marginal cost the inference alone (~1.6 mJ) rather than [I8]'s
+    standalone 48.8 J. It **fails closed**: a missing model or missing vector is an error, not a
+    pass-through, because failing open would report "translated everything" while claiming a gate
+    was active. `scripts/predict.json` is the shipped demonstration config, and
+    `TestPredictConfigGatesAfterPyScan` pins both that the gate descends from `pyScan` and that it
+    ships with enforcement off.
+  - **Score recorded on every job** (`Metrics.Prediction`), including when the gate only scores
+    and when it declines. This is the cheap fix for N = 95 over time, and it is what keeps
+    "would this have succeeded?" answerable once a gate is deployed.
+  - **`Enabled` and `Enforce` are separate flags**, which was not in the original sketch and
+    turned out to be the important design point. Enforcement destroys exactly the evidence the
+    score-recording exists to collect, so the useful default is *score everything, change
+    nothing*: it stays comparable to every section-H figure while growing the corpus.
+  - **A skip is not a failure.** `domain.PredictionSkip` is a distinct error type; `executeTask`
+    returns immediately on it rather than retrying (the vector is deterministic — a retry
+    re-scores the same numbers) or invoking recovery (which would spend the budget the gate just
+    declined to spend); the run log tags the record `skipped`; and `cmd/energy` reports declined
+    candidates in their own section instead of folding them into "Failed attempts", where a free
+    failure would flatter every cost-per-success figure.
+  - **`POST /predict`** scores an artifact without translating it (`501` when disabled). It shares
+    `Runner.ScorePackage` with the stage, so the endpoint's answer is the one the pipeline would
+    act on. Verified end to end against real artifacts.
+- **Train/serve parity is tested, and testing it found a real defect.**
+  `TestParityWithScikitLearn` scores all 95 functions against scikit-learn's own probabilities and
+  requires agreement to 1e-9; it now agrees to **2.2e-16**. Getting there required fixing
+  `cmd/pyscan`'s CSV writer, which emitted six fixed decimals: the model was being *trained* on
+  rounded features and *scored* against exact ones, a ~1e-7 skew (via `cc_per_lloc` and
+  `halstead_difficulty`) that is invisible in a log and quite capable of flipping a candidate
+  sitting on the threshold. `formatValue` now uses shortest-round-trip `'g'`. **Every figure in
+  [I5]–[I7] was regenerated on the exact features and none of them moved** (M2's AUC went
+  0.728 → 0.729; everything else is identical), so the fix changes no reported conclusion — but it
+  had to be made before a model could honestly be called deployed.
 - Category: Prediction (integration)
 - Affected component(s): new `internal/predictor`, `internal/pipeline/registry.go` (registration only), `internal/domain` (`Metrics`), `internal/service`
 - Problem / current state: the thesis needs a working demonstration that the gate fits the running system, but the modelling work is offline and the two must not become entangled.
