@@ -1227,7 +1227,22 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 - Why: it is the only component on the critical path that is genuine engineering rather than analysis, it is already half-specified as [C8], and doing it before [I1] means the run records the feature vector alongside the outcome instead of it being reconstructed afterwards.
 - Architecture impact: Local (new converter via `RegisterConverterFactory`, per repo convention) | Effort: M | Priority: **P0 — do first, with [C8]**
 
-### [ ] [I4] One feature/label table as the single artifact every method consumes
+### [x] [I4] One feature/label table as the single artifact every method consumes
+- **Status: done 2026-09-02.** `evaluation/prediction/build_dataset.py` joins `cmd/pyscan`'s
+  feature CSV (features + `group_id`), the run log's labels, `cmd/energy -json`'s per-function
+  facility joules and [H6]'s `runtime-20260831-190900.json` into
+  **`evaluation/prediction/dataset-20260831-190900.csv` — 95 rows × 80 columns**, committed as
+  this item asked. Cost columns cover **all 95 functions, failures included** (`cmd/energy`'s
+  `failed_attempts.translations` carries them), which is what makes the counterfactual replay in
+  [I7] possible at all: a skip decision has to be able to subtract the cost of an attempt that
+  produced nothing.
+  - Labels reproduce [I1] exactly: 42/95 positive, `all_tests_passed` and `completed` agreeing
+    on the same 42 functions; 86 independent `group_id`s.
+  - ΔE is present for **all 42 successes** (plus 24 failures whose Go side was measured anyway),
+    so the benefit term of the energy headline is measured, never imputed.
+  - Added beyond the specified columns: `meta_type` (the dataset's workload-character axis, which
+    [I9] step 2 groups ΔE on) and `reached_validation` (separates "failed a test" from "never got
+    as far as a test" — 20 of the 53 failures never reached validation).
 - Category: Prediction (data)
 - Affected component(s): new `evaluation/prediction/` (Python, scikit-learn, its own `requirements.txt`, **never** part of `go build` — the same separation `cmd/energy` keeps for the energy model)
 - Problem / current state: with several methods and a baseline set, the fastest way to produce an unreproducible comparison is to let each method assemble its own view of the data.
@@ -1240,7 +1255,15 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 - Why: every method, baseline and plot then reads one file, and a reviewer can reproduce the whole comparison from the repo.
 - Architecture impact: None (separate tooling) | Effort: S | Priority: **P0**
 
-### [ ] [I5] Baselines the models must beat — including the trivial ones
+### [x] [I5] Baselines the models must beat — including the trivial ones
+- **Status: done 2026-09-02**, in `evaluation/prediction/evaluate.py` under [I7]'s split protocol.
+  B3's `cc` threshold is fitted inside the training fold; **B4 skips nothing** on this corpus, as
+  [C8] predicted (`has_infeasible_lib` is constant-zero), so it is numerically identical to B0 and
+  the write-up should say so rather than presenting it as a distinct policy. **B5 skip-AWS** was
+  added per [I2]'s note, since it — not B4 — is the trivial rule the models actually have to beat.
+  Full table in `evaluation/prediction/results-20260831-190900.txt`; the row that matters:
+  B5 translates 37/95, keeps 26/42 successes for **198.1 Wh (7.62 Wh per success, against 427.2 Wh
+  / 10.17 for B0)**. It buys a 54% spend cut at the price of 16 real successes.
 - Category: Prediction (evaluation)
 - Affected component(s): `evaluation/prediction/`
 - Problem / current state: "random forest achieves 78% accuracy" is not a result. Without trivial baselines it is not even interpretable — at a 75% base rate, "always translate" achieves 75%.
@@ -1253,7 +1276,24 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 - Why: the comparison against B0 is the thesis claim; the comparison against B3/B4 is what separates "machine learning helped" from "machine learning was ceremony around a threshold". Both belong in the write-up regardless of which way they come out.
 - Architecture impact: None | Effort: S | Priority: P1 (cheap, do it first — it is also the fastest way to sanity-check [I4]'s table)
 
-### [ ] [I6] The candidate methods
+### [x] [I6] The candidate methods
+- **Status: M1 and M2 done 2026-09-02; M3 (LLM-judge) not run** — [I8] closed its argument with a
+  measurement instead, so the expensive upper bound is no longer needed to make the point.
+  Hyperparameters fixed a priori as this item required, so [I7]'s non-nested outer protocol stays
+  licensed (the *threshold* is still selected by an inner CV — it is a fitted quantity, not a
+  hyperparameter).
+- **There is real ex-ante signal, and this is the headline of section I.** M1 logistic regression
+  reaches **ROC-AUC 0.763 ± 0.030** under grouped 5×10 CV; a group-level label permutation test
+  puts the null at **0.511 ± 0.088, p = 0.010** over 200 permutations. M2 random forest is
+  **0.728 ± 0.015** — the linear arm wins, which at N = 95 with 56 features is the expected
+  ordering and is the arm [I9] needs anyway for its probabilities.
+- **The coefficients say something [I2] could not.** The strongest signals are *fixture and
+  effect* features, not complexity ones: `n_cases_with_setup` (−1.19), `n_raise` (−1.16),
+  `n_loops` (−0.95), `n_cases_with_side_effects` (−0.71), `uses_reflection` (−0.67),
+  `lib_boto3` (−0.54). `cc` is not in the top twelve. This is consistent with [I2]'s negative
+  complexity result rather than in tension with it: what predicts failure here is **how much
+  externally-observable behaviour the function has to reproduce**, not how intricate its control
+  flow is. That is a reportable finding and it is the one an examiner will remember.
 - Category: Prediction (modelling)
 - Affected component(s): `evaluation/prediction/`
 - **SETTLED 2026-08-24: two trained models — logistic regression and random forest — with the LLM-judge as an optional third. The tiny MLP is dropped from the comparison and recorded as a future idea.** Rationale: at **N = 95 with ~25 features** an MLP has no capacity advantage it can actually exploit, and the two retained models answer the same question with better interpretability and far less variance.
@@ -1266,7 +1306,58 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 - Why: two well-matched models plus five baselines is a complete comparison at this sample size, and dropping the MLP buys back the hours that [I7]'s protocol and [I11]'s audit actually need.
 - Architecture impact: None (offline) | Effort: M | Priority: **P0 (gated on [I2])**
 
-### [ ] [I7] Evaluation protocol: how the data is split, and why accuracy is the wrong headline
+### [x] [I7] Evaluation protocol: how the data is split, and why accuracy is the wrong headline
+- **Status: done 2026-09-02** in `evaluation/prediction/evaluate.py`. Repeated
+  `StratifiedGroupKFold` on `group_id`, **10 folds × 5 repeats** (the item said 5×10; 10 folds
+  keeps 9/10 of an 86-group corpus in training, and the repeat count is what supplies the spread).
+  Everything fitted lives inside the fold: zero-variance filtering, standardization, class
+  weighting, B3's threshold, and the operating point — the last via an **inner 5-fold CV on the
+  training fold only**, so no test row ever influences where the gate is placed.
+- **The whole comparison is an offline counterfactual replay, and needs no further translation
+  run.** Every function was translated once, so `y_i`, the measured `E_i` it actually cost, and
+  [H6]'s measured `ΔE_i` are all known; a gate is just a decision vector over those rows, with
+  `net(d, N) = Σ d_i·y_i·N·ΔE_i − Σ d_i·E_i`. The only quantity a replay cannot produce is the
+  predictor's own cost, which [I8] measures separately. This is worth stating explicitly in the
+  thesis: the energy claim rests on measurement, not on a simulated pipeline.
+- **Two operating points are reported, because they answer different questions** and only one of
+  them is the thing people mean by "does the predictor work":
+  - *balanced point* (maximise balanced accuracy in-fold) — M1 translates **46.4 ± 4.0** of 95,
+    keeps **28.8 ± 3.1** of the 42 successes, spends **174.4 ± 26.2 Wh** against B0's 427.2:
+    a **59% cut in inference energy for 69% of the successes retained**, and **6.03 ± 0.37 Wh per
+    success against B0's 10.17 (−41%)**. Accuracy 0.676 ± 0.029.
+  - *energy point* (maximise net joules at N = 10⁶ in-fold) — far more conservative: 9.8 translated,
+    6 successes kept, because at that horizon most translations do not repay at all.
+- **The headline energy curve, and the uncomfortable part of it.** Net energy saved versus B0,
+  swept over N (Wh, positive = the gate helps):
+
+  | policy | N=10³ | N=10⁵ | N=10⁶ | N=10⁷ | N=10⁹ |
+  |:---|---:|---:|---:|---:|---:|
+  | ORACLE (knows `y` and ΔE) | +426.9 | +415.5 | +448.7 | +812.6 | +42036.9 |
+  | B1 never-translate | +426.9 | +398.0 | +135.2 | −2492.0 | −291487.2 |
+  | B3 `cc` threshold | +343.2 | +328.1 | **+191.0** | −1180.0 | −151988.4 |
+  | B5 skip-AWS | +228.7 | +200.0 | −61.5 | −2676.1 | −290283.0 |
+  | M1 LR [energy pt] | +384.0 | +360.5 | +146.4 | −1994.4 | −237482.6 |
+  | M1 LR [balanced pt] | +252.6 | +234.1 | +65.6 | −1618.9 | −186919.6 |
+  | M2 RF [balanced pt] | +294.6 | +268.4 | +30.7 | −2347.2 | −263907.5 |
+
+  - **No gate beats B0 at high N, and none beats B1 at low N.** That is not a modelling failure;
+    it is what the corpus is. The dominant term is not feasibility but payback: **17 of the 42
+    successful translations have ΔE ≤ 0 — the Go version is *slower* per invocation** — so no
+    success-predictor, however good, can make them worth doing. Only the oracle, which also knows
+    ΔE, dominates everywhere, and it translates just 11 of 95 at N = 10⁶ for 18.9 Wh.
+  - **At the horizon where selection is live (N ≈ 10⁶), B3's one-number `cc` threshold (+191.0 Wh)
+    beats both learned models.** Report that plainly: it is exactly the "machine learning was
+    ceremony around a threshold" outcome this item pre-registered as a legitimate finding. The
+    learned models' advantage is not in this metric — it is the AUC and the calibrated probability
+    [I9] composes with, which a threshold does not give.
+- **The honest summary sentence**: on this corpus a prediction gate is worth ~**59% of inference
+  energy for ~31% of the successes**, but *no* gate built on feasibility alone changes the sign of
+  the energy result, because the translations that succeed are mostly not the translations that
+  repay. That splits section I's two objectives cleanly — and it says the *secondary* one ([I9])
+  is the load-bearing half, which is the reverse of the assumption the section opened with.
+- **Still open (deliberately, not blocked):** per-bucket / AWS-split breakdowns of model
+  performance, and the `function_set` external corroboration run. Both are reporting additions on
+  the existing table, not new measurements.
 - Category: Prediction (evaluation)
 - Affected component(s): `evaluation/prediction/`, reuses `cmd/energy`'s per-function costs and `N*` machinery
 - **Answering "don't we need a proper train/test split?" — yes to the principle, no to a single static holdout.** The requirement is that no information from the evaluation data reaches model fitting or model selection. A one-off 80/20 split is the textbook way to get that, and at N = 95 it is the *wrong* implementation of it: a 20% test set is **19 functions**, so a single accuracy estimate carries a standard error of roughly ±11 points — wide enough to reorder the methods by luck — and it throws away 19 of the 95 training examples the models can least afford to lose. The protocol below gets the same guarantee without either cost.
@@ -1284,7 +1375,26 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 - Why: this is what turns a classifier benchmark into an energy result, which is what the thesis is about, and the split protocol is what makes the comparison defensible at a sample size this small.
 - Architecture impact: None | Effort: M | Priority: **P0**
 
-### [ ] [I8] Measure the predictor's own energy in the same units as the pipeline
+### [x] [I8] Measure the predictor's own energy in the same units as the pipeline
+- **Status: done 2026-09-02**, `evaluation/prediction/predictor_energy.py`, using
+  `energy.config.json`'s own `node_power_watts` and `pue` so the figure is consistent with every
+  other energy number in the thesis.
+- **Measured, standalone framing**: `cmd/pyscan` costs **27 ms per function** (2.60 s for all 95;
+  34 ms cold for a single artifact, process start included), M1 inference **0.9 µs**. Charged at
+  1700 W × 1.05 PUE — *the GPU inference node's power*, which no CPU-side parse comes near, so
+  this is a deliberate upper bound — that is **48.8 J per function**, i.e.
+  **E_predictor / E_translation = 3.0 × 10⁻³** (mean) / 5.5 × 10⁻³ (median).
+  **Break-even: the predictor pays for itself if it avoids one wasted translation per 331
+  functions screened.** It avoids roughly one in three.
+- **Marginal framing, which is the honest one here**: [C8] already runs `pyScan` on every job, so
+  the *additional* energy of prediction is the inference alone — **1.6 mJ, ~10⁻⁷ of a translation**.
+  Report both, as this item required; the standalone number is the conservative one and it is
+  still three orders of magnitude clear.
+- The item expected ~10⁻⁶ for M1/M2. The standalone figure is worse than that only because the
+  Python-AST extractor ([I3]'s accepted cost) dominates and is charged at GPU-node power; the
+  conclusion is unchanged and now rests on a stopwatch rather than an assertion. **M3 was not run**
+  — with the margin measured at 10⁻³ even under a pessimal power assumption, an LLM-judge upper
+  bound would only restate arithmetic already in hand.
 - Category: Prediction (evaluation)
 - Affected component(s): `evaluation/prediction/`, `evaluation/energy.config.json`, `cmd/energy`
 - Problem / current state: "the prediction must not defeat the purpose of the saving" is currently an assertion. It is almost certainly true by a huge margin for M1/M2 and *not obviously* true for M3 — but no number exists either way, and an examiner will ask for one.
@@ -1293,7 +1403,37 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 - Why: it is the item that makes the section's central premise checkable, it is cheap, and it reuses the constants table so the number is consistent with every other energy figure in the thesis.
 - Architecture impact: None | Effort: S | Priority: P1
 
-### [ ] [I9] The secondary objective (energy-saving potential): compose it, do not train a second model
+### [~] [I9] The secondary objective (energy-saving potential): compose it, do not train a second model
+- **Status: step 1 done, step 2 measured and it contradicts this item's stated hypothesis
+  (2026-09-02).** The composition `net(d, N) = Σ d·y·N·ΔE − Σ d·E` is implemented and is what
+  produces [I7]'s energy table; the ORACLE row there is that composition under perfect knowledge,
+  and it is the only policy that dominates B0 at every N — which is the direct evidence that
+  worthwhileness, not feasibility, is the binding constraint on this corpus.
+- **Step 2's group-level ΔE expectation, measured over the 42 successes — the sign is the
+  opposite of what this item assumed:**
+
+  | group | n | median ΔE / invocation | save energy |
+  |:---|---:|---:|---:|
+  | `type: network` | 18 | **+17.8 mJ** | 16/18 |
+  | `type: other` | 18 | −0.010 mJ | 8/18 |
+  | `type: pure` | 6 | −0.028 mJ | **1/6** |
+  | `aws: true` | 16 | **+30.7 mJ** | 13/16 |
+  | `aws: false` | 26 | −0.004 mJ | 12/26 |
+
+  This item predicted "network- and I/O-bound functions ... save little from a language switch,
+  compute-bound ones save most". **The measurement says the reverse**: network/AWS functions are
+  where essentially all of the saving is, and `pure` compute functions almost never repay —
+  because on this corpus they do microseconds of work against a startup cost Go does not win.
+  - **The caveat that must travel with it**: these invocations run against the Floci **emulator**,
+    so the "network" delta is `boto3` marshalling and local HTTP — where Go's stack genuinely beats
+    Python's — and not wire latency. Against real AWS, wire time would dominate both sides and the
+    delta would compress. State this as a limitation; do not quietly generalise it to production.
+  - Consequence for [I5]'s B5: **skip-AWS is exactly backwards as an energy rule.** AWS functions
+    are harder to translate *and* the only ones whose translations repay. That tension is the
+    interesting sentence, and it is why B5 goes sharply negative at high N in [I7]'s table.
+- **Remaining**: fold the group-level expectation into a scoring function that ranks *candidates*
+  (it is currently reported, not applied), and decide whether the emulator caveat is severe enough
+  to restrict the claim to AWS-emulated workloads. Neither needs a new translation run.
 - Category: Prediction (modelling)
 - Affected component(s): `cmd/energy` (`N*`), [H6], [I6]'s calibrated probabilities
 - **SETTLED 2026-08-24: [H6] is implemented before the [I1] run, so option 1 below is the plan** and the coarse proxy is no longer needed. Sequencing consequence: the single `evaluation_set` pass yields ΔE measurements alongside the labels, which is exactly why [H6] belongs before it rather than after.
@@ -1350,7 +1490,11 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 - Same-repo pairs are merged regardless of similarity: same author, same house style, not independent observations. It costs three extra merges and is the conservative choice.
 - Merging is transitive (union-find), which is what the four-copy Lex cluster needs; group ids are the lexically smallest member so the committed table is stable across runs and input orderings.
 - Tests: 13 unit tests covering the Jaccard maths, threshold behaviour, transitivity, determinism, same-repo merging, and — via the real scanner — that the fingerprint is invariant to comments, docstrings and formatting while still separating genuinely different functions. `TestLeakageAuditOnEvaluationSet` pins the four similarity-only groups against the real corpus, so a fingerprint regression that stopped finding them fails the build rather than quietly restoring the leakage.
-- **Still open, deferred to [I4] by necessity:** whether any grouped pair *disagrees* on its label. That needs [I1]'s labels, which do not exist yet. The mechanism is in place — with `group_id` in the table it is a one-line check — and it is the only partial evidence of translation stochasticity available under the single-run decision, so it is worth doing the moment labels land.
+- **~~Still open, deferred to [I4] by necessity:~~ CLOSED 2026-09-02 against [I1]'s second-pass labels.** Two of the seven groups disagree internally:
+  - **`f50`/`f59` — Jaccard 1.000, structurally identical source, opposite labels** (`f50` failed, `f59` passed). This is the label-noise evidence the item was looking for, and it is the strongest form available: identical canonicalised ASTs, one success and one failure in the same run, on the same model and pipeline. **No deterministic ex-ante predictor can be right on both**, so the achievable ceiling on this corpus is provably below 100% — worth stating in [I7]'s write-up next to the AUC.
+  - **The caveat is real and must be stated with it**: the two artifacts ship *different fixture sets* (5 cases vs 4), and `f50` passed 4 of its 5. So the disagreement is partly attributable to a harder fixture, not purely to sampling stochasticity — the evidence is suggestive, not clean. They also cost very differently (29.4 kJ vs 11.1 kJ), i.e. `f50` burned repair budget `f59` did not.
+  - `f29`/`f60` also disagree, but at similarity 0.038 (merged only by the same-repo rule), so they carry no information about stochasticity.
+  - The other five groups — including `f92`/`f94` (0.978) and `f35`/`f44` (0.950) — agree internally. So **1 of the 2 genuinely near-identical pairs flipped**: too small a sample to quote a noise rate from, and exactly the reason the 20-function re-run named in [I1] is still the right follow-up.
 
 ### Threats to validity (write these into the thesis, not just here)
 
