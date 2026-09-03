@@ -1,0 +1,7 @@
+pyscan: 8 of 56 feature columns are constant across these 95 functions (no information for training; drop zero-variance columns inside the CV fold, not over the whole table):
+  has_infeasible_lib=0, lib_yaml=0, lib_pytz=0, lib_jwt=0, n_yield=0, n_async=0, n_mode_strict=0, n_cases_with_env=0
+pyscan: LEAKAGE AUDIT - 16 functions fall into 7 multi-member groups at similarity >= 0.70.
+  Effective corpus size is 86 independent units, not 95 rows. Cross-validation must
+  split on group_id (StratifiedGroupKFold), or a near-duplicate pair straddling the
+  train/test boundary lets a model score on a function it has already seen.
+  Re-run with -groups for the group and link detail.

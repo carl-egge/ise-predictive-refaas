@@ -1475,7 +1475,77 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
   - Consequence for [I5]'s B5: **skip-AWS is exactly backwards as an energy rule.** AWS functions
     are harder to translate *and* the only ones whose translations repay. That tension is the
     interesting sentence, and it is why B5 goes sharply negative at high N in [I7]'s table.
-- **Remaining**: fold the group-level expectation into a scoring function that ranks *candidates*
+- **2026-09-03: the objective itself is now energy-aware, and it changes the result.** Training on
+  `all_tests_passed` teaches a model to find *translatable* functions; the research question asks
+  for *worthwhile* ones. Two cost-sensitive variants were added to `evaluate.py`, both trainable on
+  measured data with **no imputation anywhere** — the key observation being that the value a
+  translation returned,
+
+      v_i = y_i · N · ΔE_i − E_i
+
+  is known for every one of the 95 rows: `y` and `E` for all of them (`cmd/energy` costs the
+  failures too), `ΔE` for all 42 successes — and a false negative is *by definition* a success, so
+  the one quantity that looks missing is never actually needed.
+  - **A1 `[cost-weighted]`** — keep the feasibility label, weight each example by `|v_i|` (the
+    regret of getting it wrong), normalized to mean 1 so the L2 penalty keeps its meaning.
+  - **A2 `[energy-target]`** — *relabel* to `z_i = 1{v_i > 0}` (the decision that would have been
+    right) **and** weight by `|v_i|`.
+- **Result at N = 10⁶ (net Wh saved versus B0 always-translate; grouped 5×10 CV as in [I7]):**
+
+  | policy | N=10⁵ | **N=10⁶** | N=10⁷ | N=10⁹ | AUC(target) |
+  |:---|---:|---:|---:|---:|---:|
+  | ORACLE | 415.5 | **448.7** | 812.6 | 42037 | — |
+  | B3 `cc` threshold | 328.1 | 191.0 | −1180 | −151988 | — |
+  | M1 plain (feasibility) | 360.5 | 146.4 | −1994 | −237483 | 0.763 |
+  | M1 A1 cost-weighted | 258.3 | 163.1 | −789 | −105487 | 0.695 |
+  | **M1 A2 energy-target** | 300.7 | **279.7** | **+68.8** | −23127 | **0.760** |
+  | **M2 A2 energy-target** | 337.1 | **326.6** | **+221.2** | −11367 | **0.809** |
+
+  - **Worthwhileness is as predictable as feasibility.** The energy-target models reach AUC
+    **0.760** (M1) and **0.809** (M2) *against their own label* — matching the 0.763 the
+    feasibility model gets against its own. This is the finding: there is ex-ante signal for
+    "worth translating", not merely for "translatable".
+  - **In absolute terms the gap to the oracle largely closes.** At N = 10⁶ the oracle achieves
+    313.4 Wh of net energy; plain M1 captured **11.2 Wh (3.6%)**, M2 A2 captures
+    **191.3 ± 17 Wh (61%)**.
+  - **The relabelling is what matters, not the weighting.** A1 (+163.1) barely beats B3's +191.0;
+    A2 nearly doubles it. Weighting cannot rescue a target that says "translate" about the 31
+    successes that should not have been translated.
+  - **These are the first policies to beat B0 at N = 10⁷**, and they lose an order of magnitude
+    less at 10⁹ than anything else.
+  - **Report AUC against the trained target, never against `y`.** The energy-target models score
+    0.476/0.450 against success — they were told to ignore it. `evaluate.py` now prints both
+    columns with that warning inline, because a single "AUC" column here invites exactly the wrong
+    reading.
+- **A gate has a bounded useful range, and this is the more defensible framing of the whole
+  section.** Measured at N = 10⁸ as a second point: B0 reaches 28 764 Wh against the oracle's
+  33 279 — only 16% headroom — and essentially every gate *loses* to B0 there (best: M2 A1 at
+  +159 Wh). The target also gets *harder* to learn as N rises (M1 AUC 0.760 → 0.628, M2
+  0.809 → 0.475), for an interpretable reason: at 10⁶ "worth it" selects the large-ΔE
+  network/AWS functions, a structurally distinctive group; at 10⁸ it admits anything marginally
+  above zero, which has no common signature. So:
+  - below ~10⁵ invocations nothing repays and "translate nothing" is optimal;
+  - above ~10⁷–10⁸ nearly everything repays and "translate everything" is near-optimal;
+  - **between ~10⁶ and 10⁷ selection earns its keep**, and that is exactly where A2 dominates.
+- **Not shipped, deliberately.** `internal/predictor` still carries the feasibility M1 ([I10]).
+  Three reasons, all of which would have to be answered first: the energy target requires
+  committing to an `N`; its positive class is 11 of 95 with spreads of ±17–53 Wh; and M2 — which
+  wins on this target — is the arm that failed to transfer in [I7].
+- **The external check cannot settle it on the corpora we have, and that is itself a finding.**
+  `report_external` now carries the cost-sensitive variants through, but at N = 10⁶ only
+  **1 of 14** `function_set` functions is worth translating, so its AUC(target) (0.308 / 0.692) is
+  computed on a single positive and means nothing. `function_set` has no AWS functions, and AWS is
+  where the ΔE lives — it is structurally the wrong corpus for the energy question. **Validating
+  the energy target needs a second AWS-bearing corpus**, which is a data-collection task, not an
+  analysis one. Record it as the named limitation.
+- **Two limitations specific to this target**, both worth stating before a reviewer finds them:
+  1. **`z` is noisier than `y`.** It depends on `E_i`, the measured cost of one particular attempt,
+     so a function that happened to burn three repair rounds gets a worse label than the same
+     function on a luckier run. The feasibility label has no such run-to-run component.
+  2. **`z` is defined by hindsight, which is legitimate for a label but makes `N` a reported
+     parameter rather than a learned one.** Results must travel as a curve over `N`; a single
+     number silently hides the range finding above.
+- **Remaining**: fold the group-level ΔE expectation into a scoring function that ranks *candidates*
   (it is currently reported, not applied), and decide whether the emulator caveat is severe enough
   to restrict the claim to AWS-emulated workloads. Neither needs a new translation run.
 - Category: Prediction (modelling)

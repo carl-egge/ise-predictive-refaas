@@ -1,0 +1,93 @@
+corpus: 95 functions, 42 positive (44.2%), 86 independent groups, 56 features
+measured spend: 427.2 Wh total (134.6 Wh on successes, 292.5 Wh on failures)
+delta-E > 0 for 25/42 successes (17 translations are slower in Go and never repay)
+threshold horizon N = 1e+08 invocations
+
+cost-sensitive target at this N: 21 of 95 functions are worth translating in hindsight
+  (21 successes whose Go version does not repay are relabelled 'skip')
+  regret weights span 0 J .. 32248449 J (mean-normalized for fitting)
+
+policy                                                transl  kept  spend Wh  Wh/succ  recall  AUC(y)AUC(tgt)       net Wh @N
+-----------------------------------------------------------------------------------------------------------------------------
+  AUC(y) = discrimination of real success; AUC(tgt) = of the label the model was
+  trained on. They differ only for the energy-target rows, and for those AUC(y) is
+  not a quality measure - it scores them on a question they were told to ignore.
+-----------------------------------------------------------------------------------------------------------------------------
+ORACLE (upper bound)                                    21.0  21.0      80.1     3.82   0.500      --      --     33278.6 +-0
+B0 always-translate                                     95.0  42.0     427.2    10.17   1.000      --      --     28764.3 +-0
+B1 never-translate                                       0.0   0.0       0.0      inf   0.000      --      --         0.0 +-0
+B2 majority-class                                        0.0   0.0       0.0      inf   0.000      --      --         0.0 +-0
+B3 cc threshold                                         69.8  33.6     189.8     5.65   0.800      --      --   27688.5 +-655
+B4 infeasible-lib blocklist                             95.0  42.0     427.2    10.17   1.000      --      --     28764.3 +-0
+B5 skip-AWS                                             37.0  26.0     198.1     7.62   0.619      --      --       -57.9 +-0
+M1 logistic regression [energy pt]                      78.6  39.4     325.8     8.26   0.938   0.763   0.763  25637.5 +-3983
+M1 logistic regression [balanced pt]                    46.4  28.8     174.4     6.03   0.686   0.763   0.763  10299.8 +-2348
+M1 logistic regression [cost-weighted] [energy pt]      55.0  26.4     206.9     7.82   0.629   0.560   0.560  26883.8 +-2041
+M1 logistic regression [cost-weighted] [balanced pt]    60.6  28.8     228.6     7.97   0.686   0.560   0.560  25265.2 +-3000
+M1 logistic regression [energy-target] [energy pt]      60.8  25.4     200.1     7.92   0.605   0.486   0.628  28687.4 +-1413
+M1 logistic regression [energy-target] [balanced pt]    52.0  21.6     159.7     7.46   0.514   0.486   0.628   27361.2 +-871
+M2 random forest [energy pt]                            81.8  37.0     342.5     9.26   0.881   0.729   0.729  27655.7 +-1363
+M2 random forest [balanced pt]                          38.2  25.8     132.3     5.12   0.614   0.729   0.729   2638.9 +-3983
+M2 random forest [cost-weighted] [energy pt]            67.6  32.4     175.9     5.42   0.771   0.511   0.511    28923.6 +-19
+M2 random forest [cost-weighted] [balanced pt]          63.4  30.4     160.0     5.28   0.724   0.511   0.511   28251.1 +-979
+M2 random forest [energy-target] [energy pt]            82.8  37.2     359.8     9.67   0.886   0.447   0.475  27521.4 +-1076
+M2 random forest [energy-target] [balanced pt]          27.8  11.0      97.0     8.51   0.262   0.447   0.475  24309.4 +-1060
+
+net energy at horizon N (Wh; benefit - spend, positive = worth doing)
+policy                                                      N=1e+03       N=1e+05       N=1e+06       N=1e+07       N=1e+08       N=1e+09
+-----------------------------------------------------------------------------------------------------------------------------------------
+ORACLE (upper bound)                                            0.0          17.5         313.4        3304.5       33278.6      333524.1
+B0 always-translate                                          -426.9        -398.0        -135.2        2492.0       28764.3      291487.2
+B1 never-translate                                              0.0           0.0           0.0           0.0           0.0           0.0
+B2 majority-class                                               0.0           0.0           0.0           0.0           0.0           0.0
+B3 cc threshold                                              -189.5        -161.9          89.0        2598.1       27688.5      278592.7
+B4 infeasible-lib blocklist                                  -426.9        -398.0        -135.2        2492.0       28764.3      291487.2
+B5 skip-AWS                                                  -198.1        -198.0        -196.7        -184.1         -57.9        1204.3
+M1 logistic regression [energy pt]                           -325.5        -299.8         -66.1        2270.6       25637.5      259306.3
+M1 logistic regression [balanced pt]                         -174.3        -163.9         -69.6         873.1       10299.8      104567.6
+M1 logistic regression [cost-weighted] [energy pt]           -206.6        -179.8          64.0        2502.2       26883.8      270699.6
+M1 logistic regression [cost-weighted] [balanced pt]         -228.4        -203.1          26.3        2320.8       25265.2      254709.7
+M1 logistic regression [energy-target] [energy pt]           -199.8        -171.2          88.8        2688.7       28687.4      288674.8
+M1 logistic regression [energy-target] [balanced pt]         -159.5        -132.2         115.5        2592.4       27361.2      275049.2
+M2 random forest [energy pt]                                 -342.2        -314.5         -62.5        2457.3       27655.7      279639.1
+M2 random forest [balanced pt]                               -132.3        -129.5        -104.6         144.8        2638.9       27579.7
+M2 random forest [cost-weighted] [energy pt]                 -175.6        -146.8         115.1        2734.1       28923.6      290818.7
+M2 random forest [cost-weighted] [balanced pt]               -159.7        -131.6         124.1        2681.1       28251.1      283950.9
+M2 random forest [energy-target] [energy pt]                 -359.5        -331.9         -81.0        2428.3       27521.4      278451.9
+M2 random forest [energy-target] [balanced pt]                -96.8         -72.6         147.1        2343.6       24309.4      243967.3
+
+net energy saved versus B0 always-translate (Wh; positive = the gate helps)
+policy                                                      N=1e+03       N=1e+05       N=1e+06       N=1e+07       N=1e+08       N=1e+09
+-----------------------------------------------------------------------------------------------------------------------------------------
+ORACLE (upper bound)                                          426.9         415.5         448.7         812.6        4514.3       42036.9
+B1 never-translate                                            426.9         398.0         135.2       -2492.0      -28764.3     -291487.2
+B2 majority-class                                             426.9         398.0         135.2       -2492.0      -28764.3     -291487.2
+B3 cc threshold                                               237.4         236.1         224.3         106.1       -1075.8      -12894.5
+B4 infeasible-lib blocklist                                     0.0           0.0           0.0           0.0           0.0           0.0
+B5 skip-AWS                                                   228.7         200.0         -61.5       -2676.1      -28822.2     -290283.0
+M1 logistic regression [energy pt]                            101.4          98.2          69.1        -221.4       -3126.8      -32180.9
+M1 logistic regression [balanced pt]                          252.6         234.1          65.6       -1618.9      -18464.4     -186919.6
+M1 logistic regression [cost-weighted] [energy pt]            220.3         218.2         199.3          10.2       -1880.5      -20787.6
+M1 logistic regression [cost-weighted] [balanced pt]          198.5         194.9         161.6        -171.2       -3499.1      -36777.5
+M1 logistic regression [energy-target] [energy pt]            227.1         226.8         224.1         196.7         -76.9       -2812.4
+M1 logistic regression [energy-target] [balanced pt]          267.4         265.8         250.7         100.4       -1403.1      -16438.0
+M2 random forest [energy pt]                                   84.7          83.5          72.8         -34.6       -1108.6      -11848.2
+M2 random forest [balanced pt]                                294.6         268.4          30.7       -2347.2      -26125.4     -263907.5
+M2 random forest [cost-weighted] [energy pt]                  251.3         251.2         250.4         242.1         159.3        -668.6
+M2 random forest [cost-weighted] [balanced pt]                267.2         266.4         259.4         189.1        -513.2       -7536.3
+M2 random forest [energy-target] [energy pt]                   67.3          66.0          54.3         -63.7       -1242.9      -13035.4
+M2 random forest [energy-target] [balanced pt]                330.1         325.4         282.3        -148.3       -4454.8      -47519.9
+
+M1 logistic-regression coefficients (standardized features, full-corpus refit -- descriptive only, not an out-of-fold quantity)
+  n_cases_with_setup           -1.193  (lowers translation success)
+  n_raise                      -1.164  (lowers translation success)
+  n_decorators                 +1.149  (raises translation success)
+  n_fstrings                   +0.955  (raises translation success)
+  n_loops                      -0.952  (lowers translation success)
+  n_cases_with_side_effects    -0.710  (lowers translation success)
+  source_lines                 -0.703  (lowers translation success)
+  uses_reflection              -0.669  (lowers translation success)
+  halstead_difficulty          -0.652  (lowers translation success)
+  mean_expected_fields         -0.650  (lowers translation success)
+  n_lambdas                    +0.626  (raises translation success)
+  lib_boto3                    -0.539  (lowers translation success)

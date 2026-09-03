@@ -18,6 +18,12 @@ faasllm
 # to a translated package.
 !internal/builder/test_handler.txt
 !evaluation/harness/bench_handler.go.txt
+# ...and except the prediction study's human-readable result tables. The JSON
+# beside them is machine-readable but not readable; these are the tables the
+# write-up quotes, and for the same reason [I4] commits its CSV, a number in
+# the thesis should be traceable to a file in the repo rather than to a run
+# someone has to reproduce first.
+!evaluation/prediction/*.txt
 .env
 
 .claude

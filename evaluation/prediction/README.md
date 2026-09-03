@@ -67,13 +67,18 @@ python3 evaluation/prediction/build_dataset.py \
 go run ./cmd/pyscan evaluation/evaluation_set/*.zip evaluation/function_set/*.zip \
     2>/dev/null | cut -d, -f1,5   # no group_id may contain both an f* and a pf*
 
-# 4. baselines, models, energy sweep, breakdowns  [I5]/[I6]/[I7]
+# 4. baselines, models, energy sweep, breakdowns, cost-sensitive variants
+#    [I5]/[I6]/[I7]/[I9] -- ~20 min, dominated by the random forests
 python3 evaluation/prediction/evaluate.py \
     --dataset evaluation/prediction/dataset-20260831-190900.csv \
     --horizon 1e6 --permutations 200 --breakdown \
     --external evaluation/prediction/dataset-functionset-20260831.csv \
     --json-out evaluation/prediction/results-20260831-190900.json \
     | tee evaluation/prediction/results-20260831-190900.txt
+
+# 4a. the second horizon, for the bounded-useful-range finding in [I9]
+python3 evaluation/prediction/evaluate.py \
+    --dataset evaluation/prediction/dataset-20260831-190900.csv --horizon 1e8
 
 # 4b. export the shipped model for internal/predictor  [I10]
 python3 evaluation/prediction/evaluate.py \
@@ -107,8 +112,21 @@ steps 3 and 4 need only the two Python packages.
   which is chosen by an inner 5-fold CV on the training fold only. Choosing an operating
   point on the test fold is the standard way a study like this invalidates itself quietly.
 - **Two operating points are reported** because they optimise different things: `balanced`
-  maximises balanced accuracy (the gate as a feasibility classifier) and `energy` maximises
-  net joules at the stated horizon (the gate as an energy instrument). They differ a lot.
+  maximises balanced accuracy against the label the model was trained on, and `energy` maximises
+  net joules at the stated horizon (always against the real outcomes and measured energies,
+  whatever the model was trained on). They differ a lot.
+- **Three training targets are reported per model** ([I9]). The plain rows train on
+  `all_tests_passed`; `[cost-weighted]` keeps that label but weights each example by the regret
+  of getting it wrong, `|v_i|` where `v_i = y_i·N·ΔE_i − E_i`; `[energy-target]` relabels to
+  `z_i = 1{v_i > 0}` — the decision that would have been right — and weights the same way. Every
+  term of `v` is measured for every row, so no value is imputed.
+- **Read AUC(tgt), not AUC(y), for the energy-target rows.** They were trained to predict
+  worthwhileness, so scoring them against success measures a question they were told to ignore.
+  The table prints both, with that warning inline.
+- **`--horizon N` is a reported parameter, not a tuned one.** It defines the `[energy-target]`
+  label and both energy operating points, so results travel as a curve over `N`. Reporting one
+  horizon hides the range finding: below ~10⁵ nothing repays, above ~10⁷–10⁸ everything does, and
+  a gate only earns its keep in between.
 - **`function_set` is corroboration, never the headline.** n = 14, its expectations were never
   executed against the Python originals, and its run used a slightly different
   `scripts/benchmark.json` (repair-stage `temperature`/`top_p`) from a dirty tree. It is a

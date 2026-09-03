@@ -1,0 +1,3 @@
+pyscan: 24 of 56 feature columns are constant across these 14 functions (no information for training; drop zero-variance columns inside the CV fold, not over the whole table):
+  n_boto3_services=0, uses_aws=0, has_infeasible_lib=0, n_unmapped_third_party=0, lib_boto3=0, lib_botocore=0, lib_urllib3=0, lib_dateutil=0, lib_bs4=0, lib_yaml=0, lib_pytz=0, lib_jwt=0, lib_other=0, n_dynamic_calls=0, uses_eval_exec=0, uses_reflection=0, n_async=0, n_cases_with_setup=0, n_cases_with_side_effects=0, n_mode_strict=0, n_mode_shape=0, n_cases_without_expected=0, mean_expected_fields=2, n_cases_with_env=0
+pyscan: no near-duplicate or same-repo groups found at similarity >= 0.70
