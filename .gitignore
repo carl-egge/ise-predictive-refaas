@@ -46,3 +46,9 @@ runs/*
 # Python bytecode from evaluation/prediction's offline tooling
 __pycache__/
 *.pyc
+
+# The measurement venv itself is local (and large); what makes it
+# reproducible is the pinned manifest, which must survive the *.txt rule
+# above the way evaluation/prediction/requirements.txt already does.
+.venv/
+!evaluation/harness/requirements.txt

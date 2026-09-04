@@ -141,48 +141,76 @@ func measurePair(m Meter, runners []runner, payloads [][]byte, invocations, reps
 	// undefined. Finding an N where the signal exceeds the noise is the
 	// measurement working; failing to find one is a result to report, not a
 	// zero to invent.
-	for {
-		pointNs := make([]Sample, len(runners))
-		allResolved := true
+	sampleAt := func(n int) ([]Sample, error) {
+		samples := make([]Sample, len(runners))
 		for i, r := range runners {
-			pointN, err := bestOf(m, r, buildStream(payloads, invocations), reps, runBudget(invocations))
+			s, err := bestOf(m, r, buildStream(payloads, n), reps, runBudget(n))
 			if err != nil {
-				return nil, fmt.Errorf("%s: %d-invocation run: %w", r.name, invocations, err)
+				return nil, fmt.Errorf("%s: %d-invocation run: %w", r.name, n, err)
 			}
-			pointNs[i] = pointN
-			if !resolves(point1s[i], pointN) {
-				allResolved = false
-			}
+			samples[i] = s
 		}
+		return samples, nil
+	}
 
-		if !allResolved && invocations < maxInvocations {
-			invocations *= 10
-			if invocations > maxInvocations {
-				invocations = maxInvocations
-			}
+	finalN, pointNs, err := escalate(point1s, sampleAt, invocations, maxInvocations)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range runners {
+		outs[i].Invocations = finalN
+		if resolves(point1s[i], pointNs[i]) {
+			sp := twoPointSplit(point1s[i], pointNs[i], finalN)
+			sp.applyCPUSplit(point1s[i], pointNs[i], finalN)
+			outs[i].Resolved = true
+			outs[i].applySplit(sp)
 			continue
 		}
+		// Report what *was* resolved - startup dominates entirely - and
+		// leave the per-invocation figure unresolved so it is excluded
+		// from runtime.json rather than written as zero.
+		outs[i].StartupSeconds = point1s[i].Duration.Seconds()
+		outs[i].ColdSeconds = point1s[i].Duration.Seconds()
+		outs[i].Note = fmt.Sprintf(
+			"per-invocation cost is below the noise floor even at %d invocations "+
+				"(startup %.3f ms dominates); no steady-state figure reported",
+			finalN, point1s[i].Duration.Seconds()*1000)
+	}
+	return outs, nil
+}
 
-		for i := range runners {
-			outs[i].Invocations = invocations
-			if resolves(point1s[i], pointNs[i]) {
-				sp := twoPointSplit(point1s[i], pointNs[i], invocations)
-				sp.applyCPUSplit(point1s[i], pointNs[i], invocations)
-				outs[i].Resolved = true
-				outs[i].applySplit(sp)
-				continue
-			}
-			// Report what *was* resolved - startup dominates entirely - and
-			// leave the per-invocation figure unresolved so it is excluded
-			// from runtime.json rather than written as zero.
-			outs[i].StartupSeconds = point1s[i].Duration.Seconds()
-			outs[i].ColdSeconds = point1s[i].Duration.Seconds()
-			outs[i].Note = fmt.Sprintf(
-				"per-invocation cost is below the noise floor even at %d invocations "+
-					"(startup %.3f ms dominates); no steady-state figure reported",
-				invocations, point1s[i].Duration.Seconds()*1000)
+// escalate walks the x10 ladder until every side resolves against its own
+// point1, and returns the N it stopped at together with the samples taken
+// there. Stopping at the cap is a normal outcome, not an error: the caller
+// reports the sides that did resolve and marks the rest unresolved.
+//
+// It takes the sampling as a function so the ladder - the part that decides
+// which N every figure in runtime.json is derived from - is testable without
+// spawning processes, the same reason twoPointSplit is kept as pure
+// arithmetic.
+func escalate(point1s []Sample, sampleAt func(n int) ([]Sample, error), invocations, maxInvocations int) (int, []Sample, error) {
+	for {
+		pointNs, err := sampleAt(invocations)
+		if err != nil {
+			return 0, nil, err
 		}
-		return outs, nil
+
+		allResolved := true
+		for i := range point1s {
+			if !resolves(point1s[i], pointNs[i]) {
+				allResolved = false
+				break
+			}
+		}
+		if allResolved || invocations >= maxInvocations {
+			return invocations, pointNs, nil
+		}
+
+		invocations *= 10
+		if invocations > maxInvocations {
+			invocations = maxInvocations
+		}
 	}
 }
 

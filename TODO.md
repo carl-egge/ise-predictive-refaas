@@ -1189,6 +1189,27 @@ and the measurement harness disagree about which Python is in use would be a nas
 unexplained differences. Handler-name resolution is **not** a problem: 0 of 95 lack a name the
 harness recognises (`lambda_handler`/`handler`/`main`).
 
+- **DONE 2026-09-05.** `evaluation/harness/requirements.txt` pins the set, resolved on CPython
+  3.14.4 (`boto3==1.43.89`, `botocore==1.43.89`, `python-dateutil==2.9.0.post0`,
+  `requests==2.34.2`, `beautifulsoup4==4.15.0`, `urllib3==2.7.0`, plus transitives). Verified by
+  running `evaluation/harness/handler.py` over all 95 sources with empty stdin, which loads the
+  module and stops before invoking: **23/95 import on the system interpreter, 95/95 in the venv.**
+  The last 18 needed the driver's AWS environment as well as the packages - they construct a boto3
+  client at module level, so without `AWS_REGION` they fail at *import*, not at invocation;
+  `builder.TestExecutionEnv` supplies it, which is why they are fine under `cmd/runtime` and only
+  looked broken in a bare check.
+
+  Recorded, not just pinned: `cmd/runtime` probes the interpreter (`describePython`) and writes
+  `python.interpreter` / `python.version` / `python.packages` into `runtime-report-*.json`, and
+  prints them in the summary. These packages run *inside* the measured region - boto3's import cost
+  is a large part of the Python side's startup term - so a report whose joules cannot be tied to
+  the versions that produced them is not reproducible. The tool also warns up front when the
+  interpreter has no boto3, rather than after an hour of SKIPs.
+
+  Two imports across the corpus are deliberately **not** provided: `liblogging` (f-local module,
+  not the PyPI/rsyslog one) and `pyseccomp` (needs libseccomp headers). Both appear once and both
+  load anyway - they are inside function bodies or guarded, not at module scope.
+
 **2. RAPL counter permissions.** `/sys/class/powercap/intel-rapl:*/energy_uj` is root-only by default
 on most distributions (post-CVE-2020-8694). Verify `cmd/runtime -meter rapl` succeeds *before* the
 run — it fails loudly with the fix in the message. This is the difference between measured joules

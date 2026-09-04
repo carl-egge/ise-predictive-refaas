@@ -47,6 +47,8 @@ func printSummary(w io.Writer, r *Report, outPath string) {
 	fmt.Fprintf(w, "  meter:       %s - %s\n", r.Meter, r.MeterDetail)
 	fmt.Fprintf(w, "  method:      two-point split, %d invocations (both sides at the same N), best of %d\n",
 		r.Invocations, r.Repetitions)
+	fmt.Fprintf(w, "  python:      %s (%s)%s\n", r.Python.Interpreter, r.Python.Version,
+		pinnedSummary(r.Python.Packages))
 
 	var measured, skipped, unresolved int
 	var speedups, coldSpeedups, cpuRatios []float64
@@ -206,4 +208,24 @@ func wrapIndent(s string, width int, indent string) string {
 		lineLen += len(word)
 	}
 	return b.String()
+}
+
+// pinnedSummary names the packages that run inside the measured region, so
+// the summary a figure is copied out of carries them too. Only the direct
+// dependencies of evaluation/harness/requirements.txt are listed; the full
+// set is in the report JSON.
+func pinnedSummary(pkgs map[string]string) string {
+	if len(pkgs) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, name := range []string{"boto3", "botocore", "python-dateutil", "requests", "beautifulsoup4", "urllib3"} {
+		if v, ok := pkgs[name]; ok {
+			parts = append(parts, name+" "+v)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\n               " + strings.Join(parts, ", ")
 }

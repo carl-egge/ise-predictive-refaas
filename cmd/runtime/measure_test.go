@@ -426,8 +426,8 @@ func TestResolvesRequiresSignalAboveObservedSpread(t *testing.T) {
 // -- joint escalation ------------------------------------------------------
 
 // The invariant the paired measurement exists to guarantee: both language
-// sides report the same invocation count, even when one of them resolves
-// immediately and the other never does.
+// sides are measured at the same invocation count, even when one of them
+// resolves immediately and the other never does.
 //
 // Before this, measureSide escalated each side independently, and
 // runtime-report-20260831-190900.json ended up with 25 functions whose Python
@@ -435,16 +435,89 @@ func TestResolvesRequiresSignalAboveObservedSpread(t *testing.T) {
 // between two different experiments, sound only if per-invocation cost is
 // exactly linear in N.
 //
-// The cheap side here ignores stdin entirely, so its duration does not grow
-// with N and it can never resolve; the expensive side burns a fixed amount of
-// work per line and resolves at once. The expensive side must still be
-// carried up to the cap alongside it.
-func TestMeasurePairSettlesBothSidesOnTheSameN(t *testing.T) {
+// Driven through a fake sampler rather than real processes: the ladder
+// decides which N every figure in runtime.json is derived from, so it is
+// worth testing deterministically instead of racing process-startup jitter.
+func TestEscalateCarriesTheResolvedSideToTheSlowestSideN(t *testing.T) {
+	const startup = 100 * time.Millisecond
+	point1s := []Sample{
+		{Duration: startup}, // flat side: cost never grows with N
+		{Duration: startup}, // linear side: 1 ms per invocation, resolves at once
+	}
+
+	var asked []int
+	sampleAt := func(n int) ([]Sample, error) {
+		asked = append(asked, n)
+		return []Sample{
+			{Duration: startup},
+			{Duration: startup + time.Duration(n)*time.Millisecond},
+		}, nil
+	}
+
+	finalN, pointNs, err := escalate(point1s, sampleAt, 1000, 100000)
+	if err != nil {
+		t.Fatalf("escalate: %v", err)
+	}
+
+	if finalN != 100000 {
+		t.Errorf("settled at N=%d, want 100000: the unresolvable side must drive escalation to the cap", finalN)
+	}
+	if want := []int{1000, 10000, 100000}; !equalInts(asked, want) {
+		t.Errorf("sampled at %v, want %v (x10 ladder)", asked, want)
+	}
+	// The linear side resolved at the very first rung and was still carried
+	// up - that is the whole point.
+	if resolves(point1s[0], pointNs[0]) {
+		t.Error("flat side resolved, want unresolved")
+	}
+	if !resolves(point1s[1], pointNs[1]) {
+		t.Error("linear side did not resolve at the final N, want resolved")
+	}
+}
+
+// The ladder must stop as soon as *every* side resolves - escalating further
+// would multiply the cost of the measurement pass for no added signal.
+func TestEscalateStopsWhenAllSidesResolve(t *testing.T) {
+	point1s := []Sample{{Duration: time.Millisecond}, {Duration: time.Millisecond}}
+
+	var asked []int
+	sampleAt := func(n int) ([]Sample, error) {
+		asked = append(asked, n)
+		d := time.Millisecond + time.Duration(n)*time.Millisecond
+		return []Sample{{Duration: d}, {Duration: d}}, nil
+	}
+
+	finalN, _, err := escalate(point1s, sampleAt, 1000, 100000)
+	if err != nil {
+		t.Fatalf("escalate: %v", err)
+	}
+	if finalN != 1000 {
+		t.Errorf("settled at N=%d, want 1000", finalN)
+	}
+	if len(asked) != 1 {
+		t.Errorf("sampled %d times (%v), want 1 - both sides resolved on the first rung", len(asked), asked)
+	}
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// End to end through real processes, asserting only the part that cannot be
+// flaky: whatever N the ladder settles on, both sides report the same one.
+func TestMeasurePairReportsOneNForBothSides(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip("no POSIX shell on this host")
 	}
-
 	meter, err := NewMeter("time", 0)
 	if err != nil {
 		t.Fatalf("time meter: %v", err)
@@ -460,39 +533,22 @@ func TestMeasurePairSettlesBothSidesOnTheSameN(t *testing.T) {
 			},
 		}
 	}
-
-	// Reads and discards stdin without per-line work: constant in N.
 	cheap := shellRunner("cheap", "cat > /dev/null")
-	// Spins a counted loop per line: clearly linear in N.
 	expensive := shellRunner("expensive",
 		"while read -r l; do i=0; while [ $i -lt 2000 ]; do i=$((i+1)); done; done")
 
-	payloads := [][]byte{[]byte(`{"a":1}`)}
-	const maxN = 20
-
-	got, err := measurePair(meter, []runner{cheap, expensive}, payloads, 2, 1, maxN)
+	got, err := measurePair(meter, []runner{cheap, expensive}, [][]byte{[]byte(`{"a":1}`)}, 2, 1, 20)
 	if err != nil {
 		t.Fatalf("measurePair: %v", err)
 	}
 	if len(got) != 2 {
 		t.Fatalf("got %d measurements, want 2", len(got))
 	}
-
 	if got[0].Invocations != got[1].Invocations {
 		t.Errorf("invocation counts differ: %s=%d, %s=%d - both sides must be measured at the same N",
 			got[0].Language, got[0].Invocations, got[1].Language, got[1].Invocations)
 	}
-	if got[0].Invocations != maxN {
-		t.Errorf("settled at N=%d, want %d: the unresolvable side must drive escalation to the cap",
-			got[0].Invocations, maxN)
-	}
-	if got[0].Resolved {
-		t.Error("cheap side resolved, want unresolved (its cost does not grow with N)")
-	}
-	if got[0].Note == "" {
-		t.Error("cheap side carries no note explaining why it is unresolved")
-	}
-	if !got[1].Resolved {
-		t.Error("expensive side did not resolve, want resolved")
+	if got[0].Invocations == 0 {
+		t.Error("no invocation count recorded")
 	}
 }

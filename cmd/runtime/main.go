@@ -89,14 +89,17 @@ func main() {
 // Report is the detailed output; runtime.json is the reduced form cmd/energy
 // consumes.
 type Report struct {
-	Meter          string           `json:"meter"`
-	MeterDetail    string           `json:"meter_detail"`
-	EnergyMeasured bool             `json:"energy_measured"`
-	EnergyDerived  bool             `json:"energy_derived"`
-	Invocations    int              `json:"invocations"`
-	Repetitions    int              `json:"repetitions"`
-	Functions      []FunctionResult `json:"functions"`
-	Notes          []string         `json:"notes,omitempty"`
+	Meter          string `json:"meter"`
+	MeterDetail    string `json:"meter_detail"`
+	EnergyMeasured bool   `json:"energy_measured"`
+	EnergyDerived  bool   `json:"energy_derived"`
+	Invocations    int    `json:"invocations"`
+	Repetitions    int    `json:"repetitions"`
+	// Python is the interpreter the Python side ran under, including the
+	// installed package versions - they run inside the measured region.
+	Python    PythonEnv        `json:"python"`
+	Functions []FunctionResult `json:"functions"`
+	Notes     []string         `json:"notes,omitempty"`
 }
 
 // FunctionResult pairs the two sides for one function.
@@ -175,6 +178,18 @@ func run(opt options) error {
 		MeterDetail: meter.Describe(),
 		Invocations: opt.invocations,
 		Repetitions: opt.reps,
+		Python:      describePython(python),
+	}
+	// A stdlib-only interpreter imports 23 of the 95 evaluation_set sources;
+	// the rest are reported SKIP and never reach runtime.json, so a pass run
+	// against the wrong Python quietly produces a fraction of the N* values
+	// it should. Say so up front rather than at the end of an hour.
+	if _, ok := report.Python.Packages["boto3"]; !ok {
+		report.Notes = append(report.Notes, fmt.Sprintf(
+			"%s has no boto3 installed. Most of this corpus imports it, and a function whose "+
+				"import fails is SKIPped rather than measured. Install "+
+				"evaluation/harness/requirements.txt into a venv and point PYSCAN_PYTHON at it.",
+			python))
 	}
 	if meter.Kind() == MeterTime {
 		if opt.watts > 0 {

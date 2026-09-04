@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -29,6 +30,62 @@ func findPython() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no python3 interpreter found (set PYSCAN_PYTHON)")
+}
+
+// PythonEnv records the interpreter the Python side actually ran under, and
+// what was installed in it.
+//
+// It belongs in the report because these packages run *inside* the measured
+// region: handler.py imports the dataset function before invoking it, so
+// boto3's import cost is a large part of the Python side's startup term. A
+// different resolution on a later machine moves the Python-vs-Go ratio with
+// nothing in the pipeline having changed - which is exactly the kind of
+// difference that is impossible to explain months later if the versions were
+// not written down beside the numbers they produced.
+type PythonEnv struct {
+	Interpreter string            `json:"interpreter"`
+	Version     string            `json:"version"`
+	Packages    map[string]string `json:"packages,omitempty"`
+	Note        string            `json:"note,omitempty"`
+}
+
+// pythonProbe asks the interpreter to describe itself. importlib.metadata is
+// used rather than `pip freeze` because pip need not be installed in the
+// interpreter under test, while importlib.metadata is stdlib from 3.8.
+const pythonProbe = `
+import json, sys
+try:
+    from importlib.metadata import distributions
+    pkgs = {}
+    for d in distributions():
+        name = d.metadata["Name"]
+        if name:
+            pkgs[name] = d.version
+except Exception:
+    pkgs = {}
+json.dump({"version": sys.version.split()[0], "packages": pkgs}, sys.stdout)
+`
+
+// describePython probes the interpreter for its version and installed
+// distributions. A probe failure is recorded as a note rather than failing
+// the run: it is provenance, and losing it must not cost a measurement pass.
+func describePython(python string) PythonEnv {
+	env := PythonEnv{Interpreter: python}
+	out, err := exec.Command(python, "-c", pythonProbe).Output()
+	if err != nil {
+		env.Note = fmt.Sprintf("could not probe interpreter: %v", err)
+		return env
+	}
+	var probed struct {
+		Version  string            `json:"version"`
+		Packages map[string]string `json:"packages"`
+	}
+	if err := json.Unmarshal(out, &probed); err != nil {
+		env.Note = fmt.Sprintf("unparseable probe output: %v", err)
+		return env
+	}
+	env.Version, env.Packages = probed.Version, probed.Packages
+	return env
 }
 
 // writeHarness materializes the Python harness into the scratch directory.

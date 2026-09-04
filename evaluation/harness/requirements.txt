@@ -1,0 +1,49 @@
+# Python packages the *measured functions* need, not the harness.
+#
+# evaluation/harness/handler.py imports each dataset function before invoking
+# it, so a missing third-party module is not a degraded measurement - it is no
+# measurement at all: cmd/runtime reports the function as SKIP and it never
+# reaches runtime.json, and therefore never gets an N*. On a stdlib-only
+# interpreter only 23 of the 95 evaluation_set sources import successfully;
+# with this set, all 95 do.
+#
+# Versions are pinned rather than floated (unlike evaluation/prediction's
+# requirements.txt, which only bounds below) because these run inside the
+# measured region. boto3's import cost alone is a large fraction of the Python
+# side's startup term, so a different resolution on a later machine would move
+# the Python-vs-Go energy ratio without anything in the pipeline changing.
+# Pinning is what makes runtime-report-*.json reproducible on another host.
+#
+# Point the driver at an interpreter that has these:
+#
+#   python3 -m venv .venv
+#   .venv/bin/pip install -r evaluation/harness/requirements.txt
+#   export PYSCAN_PYTHON="$PWD/.venv/bin/python"
+#
+# PYSCAN_PYTHON serves both cmd/pyscan and cmd/runtime deliberately: pyscan
+# needs only the stdlib, and having the analysis stage and the measurement
+# harness disagree about which Python is in use would be a nasty source of
+# unexplained differences.
+#
+# Resolved and verified 2026-09-05 on CPython 3.14.4, x86_64 Linux
+# (carl-eikermann-UX310UAK). The transitive pins are listed too, because
+# "boto3==1.43.89" alone does not fix botocore, and botocore is where the
+# import cost is.
+
+# Direct: the modules the dataset's functions import.
+boto3==1.43.89
+python-dateutil==2.9.0.post0
+requests==2.34.2
+beautifulsoup4==4.15.0
+urllib3==2.7.0
+
+# Transitive, pinned for reproducibility.
+botocore==1.43.89
+certifi==2026.7.22
+charset-normalizer==3.5.1
+idna==3.19
+jmespath==1.1.0
+s3transfer==0.19.2
+six==1.17.0
+soupsieve==2.9.2
+typing_extensions==4.16.0
