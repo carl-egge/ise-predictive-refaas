@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
+	"github.com/carl-egge/ise-predictive-refaas/internal/hostenergy"
 	"github.com/carl-egge/ise-predictive-refaas/internal/inputhandler"
 	"github.com/carl-egge/ise-predictive-refaas/internal/outputhandler"
 	"github.com/carl-egge/ise-predictive-refaas/internal/pipeline"
@@ -50,6 +51,13 @@ type ConverterService struct {
 	// uploadPolicy controls how strictly uploads are validated; benchmark
 	// runs additionally require the dataset's meta.json.
 	uploadPolicy inputhandler.ValidateOptions
+	// idleWatts is this host's baseline draw, measured once before the worker
+	// takes its first job ([H5]). Recorded on every job so the analysis can
+	// separate the energy a conversion *caused* from the energy merely drawn
+	// while it ran - a distinction that matters here because most of a job's
+	// wall clock is spent waiting on a remote LLM API, with this machine
+	// close to idle. Guarded by mutex; zero when the host is unmetered.
+	idleWatts float64
 }
 
 // jobStatus is the state of a job that hasn't finished yet.
@@ -107,8 +115,40 @@ func MakeConverterService() error {
 	return http.ListenAndServe("0.0.0.0:8080", r)
 }
 
+// hostIdleBaselineWindow is how long the idle draw is sampled for. Long
+// enough to average over RAPL's update interval (~1 ms) and any background
+// scheduler noise, short enough that it never delays the first upload
+// noticeably.
+const hostIdleBaselineWindow = 2 * time.Second
+
+// measureHostIdle records this host's baseline power draw before the worker
+// takes any work ([H5]). Taken here rather than lazily on the first job for
+// the obvious reason: by the time a job exists, the machine is no longer idle.
+func (service *ConverterService) measureHostIdle() {
+	meter := hostenergy.Default()
+	if meter == nil {
+		log.Infof("host energy: no readable counter on this host; translations will be costed as inference only unless cmd/energy is given a fallback wattage")
+		return
+	}
+	watts, ok := meter.IdleWatts(hostIdleBaselineWindow)
+	if !ok {
+		return
+	}
+	service.mutex.Lock()
+	service.idleWatts = watts
+	service.mutex.Unlock()
+	log.Infof("host energy: metering via %s, idle baseline %.1f W", meter.Source(), watts)
+}
+
+func (service *ConverterService) hostIdleWatts() float64 {
+	service.mutex.RLock()
+	defer service.mutex.RUnlock()
+	return service.idleWatts
+}
+
 // Start runs the background worker loop that processes queued conversion requests.
 func (service *ConverterService) Start(ctx context.Context) {
+	service.measureHostIdle()
 	for job := range service.requestQueue {
 		request := job.request
 		log.Infof("starting request for %s", request.Id)
@@ -118,10 +158,17 @@ func (service *ConverterService) Start(ctx context.Context) {
 		service.mutex.Unlock()
 
 		startTime := time.Now()
+		// The authoritative per-job host energy ([H5]): the whole window this
+		// machine was occupied by this conversion, including the gaps between
+		// stages that belong to the job but to no single stage. The per-task
+		// figures recorded inside the pipeline are the breakdown, and their
+		// sum is a lower bound on this.
+		energyStart := hostenergy.Default().Sample()
 		service.runnerMu.Lock()
 		err := service.converter.Convert(job.ctx, request)
 		service.runnerMu.Unlock()
 		endTime := time.Now()
+		hostJoules, hostMetered := hostenergy.Default().Sample().Since(energyStart)
 
 		service.mutex.Lock()
 		if cancel, ok := service.cancels[request.Id]; ok {
@@ -143,6 +190,11 @@ func (service *ConverterService) Start(ctx context.Context) {
 			request.Metrics.StartTime = startTime
 			request.Metrics.EndTime = endTime
 			request.Metrics.TotalTime = endTime.Sub(startTime)
+			if hostMetered {
+				request.Metrics.HostJoules = hostJoules
+				request.Metrics.HostEnergySource = hostenergy.Default().Source()
+				request.Metrics.HostIdleWatts = service.hostIdleWatts()
+			}
 			issues := make([]string, 0)
 			for _, err := range request.Errors() {
 				issues = append(issues, fmt.Sprintf("%v", err))

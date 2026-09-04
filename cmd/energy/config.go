@@ -38,6 +38,26 @@ type Config struct {
 		MarketCO2eGramsPerKWh *float64 `json:"market_co2e_grams_per_kwh"`
 	} `json:"facility"`
 
+	// Host is the machine that runs the *pipeline* - not the inference node.
+	// It builds, tests and scans, and until [H5] it contributed exactly zero
+	// to E_translation, which is why cmd/energy printed 0.0 J against
+	// goBuilder and goTester.
+	//
+	// Since 2026-09-04 the service measures this directly from RAPL and
+	// records it on every job, so these constants are only a fallback for run
+	// logs written before that, or produced on a host with no readable
+	// counter. A figure derived from them is tagged "estimated" everywhere it
+	// appears, exactly as cmd/runtime tags its -watts figures.
+	Host struct {
+		// FallbackPowerWatts is the whole-machine draw assumed when a job
+		// carries no measurement. Zero (the default) means: report host
+		// energy as unavailable rather than invent it.
+		FallbackPowerWatts float64 `json:"fallback_power_watts"`
+		// FallbackIdleWatts, when set, lets the fallback estimate report a
+		// marginal figure alongside the gross one.
+		FallbackIdleWatts float64 `json:"fallback_idle_watts"`
+	} `json:"host"`
+
 	Analysis struct {
 		RepairStages []string `json:"repair_stages"`
 	} `json:"analysis"`

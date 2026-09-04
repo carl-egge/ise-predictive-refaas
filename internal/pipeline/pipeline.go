@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/carl-egge/ise-predictive-refaas/internal/domain"
+	"github.com/carl-egge/ise-predictive-refaas/internal/hostenergy"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -172,9 +173,19 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 			// it - no restore logic needed, unlike CurrentTask.
 			req.CurrentAttempt = task.RetryCount + 1
 			attemptStart := time.Now()
+			// Host energy is bracketed per attempt ([H5]), which is what lets
+			// the per-stage table show what goBuilder and goTester actually
+			// cost this machine instead of the 0.0 J an inference-only model
+			// reports for them. Recovery runs outside this window (it is
+			// invoked from the failure branch below), so nothing is counted
+			// twice.
+			energyStart := hostenergy.Default().Sample()
 			err = task.Execute.Apply(runner, req)
 			if req.Metrics != nil {
 				req.Metrics.RecordTaskAttempt(task.ID, time.Since(attemptStart), err == nil)
+				if joules, ok := hostenergy.Default().Sample().Since(energyStart); ok {
+					req.Metrics.RecordTaskHostEnergy(task.ID, joules)
+				}
 			}
 			if err == nil {
 				log.Debugf("task (%s) executed successfully", task.ID)

@@ -175,6 +175,27 @@ type Metrics struct {
 	BuildTime time.Duration `json:"build_time"`
 	TestTime  time.Duration `json:"test_time"`
 
+	// HostJoules is the energy the machine running the pipeline drew while
+	// this conversion ran, read from a hardware counter ([H5]). It is the
+	// term `E_translation` was missing: LLM inference happens on the
+	// provider's node, but `go mod tidy`, `go build`, one process per fixture
+	// per test round and the Floci containers all happen here, and were
+	// costed at exactly zero.
+	//
+	// Zero with an empty HostEnergySource means "not measured" - not "free".
+	// Readers must check the source before using the number; cmd/energy falls
+	// back to an explicitly-tagged estimate when it is absent, because every
+	// run log written before this existed has no counter reading at all.
+	HostJoules float64 `json:"host_joules,omitempty"`
+	// HostEnergySource names the backend that produced HostJoules ("rapl"),
+	// empty when the host had no readable counter.
+	HostEnergySource string `json:"host_energy_source,omitempty"`
+	// HostIdleWatts is the baseline draw measured on this host while idle, so
+	// the analysis can separate the energy the conversion *caused* from the
+	// energy merely drawn while it ran. The distinction is large here: most
+	// of a job's wall clock is spent waiting on a remote LLM API.
+	HostIdleWatts float64 `json:"host_idle_watts,omitempty"`
+
 	BuildError int `json:"build_error"`
 	TestError  int `json:"test_error"`
 	Tasks      int `json:"tasks"`
@@ -357,12 +378,21 @@ func (m *Metrics) RecordTestOutcome(o TestOutcome) {
 
 // TaskMetrics aggregates one pipeline task's activity across a request.
 type TaskMetrics struct {
-	Executions   int           `json:"executions"`
-	Failures     int           `json:"failures"`
-	Duration     time.Duration `json:"duration"`
-	LLMCalls     int           `json:"llm_calls"`
-	PromptTokens int           `json:"prompt_tokens"`
-	EvalTokens   int           `json:"eval_tokens"`
+	Executions int           `json:"executions"`
+	Failures   int           `json:"failures"`
+	Duration   time.Duration `json:"duration"`
+	// HostJoules is the host energy drawn during this stage's attempts
+	// ([H5]). It is what makes the per-stage energy table honest: before it,
+	// goBuilder and goTester - the stages that actually work this machine -
+	// reported 0.0 J, because the only energy modelled was the provider's.
+	//
+	// Summing it across stages is a lower bound on the job's host energy, not
+	// the total: time between stages belongs to the job but to no stage.
+	// Metrics.HostJoules is the authoritative per-job figure.
+	HostJoules   float64 `json:"host_joules,omitempty"`
+	LLMCalls     int     `json:"llm_calls"`
+	PromptTokens int     `json:"prompt_tokens"`
+	EvalTokens   int     `json:"eval_tokens"`
 	// Model names the model whose coefficients apply to this stage's tokens.
 	// A pipeline may set model_name per task, and energy per token is derived
 	// from a specific model's parameter count and weight bytes, so costing a
@@ -400,6 +430,20 @@ func (m *Metrics) RecordTaskAttempt(id string, d time.Duration, success bool) {
 	if !success {
 		tm.Failures++
 	}
+}
+
+// RecordTaskHostEnergy attributes joules measured on the pipeline's own
+// machine to a task ([H5]).
+//
+// Separate from RecordTaskAttempt rather than an extra parameter on it: host
+// energy is only available when the host exposes a counter, and a caller
+// without one must record the attempt regardless. Passing a zero through the
+// common path would make "unmetered" and "free" the same value.
+func (m *Metrics) RecordTaskHostEnergy(id string, joules float64) {
+	if joules <= 0 {
+		return
+	}
+	m.taskMetrics(id).HostJoules += joules
 }
 
 // RecordLLMCall attributes one LLM invocation's token usage - and the model

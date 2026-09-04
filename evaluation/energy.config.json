@@ -86,6 +86,36 @@
     "_source": "pue: GWDG press release 4/2021 (Emmy, 2021 - GWDG did not answer this, so it stays assumed); grid: Umweltbundesamt; market: gwdg (carbon-neutral, 2026-08-22)"
   },
 
+  "host": {
+    "_comment": [
+      "The machine that runs the *pipeline*, not the inference node ([H5]).",
+      "It runs pyScan, go mod tidy, go build, one process per fixture per test",
+      "round, and Floci's emulator containers - and until 2026-09-04 it",
+      "contributed exactly zero to E_translation, which is why cmd/energy",
+      "printed 0.0 J against goBuilder and goTester.",
+      "",
+      "The service now measures this directly: RAPL counters are read either",
+      "side of every job and recorded on the run log, so no constant is needed",
+      "and none is used when a measurement is present. These two values are the",
+      "fallback for run logs written before that (every run up to and including",
+      "20260831-190900) or produced on a host with no readable counter - WSL2,",
+      "macOS, most containers.",
+      "",
+      "Both default to 0, which makes cmd/energy report host energy as NOT",
+      "COUNTED rather than invent it. That is the same rule cmd/runtime's",
+      "meters enforce: never report a joule that was not measured or explicitly",
+      "derived from a stated constant. Set fallback_power_watts to re-cost an",
+      "older run, and the figure is tagged ESTIMATED wherever it appears.",
+      "",
+      "If you do set them: the run host is carl-eikermann-UX310UAK, an",
+      "ultraportable laptop. Measure it rather than guessing - the next metered",
+      "run reports its own idle baseline in the service log at startup."
+    ],
+    "_source": "measured per job when the host exposes RAPL; these fallbacks are assumed and must be tagged as such",
+    "fallback_power_watts": 0,
+    "fallback_idle_watts": 0
+  },
+
   "analysis": {
     "_comment": [
       "repair_stages lists the pipeline task ids whose energy is repair rather",

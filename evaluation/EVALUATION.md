@@ -117,6 +117,13 @@ In a translation pipeline prompts are long (source file + instructions +
 examples) and outputs moderate, so a single blended per-token rate would
 distort the result materially.
 
+This two-phase split is not our construction: it is the standard roofline
+analysis of transformer inference (Pope et al. 2023, source 9), which is what
+justifies deriving `e_in` from FLOPs and `e_out` from memory bandwidth rather
+than from one blended rate. The `/ B` term in `e_out` follows from the same
+analysis and from continuous batching (source 10) — one sweep of the weights
+through memory serves every request in the batch.
+
 ### Coefficient derivation
 
 **`e_in` — energy per input token**
@@ -346,21 +353,56 @@ Requirements from the original draft, checked against the code:
 3. **The model is not recorded per stage** — energy coefficients are
    per-model, and pipelines may set `model_name` per task. → [H3]
 
-### Local compute (non-LLM pipeline energy)
+### Local compute (non-LLM pipeline energy) — **measured since 2026-09-04**
 
-`E_translation` as defined in section 3 counts LLM inference only. The
-pipeline additionally runs, per attempt: `go mod init`/`go mod tidy` (network
-+ CPU), `go build`, and one `./fn` process per fixture per test round — plus
-Floci emulator containers when the integration route is enabled. On repeated
-repair loops this is not obviously negligible relative to a few thousand
-tokens.
+`E_translation` originally counted LLM inference only, while the pipeline also
+ran, per attempt: `go mod init`/`go mod tidy` (network + CPU), `go build`, and
+one `./fn` process per fixture per test round — plus Floci emulator containers
+on the integration route. The visible symptom was that `cmd/energy`’s
+per-stage table printed **0.0 J** against `goBuilder`, `goTester` and `pyScan`:
+the stages that do all the local work were costed at exactly nothing.
 
-`per_task[...].duration` already gives the wall-clock of the build and test
-stages, so this can be bounded cheaply: multiply measured stage duration by a
-measured host power draw, or measure a representative build/test round with
-`perf stat` (the same instrument used in section 6) and scale. Decide between
-*measure* and *declare as an excluded, bounded term* — either is defensible,
-silently ignoring it is not. → [H5]
+The choice this section demanded — *measure* or *declare as an excluded,
+bounded term* — is resolved as **measure**, and directly rather than by
+scaling a representative round:
+
+- `internal/hostenergy` reads the RAPL package counters under
+  `/sys/class/powercap`. The service samples them either side of every job and
+  the pipeline either side of every task attempt, so each run-log record
+  carries `host_joules` for the job plus a per-stage breakdown. It is a counter
+  difference: **no assumed wattage enters the figure at all.**
+- `E_translation = E_inference × PUE + E_host`. PUE is deliberately *not*
+  applied to the host term: that machine sits on a desk, not in GWDG’s hall,
+  and grossing it up by a datacentre’s cooling overhead would be an invented
+  number.
+- Where no counter exists (WSL2, macOS, most containers) or the run log
+  predates this, `cmd/energy` falls back to
+  `host.fallback_power_watts × duration` and tags every resulting figure
+  **ESTIMATED**. Both fallback constants default to `0`, so the tool reports
+  host energy as `NOT COUNTED` rather than invent it — the same rule §6’s
+  meters enforce.
+
+**Gross and marginal are reported side by side**, because they differ by far
+more than the choice between them looks like it should. About **92% of a job’s
+wall clock is spent waiting on the remote LLM API**, with the pipeline host
+close to idle — measured over run 20260831-190900: 24,101 s of 26,134 s inside
+LLM stages, against 2,033 s of actual local compute. So:
+
+- **gross** = every joule the host drew while the conversion occupied it;
+- **marginal** = gross − `idle_watts × duration`, the part the conversion
+  *caused*. The service measures its own idle baseline once at startup, before
+  taking its first job, and records it on every job.
+
+The marginal figure is the one consistent with the marginal-cost framing this
+document already adopts for the inference side; the gross figure is the honest
+answer to “what did this machine burn while producing that translation”. The
+report prints both, and the write-up must state which it quotes.
+
+For scale, run 20260831-190900 re-costed with the fallback at a nominal
+25 W / 11 W idle: mean `E_translation` moves from **11.5 kJ to 16.1 kJ** per
+completed translation. The host term is neither negligible nor dominant —
+which is precisely why it had to be measured rather than argued about. → [H5],
+closed.
 
 ---
 
@@ -588,15 +630,32 @@ Write this section. Items to cover:
   a measured value for this hall.
 - Carbon-neutrality is a **market-based** claim about procurement. Both
   intensities are reported; neither includes embodied manufacturing emissions.
-- Token counts used as a proxy for computational work.
+- Token counts used as a proxy for computational work. Luccioni et al. 2024
+  (source 16) is the strongest published evidence against this: measured
+  per-inference energy varies by task at comparable token counts.
+- **One `P_node` is applied to both phases, and that overstates `e_out`.**
+  Splitwise (Patel et al. 2024, source 14) reports that decode draws materially
+  less power than prefill, because a memory-bound phase leaves the compute
+  units idle while this model charges it the full node draw. Since an output
+  token costs ~3.5× an input token here, `e_out` dominates, so the *direction*
+  of this error is known even though its size is not: the estimate is
+  conservative. Reported as a bounded bias rather than left implicit — the
+  alternative would need per-phase power telemetry GWDG has declined to
+  release.
 - Prefix caching, if active, makes the estimate conservative — and it cannot
   be quantified here, since SAIA does not expose `cached_tokens` (verified).
 - Marginal-cost framing excludes idle and embodied energy — and GWDG's
   carbon-neutral status does not change that, since it covers operational
   emissions only.
-- **Local pipeline compute (builds, test executions, Floci containers) is
-  excluded from `E_translation`**, or included only as a bounded estimate —
-  state which, and give the bound (see [Local compute](#local-compute-non-llm-pipeline-energy)).
+- **Local pipeline compute (builds, test executions, Floci containers) is now
+  measured**, not excluded: RAPL counters are read either side of every job and
+  every stage, and `E_translation = E_inference × PUE + E_host`. Two caveats
+  remain. The host figure is a whole-machine package counter, so it includes
+  whatever else that machine was doing — the run host has to be otherwise
+  quiet. And ~92% of a job's wall clock is spent waiting on the LLM API, so
+  gross and marginal host energy differ by roughly 4×; both are reported, and a
+  quoted figure must say which it is (see
+  [Local compute](#local-compute-non-llm-pipeline-energy--measured-since-2026-09-04)).
 - Single model, single provider, single hardware generation. If any run mixes
   models across stages, per-stage coefficients must be applied — a run-level
   average would be wrong.
@@ -656,15 +715,94 @@ Write this section. Items to cover:
 
 **To verify before citing — methodology**
 
-> These were drawn from background knowledge and an automated research pass,
-> not from documents opened and checked directly. Open each one, confirm
-> authors, year, venue and figures, and only then add it to the bibliography.
+> These were drawn from background knowledge, not from documents opened and
+> checked directly. Open each one, confirm authors, year, venue and the
+> specific figures, and only then add it to the bibliography.
 
-7. Kaplan et al. (2020), "Scaling Laws for Neural Language Models",
-   arXiv:2001.08361 — the 2N FLOPs-per-token approximation behind `e_in`
-8. Luccioni, Jernite & Strubell (2024), "Power Hungry Processing", ACM FAccT 2024
-9. ML.ENERGY Leaderboard — https://ml.energy/leaderboard
-10. Umweltbundesamt — German grid CO₂ intensity, most recent annual figure
+Grouped by the part of the model each one supports, so a reader can check the
+derivation clause by clause rather than against an undifferentiated list.
+
+*§3, the time model — where the coefficients come from*
+
+7. **Kaplan et al. (2020)**, "Scaling Laws for Neural Language Models",
+   arXiv:2001.08361 — the 2N FLOPs-per-token approximation behind `T_prefill`.
+8. **Chowdhery et al. (2022)**, "PaLM: Scaling Language Modeling with
+   Pathways", arXiv:2204.02311 — introduces Model FLOPs Utilization, the metric
+   `model_flop_utilization = 0.4` instantiates.
+9. **Pope et al. (2023)**, "Efficiently Scaling Transformer Inference", MLSys,
+   arXiv:2211.05102 — **the load-bearing reference for this whole section.**
+   It is the canonical statement that prefill is compute-bound while decode is
+   memory-bandwidth-bound, which is why `e_in` is derived from FLOPs and
+   `e_out` from `weight_bytes / HBM bandwidth`. Without it the most distinctive
+   choice in the model is unsupported.
+10. **Yu et al. (2022)**, "Orca", OSDI, and **Kwon et al. (2023)**, "Efficient
+    Memory Management for Large Language Model Serving with PagedAttention"
+    (vLLM), SOSP, arXiv:2309.06180 — continuous batching: why one weight sweep
+    through memory serves `B` requests, i.e. the `/ concurrency` term in
+    `e_out`.
+
+*§3 → §4, turning time into joules*
+
+11. **Patterson et al. (2021)**, "Carbon Emissions and Large Neural Network
+    Training", arXiv:2104.10350 — the power × time × PUE methodology this
+    document follows, and the source of the convention that PUE is applied to
+    the datacentre term only.
+12. **Strubell, Ganesh & McCallum (2019)**, "Energy and Policy Considerations
+    for Deep Learning in NLP", ACL — the foundational framing.
+13. **Henderson et al. (2020)**, "Towards the Systematic Reporting of the
+    Energy and Carbon Footprints of Machine Learning", JMLR — reporting
+    conventions; relevant to what section 4's constants table must disclose.
+
+*Contradicts an assumption made here — cite it, do not avoid it*
+
+14. **Patel et al. (2024)**, "Splitwise: Efficient Generative LLM Inference
+    Using Phase Splitting", ISCA, arXiv:2311.18677 — reports that prefill and
+    decode draw **materially different power**, decode being lower because a
+    memory-bound phase leaves the compute units idle. This model applies one
+    constant `P_node` to both phases, so `e_out` is likely **over**estimated —
+    and `e_out` dominates, since an output token costs ~3.5× an input token
+    here. The direction of the error is therefore known, which makes it a
+    conservative estimate rather than an unquantified assumption. State it that
+    way in the threats to validity; an examiner who knows this paper will
+    otherwise find the gap unaided.
+
+*Measured per-token energy, for a plausibility check against §3's coefficients*
+
+15. **Samsi et al. (2023)**, "From Words to Watts: Benchmarking the Energy Costs
+    of Large Language Model Inference", IEEE HPEC, arXiv:2310.03003 — measured
+    joules per token for LLaMA on A100/V100. The closest thing to an
+    independent check on `e_in ≈ 0.26 J` and `e_out ≈ 0.91 J`; different
+    hardware and model size, so compare orders of magnitude, not values.
+16. **Luccioni, Jernite & Strubell (2024)**, "Power Hungry Processing: Watts
+    Driving the Cost of AI Deployment?", ACM FAccT, arXiv:2311.16863 — measured
+    per-inference energy across tasks and models. Also the strongest published
+    challenge to token counts as a proxy for work (section 8's limitation).
+17. **ML.ENERGY Leaderboard** — https://ml.energy/leaderboard
+
+*§5, the host-energy term ([H5])*
+
+18. **Khan et al. (2018)**, "RAPL in Action: Experiences in Using RAPL for
+    Power Measurements", ACM TOMPECS — accuracy and limitations of the powercap
+    counters `internal/hostenergy` and `cmd/runtime` both read. Required
+    reading before any RAPL figure is quoted as a measurement.
+
+*§6, the Go vs. Python comparison*
+
+19. **Pereira et al. (2017)**, "Energy Efficiency across Programming
+    Languages", SLE; extended in *Science of Computer Programming* (2021) — the
+    canonical cross-language energy ranking. The reference point the measured
+    Go/Python ratio should be held against.
+
+*§4, carbon accounting and the marginal-cost framing*
+
+20. **GHG Protocol Scope 2 Guidance** (2015) — the dual location-based /
+    market-based reporting rule this document follows.
+21. **Gupta et al. (2021)**, "Chasing Carbon: The Elusive Environmental
+    Footprint of Computing", HPCA, and **Wu et al. (2022)**, "Sustainable AI:
+    Environmental Implications, Challenges and Opportunities", MLSys —
+    operational vs. embodied emissions; support for excluding embodied
+    manufacturing while saying so explicitly.
+22. **Umweltbundesamt** — German grid CO₂ intensity, most recent annual figure.
 
 Optional if regulatory or plausibility context is needed: Google's 2025 Gemini
 inference-energy paper (~0.24 Wh per median prompt) and EU AI Act Annex XI

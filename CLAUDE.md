@@ -43,6 +43,11 @@ Helper scripts (`scripts/`):
 The system is pipeline-centric: a conversion run is a sequence of configurable, retryable stages wired together at startup (or at runtime via `/reconfigure`), not a single LLM call.
 
 ```
+internal/hostenergy/   RAPL package counters (/sys/class/powercap) read either side
+                       of every job and every task attempt, so a translation is
+                       costed as inference **plus** what the pipeline's own machine
+                       drew ([H5]). Nil meter = unmetered host, which is reported as
+                       such, never as zero joules.
 cmd/energy/            analysis tool: run logs -> energy per translation/stage/function,
                        sensitivity sweep, break-even N*. Never runs during a conversion;
                        all constants in evaluation/energy.config.json (no compiled-in
@@ -50,6 +55,14 @@ cmd/energy/            analysis tool: run logs -> energy per translation/stage/f
                        Every table describes *completed* translations; failed attempts
                        are costed separately under "Failed attempts", with the run's
                        cost per success (failures amortized in).
+                       E_translation = E_inference x PUE + E_host ([H5]). PUE applies
+                       only to the inference node. Host energy is measured when the
+                       run log carries a counter reading, ESTIMATED from
+                       host.fallback_power_watts otherwise, and NOT COUNTED when
+                       neither exists - never silently zero. Gross and marginal (net
+                       of the measured idle baseline) are both reported: ~92% of a
+                       job's wall clock is spent waiting on the LLM API, so they
+                       differ by ~4x and a quoted figure must say which it is.
 cmd/runtime/           analysis tool: measures the Go translation against the Python
                        original over the same fixture payloads; emits the per-function
                        joules cmd/energy needs for break-even N*. Never runs during a

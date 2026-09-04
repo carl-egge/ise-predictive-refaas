@@ -32,6 +32,24 @@ type Report struct {
 	TotalFacilityJoules  float64 `json:"total_facility_joules"`
 	MeanFacilityJoules   float64 `json:"mean_facility_joules"`
 	MedianFacilityJoules float64 `json:"median_facility_joules"`
+	// TotalComputeJoules is the inference term alone, before PUE and before
+	// the host term. Kept explicitly because the repair and per-stage shares
+	// are shares *of inference*, and deriving it back out of the facility
+	// total by dividing by PUE stopped being correct once the host term
+	// joined that total ([H5]).
+	TotalComputeJoules float64 `json:"total_compute_joules"`
+	// TotalHostJoules is what the pipeline's own machine drew across these
+	// translations, and TotalHostMarginalJoules is that net of its idle
+	// baseline - the part the conversions actually caused.
+	TotalHostJoules         float64 `json:"total_host_joules"`
+	TotalHostMarginalJoules float64 `json:"total_host_marginal_joules,omitempty"`
+	// HostSource is "rapl" when every translation carried a counter reading,
+	// "estimated" when the figure came from a configured wattage, "mixed"
+	// when the set contains both, and empty when no host energy is known.
+	HostSource string `json:"host_source,omitempty"`
+	// TranslationsWithoutHostEnergy counts translations contributing no host
+	// term at all, so a partially-metered run cannot look fully measured.
+	TranslationsWithoutHostEnergy int `json:"translations_without_host_energy,omitempty"`
 	// TotalCO2eGrams is location-based: the German grid intensity applied to
 	// the energy actually drawn. TotalCO2eGramsMarket is the market-based
 	// counterpart under the provider's own procurement (zero for GWDG, who
@@ -84,13 +102,67 @@ type FailedAttempts struct {
 
 // StageAggregate is one pipeline stage summed across translations.
 type StageAggregate struct {
-	Task       string  `json:"task"`
-	Joules     float64 `json:"joules"`
+	Task   string  `json:"task"`
+	Joules float64 `json:"joules"`
+	// HostJoules is this stage's cost on the machine running the pipeline
+	// ([H5]). For goBuilder/goTester/pyScan it is the stage's entire energy:
+	// they make no inference calls, and before this existed they appeared in
+	// the table at 0.0 J while compiling and running test binaries.
+	HostJoules float64 `json:"host_joules,omitempty"`
 	Share      float64 `json:"share"`
 	Executions int     `json:"executions"`
 	Failures   int     `json:"failures"`
 	LLMCalls   int     `json:"llm_calls"`
 	IsRepair   bool    `json:"is_repair"`
+}
+
+// writeHostEnergy renders the pipeline machine's contribution ([H5]).
+//
+// It prints even when nothing is known, because "not counted" is the finding
+// this section exists to stop being invisible: for months E_translation was
+// inference alone, and the per-stage table showed 0.0 J against the stages
+// that run compilers and test binaries.
+func (r *Report) writeHostEnergy(w io.Writer) {
+	if r.HostSource == "" {
+		fmt.Fprintf(w, "    of which:    %s LLM inference, host energy NOT COUNTED\n",
+			formatJoules(r.TotalFacilityJoules))
+		fmt.Fprintln(w, "                 (this run log predates host metering; set host.fallback_power_watts to estimate it)")
+		return
+	}
+
+	label := "measured via " + r.HostSource
+	if r.HostSource == hostSourceEstimated {
+		label = "ESTIMATED from a configured wattage, not measured"
+	}
+	// Inference-with-PUE is the total minus the host term rather than a
+	// re-multiplication, so the two lines always add back to the headline.
+	fmt.Fprintf(w, "    of which:    %s LLM inference (incl. PUE) + %s pipeline host (%s)\n",
+		formatJoules(r.TotalFacilityJoules-r.TotalHostJoules),
+		formatJoules(r.TotalHostJoules), label)
+	if r.TotalHostMarginalJoules > 0 {
+		fmt.Fprintf(w, "                 host above idle: %s - the rest was drawn waiting on the LLM API\n",
+			formatJoules(r.TotalHostMarginalJoules))
+	}
+	if r.TranslationsWithoutHostEnergy > 0 {
+		fmt.Fprintf(w, "                 WARNING: %d translation(s) carry no host energy; the total is a lower bound\n",
+			r.TranslationsWithoutHostEnergy)
+	}
+}
+
+// combinedHostSource collapses the per-translation provenance into one label.
+// "mixed" is deliberately not smoothed away: a set half measured and half
+// derived from a configured wattage is not a measured set, and reporting it as
+// one would be the same category of error as costing build stages at zero.
+func combinedHostSource(sources map[string]bool) string {
+	switch len(sources) {
+	case 0:
+		return ""
+	case 1:
+		for s := range sources {
+			return s
+		}
+	}
+	return "mixed"
 }
 
 // GroupAggregate summarises one reporting axis (complexity bucket, AWS usage).
@@ -139,13 +211,23 @@ func Build(cfg *Config, jobs []TranslationEnergy, runtime map[string]RuntimeMeas
 	var repairJoules float64
 	facility := make([]float64, 0, len(translations))
 
+	hostSources := map[string]bool{}
 	for _, t := range translations {
 		r.TotalFacilityJoules += t.FacilityJoules
+		r.TotalComputeJoules += t.ComputeJoules
 		r.TotalCO2eGrams += t.CO2eGrams
 		r.TotalPromptTokens += t.PromptTokens
 		r.TotalEvalTokens += t.EvalTokens
 		repairJoules += t.RepairJoules
 		facility = append(facility, t.FacilityJoules)
+
+		r.TotalHostJoules += t.HostJoules
+		r.TotalHostMarginalJoules += t.HostMarginalJoules
+		if t.HostSource == "" {
+			r.TranslationsWithoutHostEnergy++
+		} else {
+			hostSources[t.HostSource] = true
+		}
 
 		for _, s := range t.Stages {
 			agg := stages[s.Task]
@@ -154,6 +236,7 @@ func Build(cfg *Config, jobs []TranslationEnergy, runtime map[string]RuntimeMeas
 				stages[s.Task] = agg
 			}
 			agg.Joules += s.Joules
+			agg.HostJoules += s.HostJoules
 			agg.Executions += s.Executions
 			agg.Failures += s.Failures
 			agg.LLMCalls += s.LLMCalls
@@ -186,14 +269,15 @@ func Build(cfg *Config, jobs []TranslationEnergy, runtime map[string]RuntimeMeas
 		market := r.TotalFacilityJoules / joulesPerKWh * intensity
 		r.TotalCO2eGramsMarket = &market
 	}
-	if r.TotalFacilityJoules > 0 {
-		// repair energy is compute-side, so compare like with like
-		r.RepairShare = repairJoules / (r.TotalFacilityJoules / cfg.Facility.PUE)
+	r.HostSource = combinedHostSource(hostSources)
+	if r.TotalComputeJoules > 0 {
+		// repair energy is inference-side, so compare like with like
+		r.RepairShare = repairJoules / r.TotalComputeJoules
 	}
 
 	for _, agg := range stages {
-		if compute := r.TotalFacilityJoules / cfg.Facility.PUE; compute > 0 {
-			agg.Share = agg.Joules / compute
+		if r.TotalComputeJoules > 0 {
+			agg.Share = agg.Joules / r.TotalComputeJoules
 		}
 		r.ByStage = append(r.ByStage, *agg)
 	}
@@ -388,6 +472,7 @@ func (r *Report) Write(w io.Writer, cfg *Config) {
 	fmt.Fprintf(w, "Translations: %d\n", r.Count)
 	fmt.Fprintf(w, "  tokens:        %d prompt / %d output\n", r.TotalPromptTokens, r.TotalEvalTokens)
 	fmt.Fprintf(w, "  energy total:  %s\n", formatJoules(r.TotalFacilityJoules))
+	r.writeHostEnergy(w)
 	fmt.Fprintf(w, "  CO2e:          %.1f g location-based (grid at %.0f g/kWh)\n",
 		r.TotalCO2eGrams, cfg.Facility.GridCO2eGramsPerKWh)
 	if r.TotalCO2eGramsMarket != nil {
@@ -404,14 +489,20 @@ func (r *Report) Write(w io.Writer, cfg *Config) {
 	r.writeSkipped(w)
 
 	fmt.Fprintln(w, "By stage:")
-	fmt.Fprintf(w, "  %-20s %12s %7s %6s %6s %6s\n", "task", "energy", "share", "execs", "fails", "calls")
+	fmt.Fprintf(w, "  %-20s %12s %7s %12s %6s %6s %6s\n",
+		"task", "inference", "share", "host", "execs", "fails", "calls")
 	for _, s := range r.ByStage {
 		marker := ""
 		if s.IsRepair {
 			marker = " (repair)"
 		}
-		fmt.Fprintf(w, "  %-20s %12s %6.1f%% %6d %6d %6d%s\n",
-			s.Task, formatCompact(s.Joules), s.Share*100, s.Executions, s.Failures, s.LLMCalls, marker)
+		host := "-"
+		if s.HostJoules > 0 {
+			host = formatCompact(s.HostJoules)
+		}
+		fmt.Fprintf(w, "  %-20s %12s %6.1f%% %12s %6d %6d %6d%s\n",
+			s.Task, formatCompact(s.Joules), s.Share*100, host,
+			s.Executions, s.Failures, s.LLMCalls, marker)
 	}
 
 	writeGroups(w, "By complexity bucket", r.ByBucket)

@@ -83,7 +83,7 @@
 - [x] [H2] Persist run metrics to disk as jobs complete **(P0 — a batch currently survives neither a crash, a restart, nor a `/reconfigure`)**
 - [x] [H3] Record the model per stage for per-model energy coefficients
 - [x] [H4] Energy-model script over the run logs, constants in one config file
-- [ ] [H5] Account for or bound local compute energy (build/test/Floci)
+- [x] [H5] Account for local compute energy (build/test/Floci) — **measured per job via RAPL since 2026-09-04**
 - [x] [H6] Go vs. Python runtime measurement harness — **shipped 2026-08-24 as `cmd/runtime` + `evaluation/harness`**
 - [ ] [H7] Verify token accounting across connector-internal retries
 - [x] [H8] `cmd/energy` reports a coefficient assumption for stages that consumed no tokens
@@ -975,13 +975,19 @@ few-shot are the four highest-leverage changes; most are small, local patches.
   - Models seen in a run log but absent from the config are costed on the default **and named in the report** as an assumption; stages from pre-[H3] records with no model are surfaced as `(unrecorded)`.
   - A malformed run-log line is a hard error with `file:line`, not a skip: quietly costing fewer translations than actually ran would understate the total.
 
-### [ ] [H5] Account for or bound the pipeline's local compute energy
+### [x] [H5] Account for or bound the pipeline's local compute energy
 - Category: Evaluation
-- Affected component(s): `internal/builder` (durations already recorded per task via `TaskMetrics.Duration`), `internal/floci`, evaluation tooling
-- Problem / current state: `E_translation` counts LLM inference only, but each build attempt runs `go mod init`/`go mod tidy` and `go build`, each test round runs one `./fn` process per fixture, and the Floci route additionally starts emulator containers — all multiplied by every repair iteration. This energy is currently invisible to the model.
-- Proposed change: decide and document one of: (a) measure a representative build/test round with `perf stat` and scale it by the already-recorded per-task durations, or (b) declare it an excluded term with an order-of-magnitude bound in threats to validity. Do not leave it silently unmodelled.
-- Why this improves the evaluation: an energy claim that omits a component of its own pipeline invites the obvious examiner question; the durations needed to bound it are already being recorded, so closing it is cheap. Based on reasoning; no external source needed.
-- Architecture impact: None (analysis) | Effort: S (bound) / M (measure) | Priority: P1
+- Affected component(s): `internal/hostenergy` (new), `internal/service/service.go`, `internal/pipeline/pipeline.go`, `internal/domain/types.go`, `cmd/energy` (`config.go`, `energy.go`, `report.go`), `evaluation/energy.config.json`
+- Problem / current state: `E_translation` counted LLM inference only, but each build attempt runs `go mod init`/`go mod tidy` and `go build`, each test round runs one `./fn` process per fixture, and the Floci route additionally starts emulator containers — all multiplied by every repair iteration. The visible symptom: `cmd/energy`'s per-stage table printed **0.0 J** against `goBuilder`, `goTester` and `pyScan`, the three stages that do all the local work.
+- **Resolved 2026-09-04 as *measure*, and directly rather than by scaling a representative round.**
+  1. `internal/hostenergy` reads the RAPL package counters under `/sys/class/powercap`. The service samples them either side of every job (the authoritative per-job figure, including the gaps between stages) and `executeTask` either side of every task attempt (the breakdown). It is a counter difference — **no assumed wattage enters a measured figure at all**. Wraparound of the fixed-width microjoule register is handled per domain; only top-level packages are summed, since the core/uncore/dram sub-domains are subsets of their package.
+  2. `E_translation = E_inference × PUE + E_host`. PUE is deliberately **not** applied to the host term: that machine sits on a desk, not in GWDG's hall.
+  3. **Gross and marginal are both reported**, because they differ by ~4× here. Measured over run 20260831-190900, **92% of pipeline wall clock is spent waiting on the remote LLM API** (24,101 s of 26,134 s) with the host near idle, against 2,033 s of actual local compute. The service measures its own idle baseline once at startup — before it takes the first job, since by the time a job exists the machine is no longer idle — and records it on every job, so the analysis can subtract it. Marginal matches the marginal-cost framing the document already adopts for inference; gross is the honest answer to "what did this machine burn while producing that translation".
+  4. **Absent stays absent.** An unmetered host (WSL2, macOS, containers) or a run log written before this records no host energy, and `cmd/energy` then prints `host energy NOT COUNTED` rather than a zero — a zero is indistinguishable from "the build stages were free", which is the exact claim this item exists to stop making. `host.fallback_power_watts` re-costs such a log from a stated wattage, tagged `ESTIMATED` everywhere it appears; it defaults to 0. A set that mixes measured and estimated jobs reports `mixed` rather than rounding to either.
+- **Arithmetic this quietly broke, and the fix**: `RepairShare` and the per-stage `Share` recovered inference joules by dividing the facility total by PUE. That stops being correct the moment anything else joins that total, so both now divide by an explicit `TotalComputeJoules`. Pinned by `TestSharesAreOfInferenceNotOfTheTotal` with a deliberately oversized host term.
+- Scale, re-costing run 20260831-190900 with a nominal 25 W / 11 W idle: mean `E_translation` **11.5 kJ → 16.1 kJ** per completed translation (+40%), of which ~2.6 kJ is marginal. Neither negligible nor dominant — which is why it needed measuring rather than arguing about.
+- Tests: `internal/hostenergy/hostenergy_test.go` (multi-domain summing, counter wraparound, unusable readings reported rather than zeroed, clean degradation where no counter exists) and `cmd/energy/hostenergy_test.go` (measured beats fallback, absent stays absent, fallback tagged estimated, shares unaffected by the host term, mixed provenance surfaced).
+- Architecture impact: Local | Effort: M | Priority: P1
 
 ### [x] [H6] Go vs. Python runtime measurement harness reusing the fixture payloads
 - Category: Evaluation
