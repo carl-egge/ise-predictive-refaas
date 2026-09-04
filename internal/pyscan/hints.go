@@ -34,14 +34,126 @@ func (r *Result) LibHints() string {
 	}
 
 	// boto3's mapping is generic; naming the services the function actually
-	// constructs turns it into a concrete import list.
-	if len(r.Boto3Services) > 0 {
-		services := append([]string(nil), r.Boto3Services...)
-		sort.Strings(services)
-		fmt.Fprintf(&b, "- AWS services used: %s\n", strings.Join(services, ", "))
+	// constructs turns it into a concrete import list. Naming them was not
+	// enough - run 20260831-190900 shows the model inventing "service/
+	// stepfunctions", "service/iotdata" and "service/ecstypes" from the service
+	// name alone, and one bad path fails `go mod tidy` for the whole module -
+	// so the exact import path is spelled out per service.
+	if services := r.awsServiceNames(); len(services) > 0 {
+		known, unknown := AWSServices(services)
+		for _, svc := range known {
+			fmt.Fprintf(&b, "- AWS %s -> import %q", svc.Service, svc.Module)
+			if svc.Note != "" {
+				fmt.Fprintf(&b, " (%s)", svc.Note)
+			}
+			b.WriteByte('\n')
+		}
+		if len(unknown) > 0 {
+			fmt.Fprintf(&b, "- AWS %s: exact module path not listed here - it is under %q, "+
+				"but the Go name often differs from the boto3 name, so verify rather than assume\n",
+				strings.Join(unknown, ", "), awsModulePrefix)
+		}
 	}
 
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// awsServiceNames is the set of AWS services to render import paths for:
+// the names boto3 was called with directly, plus the literals passed to a
+// project's own client factory. The union matters - f26 of the corpus reaches
+// boto3 only through `get_client('ecs', event)`, so without the second source
+// its ecs import gets no hint, and that is one of the three functions whose
+// invented module path broke the build.
+//
+// Only the direct set feeds the feature vector; see Result.ClientFactoryLiterals.
+// Unknown names are harmless here because AWSServices filters against a closed
+// table, so a stray literal that happens to sit in a factory call is dropped
+// unless it really is a service name.
+func (r *Result) awsServiceNames() []string {
+	if r == nil {
+		return nil
+	}
+	total := len(r.Boto3Services) + len(r.ClientFactoryLiterals)
+	seen := make(map[string]bool, total)
+	out := make([]string, 0, total)
+	for _, list := range [][]string{r.Boto3Services, r.ClientFactoryLiterals} {
+		for _, s := range list {
+			if s == "" || seen[s] {
+				continue
+			}
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// AWSHints renders the AWS SDK for Go v2 idioms a translation gets wrong most
+// often. Empty unless the function actually touches AWS, so a prompt can test
+// it with {{ if .aws_hints }} and non-AWS translations - 37 of the corpus's 95 -
+// pay nothing for it.
+//
+// Every entry is drawn from the compiler and runtime diagnostics of run
+// 20260831-190900 rather than from general SDK advice, with the number of
+// diagnostics each accounted for; the point is to spend a small model's
+// attention on what actually broke, not on a tour of the SDK.
+func (r *Result) AWSHints() string {
+	if r == nil || !r.UsesAWS() {
+		return ""
+	}
+
+	hints := []string{
+		// 33 diagnostics: "cannot use aws.Bool(true) (value of type *bool) as
+		// bool value in struct literal".
+		"`aws.Bool` / `aws.String` / `aws.Int32` return *pointers*. In v2 many fields that were pointers in v1 " +
+			"are plain values - pass `true`, not `aws.Bool(true)`, unless the field's declared type really is `*bool`.",
+		// 26 diagnostics: "types redeclared in this block" / "other
+		// declaration of types".
+		"Each service has its own `types` subpackage at `service/<svc>/types` (never `service/<svc>types`). " +
+			"Importing two of them without aliases is `types redeclared in this block` - alias them " +
+			"(`ddbtypes \"…/service/dynamodb/types\"`, `ecstypes \"…/service/ecs/types\"`).",
+		// 12 diagnostics: "out.ResponseMetadata undefined (type
+		// *dynamodb.DeleteItemOutput has no field or method ResponseMetadata)".
+		"v2 output structs have **no `ResponseMetadata`** field - that is v1. There is no HTTP status code on the " +
+			"output either; if the Python checked `response['ResponseMetadata']['HTTPStatusCode'] == 200`, " +
+			"the Go equivalent is simply that `err == nil`.",
+		// 5 build diagnostics for the v1 name, plus f72 failing at runtime with
+		// "cannot unmarshal number into Go value of type types.AttributeValue".
+		"DynamoDB items are `map[string]types.AttributeValue`, not JSON. Convert with " +
+			"`github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue` (`MarshalMap`/`UnmarshalMap`) - " +
+			"`dynamodbattribute` is the v1 name, and `json.Unmarshal` into an `AttributeValue` compiles but fails at runtime.",
+		// The other half of the Floci endpoint fix: the Go SDK has no
+		// AWS_S3_FORCE_PATH_STYLE, so path-style has to be asked for in code.
+		"S3 needs path-style addressing against the emulator, and the Go SDK has **no environment variable** for it " +
+			"(unlike boto3): `s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true })`. " +
+			"Without it a bucket request goes virtual-host style and fails with a 301 PermanentRedirect.",
+		"`botocore.exceptions.ClientError` has no equivalent: match the service's typed error with " +
+			"`errors.As(err, &notFound)` where `notFound` is e.g. `*types.ResourceNotFoundException`.",
+	}
+
+	var b strings.Builder
+	for _, h := range hints {
+		fmt.Fprintf(&b, "- %s\n", h)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// UsesAWS reports whether the function touches AWS at all. It matches the
+// `uses_aws` feature column's definition so hint and feature cannot disagree.
+func (r *Result) UsesAWS() bool {
+	if r == nil {
+		return false
+	}
+	if len(r.Boto3Services) > 0 {
+		return true
+	}
+	for _, imp := range r.Imports {
+		if imp == "boto3" || imp == "botocore" {
+			return true
+		}
+	}
+	return false
 }
 
 // PyFeatures renders the constructs that most often survive a translation

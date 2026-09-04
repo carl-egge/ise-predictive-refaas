@@ -1,6 +1,9 @@
 package pyscan
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // This file holds the policy that extract.py deliberately does not: which
 // Python libraries map to which Go packages, which have no realistic Go
@@ -25,7 +28,8 @@ type LibMapping struct {
 var libMappings = map[string]LibMapping{
 	"boto3": {
 		Python: "boto3", Go: "github.com/aws/aws-sdk-go-v2/service/<service>",
-		Note: "load config with config.LoadDefaultConfig(ctx); every call takes a context and returns (result, error)",
+		Note: "load config with config.LoadDefaultConfig(ctx); every call takes a context and returns (result, error). " +
+			"The exact module path per service is listed below - do not guess it",
 	},
 	"botocore": {
 		Python: "botocore", Go: "github.com/aws/aws-sdk-go-v2",
@@ -73,6 +77,125 @@ var libMappings = map[string]LibMapping{
 	"itertools":   {Python: "itertools", Go: "explicit loops"},
 	"typing":      {Python: "typing", Go: "static types"},
 	"dataclasses": {Python: "dataclasses", Go: "structs with json tags"},
+}
+
+// AWSService is one boto3 client name and the AWS SDK for Go v2 module that
+// implements it.
+type AWSService struct {
+	Service string // boto3 client/resource name, e.g. "logs"
+	Module  string // full Go module path
+	Note    string // stated only where the path is not the obvious guess
+}
+
+// awsModulePrefix is the root every service module hangs off.
+const awsModulePrefix = "github.com/aws/aws-sdk-go-v2/service/"
+
+// awsServiceModules maps a boto3 client name to its Go v2 module.
+//
+// Why this table exists at all, when libMappings already points boto3 at
+// "service/<service>": that placeholder leaves the model to guess the path, and
+// in run 20260831-190900 it guessed wrong for three of the twenty functions
+// that never built - "service/stepfunctions" (f20, really sfn),
+// "service/iotdata" (f16, really iotdataplane) and "service/ecstypes" (f26,
+// really ecs/types). A wrong import is not a local error: `go mod tidy` fails
+// for the module as a *unit*, so every other - valid - import is reported
+// unresolvable too, and the fixer then burns its whole budget on a diagnostic
+// list in which the actual culprit does not appear.
+//
+// Most entries are the obvious guess and are here so the hint can be complete;
+// the ones carrying a Note are where boto3's name and the Go module's name
+// genuinely diverge, and those are what this table is for.
+var awsServiceModules = map[string]AWSService{
+	// --- present in the evaluation corpus ---
+	"acm":            {Module: "acm"},
+	"cloudformation": {Module: "cloudformation"},
+	"cloudwatch":     {Module: "cloudwatch"},
+	"cognito-idp": {Module: "cognitoidentityprovider",
+		Note: "not \"cognitoidp\""},
+	"config": {Module: "configservice",
+		Note: "NOT \"config\" - that path is aws-sdk-go-v2/config, the credential loader; alias this one (e.g. cfgsvc) to avoid a collision"},
+	"dynamodb": {Module: "dynamodb"},
+	"ec2":      {Module: "ec2"},
+	"iam":      {Module: "iam"},
+	"iot":      {Module: "iot"},
+	"iot-data": {Module: "iotdataplane",
+		Note: "not \"iotdata\""},
+	"iotdata": {Module: "iotdataplane",
+		Note: "not \"iotdata\""},
+	"kms":    {Module: "kms"},
+	"lambda": {Module: "lambda"},
+	"logs": {Module: "cloudwatchlogs",
+		Note: "not \"logs\""},
+	"pricing": {Module: "pricing"},
+	"rds":     {Module: "rds"},
+	"s3":      {Module: "s3"},
+	"ses":     {Module: "ses", Note: "sesv2 for the v2 API (SendEmail with RawMessage lives there)"},
+	"sesv2":   {Module: "sesv2"},
+	"sns":     {Module: "sns"},
+	"sqs":     {Module: "sqs"},
+	"stepfunctions": {Module: "sfn",
+		Note: "not \"stepfunctions\""},
+	"sts":        {Module: "sts"},
+	"transcribe": {Module: "transcribe"},
+
+	// --- not in the corpus, but one sampling round away from it ---
+	"apigateway":   {Module: "apigateway"},
+	"apigatewayv2": {Module: "apigatewayv2"},
+	"athena":       {Module: "athena"},
+	"autoscaling":  {Module: "autoscaling"},
+	"batch":        {Module: "batch"},
+	"cloudfront":   {Module: "cloudfront"},
+	"cloudtrail":   {Module: "cloudtrail"},
+	"cognito-identity": {Module: "cognitoidentity",
+		Note: "distinct from cognitoidentityprovider"},
+	"comprehend":      {Module: "comprehend"},
+	"dynamodbstreams": {Module: "dynamodbstreams"},
+	"ecr":             {Module: "ecr"},
+	"ecs":             {Module: "ecs"},
+	"efs":             {Module: "efs"},
+	"eks":             {Module: "eks"},
+	"elasticache":     {Module: "elasticache"},
+	"elb":             {Module: "elasticloadbalancing", Note: "not \"elb\""},
+	"elbv2":           {Module: "elasticloadbalancingv2", Note: "not \"elbv2\""},
+	"emr":             {Module: "emr"},
+	"es":              {Module: "opensearch", Note: "not \"es\" or \"elasticsearch\""},
+	"events":          {Module: "eventbridge", Note: "boto3's \"events\" client is EventBridge"},
+	"firehose":        {Module: "firehose"},
+	"glue":            {Module: "glue"},
+	"kinesis":         {Module: "kinesis"},
+	"opensearch":      {Module: "opensearch"},
+	"organizations":   {Module: "organizations"},
+	"polly":           {Module: "polly"},
+	"rekognition":     {Module: "rekognition"},
+	"route53":         {Module: "route53"},
+	"sagemaker":       {Module: "sagemaker"},
+	"secretsmanager":  {Module: "secretsmanager"},
+	"ssm":             {Module: "ssm"},
+	"textract":        {Module: "textract"},
+	"translate":       {Module: "translate"},
+}
+
+// AWSServices resolves boto3 client names to Go modules, ordered by service
+// name. Names with no entry are returned separately rather than silently
+// dropped: the hint has to say "I do not know this one" explicitly, because an
+// omission is exactly what leaves the model guessing.
+func AWSServices(services []string) (known []AWSService, unknown []string) {
+	known = make([]AWSService, 0, len(services))
+	unknown = make([]string, 0)
+	for _, s := range services {
+		if m, ok := awsServiceModules[strings.ToLower(s)]; ok {
+			known = append(known, AWSService{
+				Service: s,
+				Module:  awsModulePrefix + m.Module,
+				Note:    m.Note,
+			})
+			continue
+		}
+		unknown = append(unknown, s)
+	}
+	sort.Slice(known, func(i, j int) bool { return known[i].Service < known[j].Service })
+	sort.Strings(unknown)
+	return known, unknown
 }
 
 // infeasibleLibs have no realistic pure-Go equivalent: they are numerical or

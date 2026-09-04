@@ -14,6 +14,7 @@ import (
 // prompt can reference {{ .lib_hints }} and {{ .py_features }} directly.
 const (
 	MetaLibHints    = "lib_hints"
+	MetaAWSHints    = "aws_hints"
 	MetaPyFeatures  = "py_features"
 	MetaFeasibility = "feasibility_warning"
 	MetaCC          = "py_cc"
@@ -116,6 +117,7 @@ func (c *ScanConverter) publish(req *domain.ConversionRequest, r *pyscan.Result)
 		req.Metadata[key] = value
 	}
 	set(MetaLibHints, r.LibHints())
+	set(MetaAWSHints, r.AWSHints())
 	set(MetaPyFeatures, r.PyFeatures())
 	set(MetaFeasibility, r.FeasibilityWarning())
 	set(MetaCC, strconv.Itoa(int(r.Metric("cc"))))

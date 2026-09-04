@@ -27,6 +27,12 @@ And have already produced the **current** Go version:
 
 {{ end }}Compare both versions and correct any behavioral difference so that the Go code produces the same output as the Python original for the same input. Pay attention to the exact response structure: status codes, field names, and the body being a JSON-encoded string.{{ end }}
 
+{{ if .aws_hints }}
+# AWS SDK for Go v2
+A failure inside an AWS call is usually one of these, not a difference in the surrounding logic:
+
+{{ .aws_hints }}
+{{ end }}
 # Format Rules
 *Critical*:
 1. Only return the complete corrected Go code as a single `main.go` without any further commenting or code descriptions. Do not include `go.mod` or `go.sum` — dependencies are resolved automatically from your imports.

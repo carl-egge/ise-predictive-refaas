@@ -54,6 +54,7 @@ type row struct {
 
 type hints struct {
 	LibHints    string `json:"lib_hints,omitempty"`
+	AWSHints    string `json:"aws_hints,omitempty"`
 	PyFeatures  string `json:"py_features,omitempty"`
 	Feasibility string `json:"feasibility_warning,omitempty"`
 }
@@ -205,6 +206,7 @@ func scanArtifact(path string, wantHints bool) row {
 	if wantHints {
 		r.Hints = &hints{
 			LibHints:    result.LibHints(),
+			AWSHints:    result.AWSHints(),
 			PyFeatures:  result.PyFeatures(),
 			Feasibility: result.FeasibilityWarning(),
 		}

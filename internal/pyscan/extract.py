@@ -28,7 +28,7 @@ import json
 import sys
 import tokenize
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Modules that ship with CPython. sys.stdlib_module_names exists on 3.10+;
 # the fallback covers older interpreters. Anything not in here and not
@@ -122,6 +122,7 @@ class Visitor(ast.NodeVisitor):
         self.imports = set()
         self.relative_imports = 0
         self.boto3_services = set()
+        self.client_factory_literals = set()
         # halstead basis
         self.operators = []
         self.operands = []
@@ -373,6 +374,8 @@ class Visitor(ast.NodeVisitor):
             name = func.attr
             self._boto3_service(func, node)
         if name:
+            self._client_factory_literal(name, node)
+        if name:
             self.operators.append(name)
             if name in DYNAMIC_BUILTINS:
                 self.dynamic_calls[name] = self.dynamic_calls.get(name, 0) + 1
@@ -391,6 +394,31 @@ class Visitor(ast.NodeVisitor):
         first = call.args[0]
         if isinstance(first, ast.Constant) and isinstance(first.value, str):
             self.boto3_services.add(first.value.lower())
+
+    def _client_factory_literal(self, name, call):
+        """Record the first string argument of any client/resource factory call.
+
+        Wrapping boto3 in a helper is common - f26 of the evaluation corpus
+        does `boto3.client(service, ...)` inside `get_client(service, event)`,
+        so the service name only ever appears at the *call site*
+        (`get_client('ecs', event)`) and _boto3_service, which looks at the
+        boto3 call itself, sees a variable.
+
+        This is a deliberately looser net, and it is kept in a separate field
+        rather than merged into boto3_services because boto3_services feeds the
+        `n_boto3_services` feature column: widening that would silently change
+        the values the shipped prediction model was fitted on. This field feeds
+        prompt hints only, where a false positive costs one unused line and the
+        Go side filters it against the closed service table anyway.
+        """
+        lowered = name.lower()
+        if "client" not in lowered and "resource" not in lowered:
+            return
+        if not call.args:
+            return
+        first = call.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            self.client_factory_literals.add(first.value.lower())
 
     # -- leaves for halstead --------------------------------------------------------
 
@@ -498,6 +526,7 @@ def analyze(source):
         "third_party_imports": third_party,
         "stdlib_imports": stdlib_used,
         "boto3_services": sorted(v.boto3_services),
+        "client_factory_literals": sorted(v.client_factory_literals),
         "dynamic_calls": v.dynamic_calls,
         "top_level_functions": v.top_level_functions,
         "code_line_hashes": code_line_hashes(tree),

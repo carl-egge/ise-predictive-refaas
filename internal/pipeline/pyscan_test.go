@@ -58,8 +58,16 @@ func TestPyScanPublishesPromptMetadata(t *testing.T) {
 	if !strings.Contains(hints, "aws-sdk-go-v2") {
 		t.Errorf("%s should map boto3 onto the Go SDK, got: %q", MetaLibHints, hints)
 	}
-	if !strings.Contains(hints, "AWS services used: s3") {
-		t.Errorf("%s should name the constructed service, got: %q", MetaLibHints, hints)
+	// Naming the service is not enough: the model invented "service/
+	// stepfunctions" and "service/iotdata" from names alone in run
+	// 20260831-190900, and one bad import path fails `go mod tidy` for the
+	// whole module. The hint has to carry the exact path.
+	if !strings.Contains(hints, `import "github.com/aws/aws-sdk-go-v2/service/s3"`) {
+		t.Errorf("%s should give the exact module path for the constructed service, got: %q", MetaLibHints, hints)
+	}
+	awsHints := req.Metadata[MetaAWSHints]
+	if !strings.Contains(awsHints, "UsePathStyle") {
+		t.Errorf("%s should carry the v2 idiom block for an AWS function, got: %q", MetaAWSHints, awsHints)
 	}
 	// base 1 + the single `if` = 2 (`not` is a unary op, not a BoolOp chain)
 	if req.Metadata[MetaCC] != "2" {

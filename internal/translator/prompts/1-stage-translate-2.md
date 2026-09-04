@@ -29,7 +29,7 @@ Translate the following Python AWS Lambda function to Go. Preserve the exact beh
 - Build JSON bodies with `json.Marshal`, not manual string concatenation.
 - **Never use a Go keyword as an identifier.** `func`, `type`, `range`, `select`, `map`, `chan`, `interface`, `package`, `import`, `var`, `const`, `go`, `defer`, `return` are reserved and cannot name a parameter, variable or field. A Python helper like `def try_ex(func):` must become `func tryEx(fn func() any) any`, never `func tryEx(func func() any)` — the latter does not parse, and the compiler reports it only as `syntax error: unexpected keyword func`, which does not name the real problem.
 - **Go rejects unused variables and imports.** Every declared variable must be read; delete anything you do not use, or assign it to `_`. A `declared and not used` error fails the whole build, so do not leave a translated-but-unused Python local in place.
-- **AWS SDK v2 takes values, not pointers, in many places where v1 took pointers.** `aws.Bool(x)` / `aws.Int32(n)` return `*bool` / `*int32`; only use them where the struct field is a pointer, and pass the plain value where it is not.
+- **Never shadow an imported package with a variable name.** A local named `time`, `config`, `types`, `log` or `url` hides the package for the rest of that scope, and the compiler then reports the confusing `time.Parse undefined (type string has no field or method Parse)` rather than naming the shadow. The handler parameter `event` is a value, not a type — `var x event` does not compile.
 
 ## Examples
 Match the Python return shape. All three of these are correct translations — which one is right depends entirely on what the Python function returns.
@@ -104,6 +104,11 @@ Python code:
 Use these Go equivalents for the Python libraries this function imports:
 
 {{ .lib_hints }}
+
+{{ end }}{{ if .aws_hints }}## AWS SDK for Go v2
+These are the differences from boto3, and from AWS SDK v1, that break this translation most often:
+
+{{ .aws_hints }}
 
 {{ end }}{{ if .py_features }}## Constructs needing attention
 This source uses Python constructs with no direct Go form:

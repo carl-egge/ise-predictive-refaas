@@ -274,9 +274,95 @@ func TestFeatureNamesAreUnique(t *testing.T) {
 func TestLibHintsNameGoPackagesAndServices(t *testing.T) {
 	r := scan(t, awsSource)
 	hints := r.LibHints()
-	for _, want := range []string{"boto3 ->", "aws-sdk-go-v2", "encoding/json", "AWS services used: dynamodb, s3"} {
+	for _, want := range []string{
+		"boto3 ->", "aws-sdk-go-v2", "encoding/json",
+		// The exact path, not just the service name: naming the service alone
+		// is what left the model to invent "service/stepfunctions".
+		`AWS dynamodb -> import "github.com/aws/aws-sdk-go-v2/service/dynamodb"`,
+		`AWS s3 -> import "github.com/aws/aws-sdk-go-v2/service/s3"`,
+	} {
 		if !strings.Contains(hints, want) {
 			t.Errorf("lib hints missing %q; got:\n%s", want, hints)
+		}
+	}
+}
+
+// TestLibHintsResolveServicesBehindAWrapper covers f26's shape: boto3 is called
+// with a variable, and the service name only appears at the call site of the
+// project's own factory. Without this the ecs import gets no hint - and f26 is
+// one of the functions whose invented module path broke the build.
+func TestLibHintsResolveServicesBehindAWrapper(t *testing.T) {
+	src := `import boto3
+
+def get_client(service, region=None):
+    return boto3.client(service, region)
+
+def handler(event, context):
+    ecs = get_client('ecs')
+    return ecs.list_clusters()
+`
+	r := scan(t, src)
+	if len(r.Boto3Services) != 0 {
+		t.Errorf("boto3_services should stay empty - it feeds n_boto3_services, "+
+			"and widening it would change the values the shipped model was fitted on; got %v",
+			r.Boto3Services)
+	}
+	hints := r.LibHints()
+	if !strings.Contains(hints, `AWS ecs -> import "github.com/aws/aws-sdk-go-v2/service/ecs"`) {
+		t.Errorf("service reached through a wrapper produced no import hint; got:\n%s", hints)
+	}
+}
+
+// TestAWSServicesResolvesDivergentNames pins the entries this table exists
+// for - the ones where the boto3 name and the Go module name differ, which is
+// exactly where run 20260831-190900's translations guessed wrong.
+func TestAWSServicesResolvesDivergentNames(t *testing.T) {
+	known, unknown := AWSServices([]string{"stepfunctions", "iot-data", "logs", "config", "s3", "quicksight"})
+
+	got := map[string]string{}
+	for _, svc := range known {
+		got[svc.Service] = svc.Module
+	}
+	for service, want := range map[string]string{
+		"stepfunctions": "github.com/aws/aws-sdk-go-v2/service/sfn",
+		"iot-data":      "github.com/aws/aws-sdk-go-v2/service/iotdataplane",
+		"logs":          "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs",
+		"config":        "github.com/aws/aws-sdk-go-v2/service/configservice",
+		"s3":            "github.com/aws/aws-sdk-go-v2/service/s3",
+	} {
+		if got[service] != want {
+			t.Errorf("AWSServices(%q) = %q, want %q", service, got[service], want)
+		}
+	}
+	// An unlisted service must be reported, not dropped: an omission is what
+	// leaves the model guessing in the first place.
+	if len(unknown) != 1 || unknown[0] != "quicksight" {
+		t.Errorf("unknown services = %v, want [quicksight]", unknown)
+	}
+	// "config" is the trap worth spelling out: the obvious path belongs to the
+	// credential loader.
+	for _, svc := range known {
+		if svc.Service == "config" && !strings.Contains(svc.Note, "credential loader") {
+			t.Errorf("config mapping should warn about the aws-sdk-go-v2/config collision, got %q", svc.Note)
+		}
+	}
+}
+
+func TestAWSHintsOnlyForAWSFunctions(t *testing.T) {
+	if got := scan(t, "def handler(e, c):\n    return {}\n").AWSHints(); got != "" {
+		t.Errorf("a non-AWS function must pay nothing for AWS hints, got:\n%s", got)
+	}
+
+	hints := scan(t, awsSource).AWSHints()
+	for _, want := range []string{
+		"aws.Bool",         // 33 diagnostics in run 20260831-190900
+		"types redeclared", // 26
+		"ResponseMetadata", // 12
+		"attributevalue",   // 5 build + 1 runtime
+		"UsePathStyle",     // the 301 PermanentRedirect errors
+	} {
+		if !strings.Contains(hints, want) {
+			t.Errorf("AWS hints missing %q; got:\n%s", want, hints)
 		}
 	}
 }

@@ -212,7 +212,7 @@ func sourceFeatures(r *Result) map[string]float64 {
 		"n_imports":              r.Metric("n_imports"),
 		"n_third_party":          r.Metric("n_third_party"),
 		"n_boto3_services":       float64(len(r.Boto3Services)),
-		"uses_aws":               boolFeature(imports["boto3"] || imports["botocore"] || len(r.Boto3Services) > 0),
+		"uses_aws":               boolFeature(r.UsesAWS()),
 		"stdlib_only":            boolFeature(len(r.ThirdParty) == 0),
 		"has_infeasible_lib":     boolFeature(len(Infeasible(r.Imports)) > 0),
 		"n_unmapped_third_party": float64(unmapped),

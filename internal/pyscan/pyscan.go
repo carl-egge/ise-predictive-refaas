@@ -41,7 +41,7 @@ import (
 // SchemaVersion is the contract version between extract.py and this package.
 // Bump both together; Scan rejects a mismatch rather than silently reading a
 // differently-shaped object.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // DefaultTimeout bounds one scan. Parsing is linear and fast, so this only
 // ever fires on a pathological input or a wedged interpreter; without it a
@@ -69,8 +69,15 @@ type Result struct {
 	ThirdParty    []string           `json:"third_party_imports"`
 	Stdlib        []string           `json:"stdlib_imports"`
 	Boto3Services []string           `json:"boto3_services"`
-	DynamicCalls  map[string]int     `json:"dynamic_calls"`
-	TopLevelFuncs []string           `json:"top_level_functions"`
+	// ClientFactoryLiterals are string literals passed as the first argument
+	// to any client/resource factory call, including a project's own wrapper
+	// around boto3. It is a looser net than Boto3Services and is kept separate
+	// on purpose: Boto3Services feeds the `n_boto3_services` feature column,
+	// so widening it would change the values the shipped prediction model was
+	// fitted on. This field feeds prompt hints only.
+	ClientFactoryLiterals []string       `json:"client_factory_literals"`
+	DynamicCalls          map[string]int `json:"dynamic_calls"`
+	TopLevelFuncs         []string       `json:"top_level_functions"`
 	// CodeLineHashes is the AST-canonicalised structural fingerprint used by
 	// the near-duplicate audit ([I11]). Hashes, not lines: the fingerprint
 	// travels in the feature table and must not carry a copy of the source.
