@@ -1,0 +1,17 @@
+run_id:        20260904-190539
+started:       2026-09-04T19:05:39+02:00
+config:        scripts/benchmark.json (sha256 f9e30f4bf6e8bcb1)
+artifacts:     evaluation/evaluation_set/ (95 functions)
+service:       http://localhost:8080
+host:          Linux 7.0.0-30-generic x86_64 / carl-eikermann-UX310UAK
+git_commit:    8a9cf24f084efa7e5c27c43bfaebbb66b6970cad
+git_dirty:     no
+job_timeout_s: 1800
+require_meta:  true
+floci_enabled: true
+llm_interval:  2s
+finished:      2026-09-05T00:38:20+02:00
+completed:     47
+failed:        48
+errors:        0
+skipped:       0

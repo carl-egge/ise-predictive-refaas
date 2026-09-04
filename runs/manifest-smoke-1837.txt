@@ -1,0 +1,17 @@
+run_id:        smoke-1837
+started:       2026-09-04T18:37:59+02:00
+config:        scripts/benchmark.json (sha256 f9e30f4bf6e8bcb1)
+artifacts:     /tmp/smoke (3 functions)
+service:       http://localhost:8080
+host:          Linux 7.0.0-30-generic x86_64 / carl-eikermann-UX310UAK
+git_commit:    88ebd551f8873fc5d7047eab7dc1de1094b35638
+git_dirty:     no
+job_timeout_s: 1800
+require_meta:  true
+floci_enabled: true
+llm_interval:  2s
+finished:      2026-09-04T18:52:46+02:00
+completed:     1
+failed:        2
+errors:        0
+skipped:       0
