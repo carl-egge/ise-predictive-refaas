@@ -12,10 +12,16 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// deployLambda creates the function if it does not exist, or updates its code
-// if it does, then waits until it is Active so it can be invoked. zipBytes is a
-// provided.al2 bootstrap ZIP from packageLambda.
-func deployLambda(ctx context.Context, c *Clients, name string, zipBytes []byte) error {
+// deployLambda creates the function if it does not exist, or updates it if it
+// does, then waits until it is Active so it can be invoked. zipBytes is a
+// provided.al2 bootstrap ZIP from packageLambda; env is the environment from
+// lambdaEnv.
+//
+// The update path pushes the environment as well as the code. It has to: the
+// function name is reused across conversions, so a function created once with
+// the wrong environment would keep it for the emulator's whole lifetime and no
+// change to lambdaEnv would ever reach a running Floci instance.
+func deployLambda(ctx context.Context, c *Clients, name string, zipBytes []byte, env map[string]string) error {
 	exists, err := functionExists(ctx, c, name)
 	if err != nil {
 		return err
@@ -23,6 +29,18 @@ func deployLambda(ctx context.Context, c *Clients, name string, zipBytes []byte)
 
 	if exists {
 		log.Debugf("floci: updating existing lambda %q", name)
+		if _, err := c.Lambda.UpdateFunctionConfiguration(ctx, &lambda.UpdateFunctionConfigurationInput{
+			FunctionName: awsString(name),
+			Timeout:      aws.Int32(lambdaTimeoutSeconds),
+			Environment:  &lambdatypes.Environment{Variables: env},
+		}); err != nil {
+			return fmt.Errorf("floci: updating lambda %q configuration: %w", name, err)
+		}
+		// Lambda rejects a code update while a configuration update is still
+		// in progress, so settle before pushing the new bootstrap.
+		if err := waitUpdated(ctx, c, name); err != nil {
+			return err
+		}
 		if _, err := c.Lambda.UpdateFunctionCode(ctx, &lambda.UpdateFunctionCodeInput{
 			FunctionName: awsString(name),
 			ZipFile:      zipBytes,
@@ -38,39 +56,22 @@ func deployLambda(ctx context.Context, c *Clients, name string, zipBytes []byte)
 			Handler:      awsString("bootstrap"),
 			PackageType:  lambdatypes.PackageTypeZip,
 			Code:         &lambdatypes.FunctionCode{ZipFile: zipBytes},
-			Timeout:      aws.Int32(30),
-			Environment:  &lambdatypes.Environment{Variables: lambdaEnv(c.Region)},
+			Timeout:      aws.Int32(lambdaTimeoutSeconds),
+			Environment:  &lambdatypes.Environment{Variables: env},
 		}); err != nil {
 			return fmt.Errorf("floci: creating lambda %q: %w", name, err)
 		}
 	}
 
-	return waitActive(ctx, c, name)
+	if err := waitActive(ctx, c, name); err != nil {
+		return err
+	}
+	return waitUpdated(ctx, c, name)
 }
 
-// lambdaEnv is the environment the deployed function runs with ([C11]).
-//
-// It deliberately sets credentials and region but **not** AWS_ENDPOINT_URL:
-// the function runs inside the emulator's own network, where the emulator
-// injects the endpoint that is reachable from there - a value this process
-// cannot know (its own endpoint is typically a host-side address). Overriding
-// it here would point the function at an unreachable host and break every
-// side-effect assertion.
-//
-// The credentials are dummy on purpose: they are what the emulator expects,
-// and they mean that a translated function which somehow escaped the endpoint
-// override still cannot authenticate against a real AWS account.
-func lambdaEnv(region string) map[string]string {
-	return map[string]string{
-		"AWS_ACCESS_KEY_ID":         "test",
-		"AWS_SECRET_ACCESS_KEY":     "test",
-		"AWS_SESSION_TOKEN":         "test",
-		"AWS_REGION":                region,
-		"AWS_DEFAULT_REGION":        region,
-		"AWS_S3_FORCE_PATH_STYLE":   "true",
-		"AWS_EC2_METADATA_DISABLED": "true",
-	}
-}
+// lambdaTimeoutSeconds bounds one invocation. See lambdaenv.go for the
+// environment the function runs with.
+const lambdaTimeoutSeconds = 30
 
 func functionExists(ctx context.Context, c *Clients, name string) (bool, error) {
 	_, err := c.Lambda.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: awsString(name)})
@@ -104,6 +105,36 @@ func waitActive(ctx context.Context, c *Clients, name string) error {
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("floci: lambda %q not Active within timeout (state=%s)", name, out.State)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+// waitUpdated polls until a configuration/code update has settled. Floci is not
+// obliged to model LastUpdateStatus at all, so an empty status counts as done -
+// the same tolerance waitActive extends to State.
+func waitUpdated(ctx context.Context, c *Clients, name string) error {
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		out, err := c.Lambda.GetFunctionConfiguration(ctx, &lambda.GetFunctionConfigurationInput{
+			FunctionName: awsString(name),
+		})
+		if err != nil {
+			return fmt.Errorf("floci: polling lambda %q update status: %w", name, err)
+		}
+		switch out.LastUpdateStatus {
+		case lambdatypes.LastUpdateStatusSuccessful, "":
+			return nil
+		case lambdatypes.LastUpdateStatusFailed:
+			return fmt.Errorf("floci: lambda %q update failed: %s", name, aws.ToString(out.LastUpdateStatusReason))
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("floci: lambda %q update not complete within timeout (status=%s)",
+				name, out.LastUpdateStatus)
 		}
 		select {
 		case <-ctx.Done():

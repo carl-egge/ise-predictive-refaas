@@ -50,6 +50,50 @@ If the stage is present but the backend is disabled, it logs and returns
 success without doing anything — so you can leave it in a pipeline and toggle it
 with a single flag.
 
+## The Lambda-visible endpoint
+
+There are **two** AWS endpoints in play, and confusing them is what made run
+`20260831-190900` fail:
+
+| | who uses it | config |
+|---|---|---|
+| `floci.endpoint` | this process — deploy, setup actions, side-effect checkers | `FLOCI_ENDPOINT`, default `http://localhost:4566` |
+| `floci.lambda_endpoint` | the **deployed function**, as `AWS_ENDPOINT_URL` | `FLOCI_LAMBDA_ENDPOINT`, auto-detected |
+
+They are usually different. The translated function runs in a Lambda
+*container*, where `localhost:4566` is the container itself. Floci documents the
+real path per deployment shape (see `docs/floci.md`, "Lambda on native Linux
+Docker"): the docker bridge gateway on native Linux, the Docker VM under Docker
+Desktop, and shared-network container IPs when Floci itself runs in Docker.
+
+Rather than guess, the stage **detects** it: a small standard-library probe
+Lambda is deployed into the emulator once per process and asked which address
+reaches it from the inside. It reports any `AWS_ENDPOINT_URL` the emulator
+injected on its own, its own default gateway (read from `/proc/net/route`, so
+the actual bridge is used rather than an assumed `172.17.0.1`), and then tries
+the static candidates. The answer is cached per endpoint and warmed in the
+background at startup, so a benchmark run pays for it once.
+
+If the probe cannot run, the best static candidate is used anyway. That is
+deliberate: an unreachable endpoint makes an AWS call fail fast and locally,
+whereas an *unset* one sends the SDK to real AWS with the dummy credentials —
+which is exactly the failure mode this replaced (`UnrecognizedClientException`,
+`InvalidAccessKeyId`, S3 `PermanentRedirect`).
+
+Set `FLOCI_LAMBDA_ENDPOINT` (or `floci.lambda_endpoint`) to override the
+detection, or to `off` to inject nothing and trust the emulator.
+
+> **Path-style S3 is not covered by this.** `lambdaEnv` sets
+> `AWS_S3_FORCE_PATH_STYLE`, which boto3 and the JS SDK read, but the **Go SDK
+> v2 has no such environment variable** — it needs `s3.Options.UsePathStyle` in
+> code. A translated function gets path-style addressing only because the
+> translate prompts ask for it.
+
+> **`Function.TimedOut` on native Linux with UFW** is a separate, documented
+> trap: UFW's default `INPUT DROP` silently kills container → host packets. See
+> `docs/floci.md`; the one-time fix is
+> `sudo ufw allow in on docker0`.
+
 ### Start Floci with Docker Compose
 
 Floci runs as an extra, profile-gated service so it never starts unless asked:

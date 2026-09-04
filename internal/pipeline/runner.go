@@ -179,6 +179,15 @@ type FlociConfig struct {
 	Enabled  bool   `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 	Region   string `json:"region,omitempty" yaml:"region,omitempty"`
+	// LambdaEndpoint is the AWS endpoint a *deployed* Lambda must use to reach
+	// the emulator, which is not generally the same as Endpoint: Endpoint is a
+	// host-side address, and the translated function runs inside a container
+	// where that address means the container itself. Empty (the default) means
+	// auto-detect - internal/floci probes the emulator from the inside. Set it
+	// to override the detection, or to "off" to inject nothing and trust the
+	// emulator, which is what this integration did before run 20260831-190900
+	// showed the trust was misplaced.
+	LambdaEndpoint string `json:"lambda_endpoint,omitempty" yaml:"lambda_endpoint,omitempty"`
 }
 
 // flociStarter, if registered, is invoked with the resolved FlociConfig
@@ -256,8 +265,11 @@ func (pc *PredictConfig) applyEnvDefaults() {
 
 // applyEnvDefaults fills the Floci config from environment variables when the
 // caller did not set values explicitly: FLOCI_ENABLED (true/1 enables it),
-// FLOCI_ENDPOINT, and FLOCI_REGION. This lets docker-compose flip the feature
-// on without a /reconfigure call.
+// FLOCI_ENDPOINT, FLOCI_REGION and FLOCI_LAMBDA_ENDPOINT. This lets
+// docker-compose flip the feature on without a /reconfigure call.
+//
+// FLOCI_LAMBDA_ENDPOINT has no default on purpose: unset means auto-detect,
+// which is the right answer far more often than any hardcoded address.
 func (fc *FlociConfig) applyEnvDefaults() {
 	if !fc.Enabled {
 		if v := os.Getenv("FLOCI_ENABLED"); v == "true" || v == "1" {
@@ -269,6 +281,9 @@ func (fc *FlociConfig) applyEnvDefaults() {
 	}
 	if fc.Region == "" {
 		fc.Region = setOrDefault("FLOCI_REGION", "us-east-1")
+	}
+	if fc.LambdaEndpoint == "" {
+		fc.LambdaEndpoint = os.Getenv("FLOCI_LAMBDA_ENDPOINT")
 	}
 }
 

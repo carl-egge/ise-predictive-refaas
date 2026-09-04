@@ -63,8 +63,9 @@ func Start(cfg pipeline.FlociConfig) error {
 	return nil
 }
 
-// checkReachable pings the configured Floci endpoint and logs the result. It
-// runs asynchronously from Start so an unreachable emulator never blocks
+// checkReachable pings the configured Floci endpoint, logs the result, and
+// warms the Lambda-visible endpoint cache. It runs asynchronously from Start so
+// neither an unreachable emulator nor the (multi-second) endpoint probe blocks
 // pipeline construction/reconfiguration.
 func checkReachable(cfg pipeline.FlociConfig) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -80,6 +81,16 @@ func checkReachable(cfg pipeline.FlociConfig) {
 		return
 	}
 	log.Infof("floci: emulator reachable at %s", cfg.Endpoint)
+
+	// Warm the Lambda-visible endpoint while the service is idle. It is
+	// resolved by building and invoking a probe Lambda (see probe.go), which
+	// takes seconds; doing it here means the first conversion finds it cached
+	// instead of paying for it. Still background work, so a slow or failing
+	// probe delays nothing - the stage resolves it itself if this has not
+	// finished.
+	pctx, pcancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer pcancel()
+	resolveLambdaEndpoint(pctx, clients, cfg.LambdaEndpoint)
 }
 
 // activeConfig returns a snapshot of the current Floci configuration.

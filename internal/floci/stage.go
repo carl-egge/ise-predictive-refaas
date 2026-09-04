@@ -84,7 +84,13 @@ func (t *FlociTester) Apply(runner *pipeline.Runner, req *domain.ConversionReque
 	if err != nil {
 		return err
 	}
-	if err := deployLambda(ctx, clients, t.functionName, zipBytes); err != nil {
+	// Resolved (and cached) here rather than at Start: it needs a reachable
+	// emulator and a Go toolchain, neither of which pipeline construction can
+	// assume, and a failure must degrade to a warning instead of blocking
+	// /reconfigure.
+	lambdaEndpoint := resolveLambdaEndpoint(ctx, clients, cfg.LambdaEndpoint)
+	if err := deployLambda(ctx, clients, t.functionName, zipBytes,
+		lambdaEnv(clients.Region, lambdaEndpoint)); err != nil {
 		return err
 	}
 	log.Debugf("floci: deployed %q in %s, running %d test case(s)", t.functionName, time.Since(start), len(cases))

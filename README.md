@@ -280,6 +280,7 @@ This will start the service running on port 8080. However, for isolation, it is 
 | `FLOCI_ENABLED` | `false` | Enables the optional `flociTester` pipeline stage (`true`/`1`); see [Optional: Floci integration testing](#optional-floci-integration-testing). |
 | `FLOCI_ENDPOINT` | `http://localhost:4566` | Endpoint of the Floci AWS emulator, when enabled. |
 | `FLOCI_REGION` | `us-east-1` | AWS region used for the Floci-backed Lambda deployment, when enabled. |
+| `FLOCI_LAMBDA_ENDPOINT` | _(auto-detected)_ | AWS endpoint the *deployed* Lambda uses to reach the emulator — not the same as `FLOCI_ENDPOINT`, which is a host-side address that means "the container itself" from inside a Lambda. Leave unset to detect it; set to `off` to inject nothing. See [Optional: Floci integration testing](#optional-floci-integration-testing). |
 | `PYSCAN_PYTHON` | _(auto)_ | Interpreter used by the `pyScan` source-analysis stage; auto-detected as `python3` then `python` on PATH. Set to pin a specific one. |
 | `RUN_LOG_DIR` | `runs` | Directory for the append-only JSONL run log of completed jobs; `off` (or empty) disables persistence. |
 | `REQUIRE_META` | `false` | Benchmark mode (`true`/`1`): reject uploads without a `meta.json`, so no benchmark result ends up unattributable to a dataset element. |
