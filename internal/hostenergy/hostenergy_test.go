@@ -3,6 +3,7 @@ package hostenergy
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -124,5 +125,48 @@ func TestNewDegradesWhereThereIsNoCounter(t *testing.T) {
 	}
 	if m != nil {
 		t.Error("a failed New must not return a usable meter")
+	}
+}
+
+// TestNewRAPLSkipsPsys pins the one domain-selection rule that silently
+// doubles every host-energy figure when it is wrong. psys sits alongside
+// package-0 in sysfs but meters the whole SoC and *contains* the package
+// domains; on the measurement host (i7-7500U) both are present and readable,
+// so summing them would inflate every job's E_host. cmd/runtime's meter
+// already skips it - if these two disagree, the per-job host energy and the
+// runtime measurement are on different scales.
+func TestNewRAPLSkipsPsys(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []struct{ dir, name string }{
+		{"intel-rapl:0", "package-0"},
+		{"intel-rapl:0:1", "dram"},
+		{"intel-rapl:1", "psys"},
+	} {
+		dir := filepath.Join(root, d.dir)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "name"), []byte(d.name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		write(t, filepath.Join(dir, "energy_uj"), 1_000_000)
+	}
+
+	entries, err := filepath.Glob(filepath.Join(root, "intel-rapl:[0-9]*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept []string
+	for _, dir := range entries {
+		if strings.Count(filepath.Base(dir), ":") != 1 {
+			continue
+		}
+		if domainName(dir) == "psys" {
+			continue
+		}
+		kept = append(kept, filepath.Base(dir))
+	}
+	if len(kept) != 1 || kept[0] != "intel-rapl:0" {
+		t.Errorf("selected domains = %v, want [intel-rapl:0] (package only, no psys, no sub-domain)", kept)
 	}
 }

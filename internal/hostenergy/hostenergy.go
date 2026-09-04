@@ -181,6 +181,15 @@ func (m *Meter) IdleWatts(d time.Duration) (float64, bool) {
 // package, so summing both would double-count.
 const raplGlob = "/sys/class/powercap/intel-rapl:[0-9]*"
 
+// domainName returns the powercap domain's human-readable name ("package-0",
+// "psys", "dram"), falling back to the sysfs directory name.
+func domainName(dir string) string {
+	if n, err := os.ReadFile(filepath.Join(dir, "name")); err == nil {
+		return strings.TrimSpace(string(n))
+	}
+	return filepath.Base(dir)
+}
+
 func newRAPL() (*Meter, error) {
 	entries, err := filepath.Glob(raplGlob)
 	if err != nil || len(entries) == 0 {
@@ -192,6 +201,17 @@ func newRAPL() (*Meter, error) {
 	for _, dir := range entries {
 		if strings.Count(filepath.Base(dir), ":") != 1 {
 			continue // a sub-domain; its energy is already in the package
+		}
+		if domainName(dir) == "psys" {
+			// psys is a top-level *sibling* of package-0 in sysfs but meters
+			// the whole SoC and contains the package domains, so adding it
+			// counts CPU energy twice - and hosts that expose it (many recent
+			// Intel laptops, including the measurement host) would report
+			// roughly double the joules of hosts that do not. cmd/runtime's
+			// meter skips it for the same reason; the two must agree, or the
+			// per-job host energy and the runtime measurement are on
+			// different scales.
+			continue
 		}
 		path := filepath.Join(dir, "energy_uj")
 		if _, err := readUint(path); err != nil {
