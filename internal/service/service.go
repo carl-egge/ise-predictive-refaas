@@ -115,29 +115,63 @@ func MakeConverterService() error {
 	return http.ListenAndServe("0.0.0.0:8080", r)
 }
 
-// hostIdleBaselineWindow is how long the idle draw is sampled for. Long
-// enough to average over RAPL's update interval (~1 ms) and any background
-// scheduler noise, short enough that it never delays the first upload
-// noticeably.
-const hostIdleBaselineWindow = 2 * time.Second
+// The idle baseline is sampled as the *minimum* of several short windows
+// taken after the process has settled, not as one window at the instant the
+// worker starts.
+//
+// One 2 s window at startup was measured on 2026-09-04 and it does not work:
+// the sample lands on Go runtime startup, godotenv, the HTTP listener coming
+// up and whatever else the operator still had open, and it returned 7.9 W on
+// a host whose jobs then drew 0.7-3.3 W. Every marginal figure in that run
+// came out negative, and cmd/energy drops a negative marginal - so the run
+// silently loses the "host above idle" number entirely rather than reporting
+// a wrong one.
+//
+// Minimum of repetitions is the same rule cmd/runtime's measurement loop
+// already uses, and for the same reason: a baseline can only be contaminated
+// upwards, so the lowest window is the one least polluted by a transient.
+const (
+	hostIdleSettle    = 15 * time.Second
+	hostIdleWindow    = 3 * time.Second
+	hostIdleWindowNum = 5
+)
 
 // measureHostIdle records this host's baseline power draw before the worker
 // takes any work ([H5]). Taken here rather than lazily on the first job for
 // the obvious reason: by the time a job exists, the machine is no longer idle.
+//
+// It delays the first job by roughly 30 s. That is deliberate and cheap: the
+// HTTP listener is already up (Start runs in its own goroutine), so an upload
+// simply queues, and the run this serves takes hours.
 func (service *ConverterService) measureHostIdle() {
 	meter := hostenergy.Default()
 	if meter == nil {
 		log.Infof("host energy: no readable counter on this host; translations will be costed as inference only unless cmd/energy is given a fallback wattage")
 		return
 	}
-	watts, ok := meter.IdleWatts(hostIdleBaselineWindow)
-	if !ok {
+
+	log.Infof("host energy: measuring idle baseline via %s (~%s, leave the machine alone)",
+		meter.Source(), hostIdleSettle+hostIdleWindowNum*hostIdleWindow)
+	time.Sleep(hostIdleSettle)
+
+	best, got := 0.0, false
+	for i := 0; i < hostIdleWindowNum; i++ {
+		watts, ok := meter.IdleWatts(hostIdleWindow)
+		if !ok {
+			continue
+		}
+		if !got || watts < best {
+			best, got = watts, true
+		}
+	}
+	if !got {
 		return
 	}
 	service.mutex.Lock()
-	service.idleWatts = watts
+	service.idleWatts = best
 	service.mutex.Unlock()
-	log.Infof("host energy: metering via %s, idle baseline %.1f W", meter.Source(), watts)
+	log.Infof("host energy: metering via %s, idle baseline %.2f W (min of %d x %s)",
+		meter.Source(), best, hostIdleWindowNum, hostIdleWindow)
 }
 
 func (service *ConverterService) hostIdleWatts() float64 {
