@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -352,4 +354,145 @@ func indexOf(haystack, needle string) int {
 		}
 	}
 	return -1
+}
+
+// -- CPU columns -----------------------------------------------------------
+
+func TestApplyCPUSplitSeparatesCPUTheSameWay(t *testing.T) {
+	point1 := Sample{CPUSeconds: 0.052, MaxRSSBytes: 1 << 20, HasCPU: true}
+	pointN := Sample{CPUSeconds: 0.250, MaxRSSBytes: 4 << 20, HasCPU: true}
+
+	var s split
+	s.applyCPUSplit(point1, pointN, 100)
+
+	wantSteady := (0.250 - 0.052) / 99
+	if !s.hasCPU {
+		t.Fatal("hasCPU = false, want true")
+	}
+	if !approx(s.steadyCPUSeconds, wantSteady, 1e-9) {
+		t.Errorf("steady cpu = %.9f s, want %.9f", s.steadyCPUSeconds, wantSteady)
+	}
+	if !approx(s.startupCPUSeconds, 0.052-wantSteady, 1e-9) {
+		t.Errorf("startup cpu = %.9f s, want %.9f", s.startupCPUSeconds, 0.052-wantSteady)
+	}
+	// MaxRSS is a peak, so it is carried from the long run, never differenced.
+	if s.maxRSSBytes != 4<<20 {
+		t.Errorf("max rss = %d, want %d (the long run's peak, not a difference)", s.maxRSSBytes, 4<<20)
+	}
+}
+
+// A non-positive CPU delta means the kernel's clock-tick accounting could not
+// resolve the per-invocation cost. Reporting it as zero would say the
+// function runs for free, which is the same failure the energy path guards.
+func TestApplyCPUSplitDropsUnresolvableDelta(t *testing.T) {
+	point1 := Sample{CPUSeconds: 0.040, HasCPU: true}
+	pointN := Sample{CPUSeconds: 0.040, HasCPU: true}
+
+	var s split
+	s.applyCPUSplit(point1, pointN, 1000)
+
+	if s.hasCPU || s.steadyCPUSeconds != 0 {
+		t.Errorf("hasCPU=%v steady=%v, want no CPU figure for a zero delta", s.hasCPU, s.steadyCPUSeconds)
+	}
+}
+
+// CPU must not be invented when only one point carried rusage - which is the
+// perf backend's case, where the wrapped process is `perf stat`, not the
+// function.
+func TestApplyCPUSplitRequiresBothPoints(t *testing.T) {
+	var s split
+	s.applyCPUSplit(Sample{CPUSeconds: 0.04, HasCPU: true}, Sample{CPUSeconds: 0.25}, 100)
+	if s.hasCPU {
+		t.Error("hasCPU = true with only one CPU-carrying point, want false")
+	}
+}
+
+// -- noise resolution ------------------------------------------------------
+
+func TestResolvesRequiresSignalAboveObservedSpread(t *testing.T) {
+	// Spread of 20 ms at each point: a 30 ms difference is inside the noise.
+	point1 := Sample{Duration: 100 * time.Millisecond, worstDuration: 120 * time.Millisecond}
+	noisyN := Sample{Duration: 130 * time.Millisecond, worstDuration: 150 * time.Millisecond}
+	if resolves(point1, noisyN) {
+		t.Error("resolves = true for a difference inside the repetition spread, want false")
+	}
+
+	clearN := Sample{Duration: 900 * time.Millisecond, worstDuration: 920 * time.Millisecond}
+	if !resolves(point1, clearN) {
+		t.Error("resolves = false for a difference well above the spread, want true")
+	}
+}
+
+// -- joint escalation ------------------------------------------------------
+
+// The invariant the paired measurement exists to guarantee: both language
+// sides report the same invocation count, even when one of them resolves
+// immediately and the other never does.
+//
+// Before this, measureSide escalated each side independently, and
+// runtime-report-20260831-190900.json ended up with 25 functions whose Python
+// side was measured at N=2000 against a Go side measured at N=200 - a ratio
+// between two different experiments, sound only if per-invocation cost is
+// exactly linear in N.
+//
+// The cheap side here ignores stdin entirely, so its duration does not grow
+// with N and it can never resolve; the expensive side burns a fixed amount of
+// work per line and resolves at once. The expensive side must still be
+// carried up to the cap alongside it.
+func TestMeasurePairSettlesBothSidesOnTheSameN(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no POSIX shell on this host")
+	}
+
+	meter, err := NewMeter("time", 0)
+	if err != nil {
+		t.Fatalf("time meter: %v", err)
+	}
+
+	shellRunner := func(name, script string) runner {
+		return runner{
+			name: name,
+			command: func(input []byte) *exec.Cmd {
+				cmd := exec.Command(sh, "-c", script)
+				cmd.Stdin = bytes.NewReader(input)
+				return cmd
+			},
+		}
+	}
+
+	// Reads and discards stdin without per-line work: constant in N.
+	cheap := shellRunner("cheap", "cat > /dev/null")
+	// Spins a counted loop per line: clearly linear in N.
+	expensive := shellRunner("expensive",
+		"while read -r l; do i=0; while [ $i -lt 2000 ]; do i=$((i+1)); done; done")
+
+	payloads := [][]byte{[]byte(`{"a":1}`)}
+	const maxN = 20
+
+	got, err := measurePair(meter, []runner{cheap, expensive}, payloads, 2, 1, maxN)
+	if err != nil {
+		t.Fatalf("measurePair: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d measurements, want 2", len(got))
+	}
+
+	if got[0].Invocations != got[1].Invocations {
+		t.Errorf("invocation counts differ: %s=%d, %s=%d - both sides must be measured at the same N",
+			got[0].Language, got[0].Invocations, got[1].Language, got[1].Invocations)
+	}
+	if got[0].Invocations != maxN {
+		t.Errorf("settled at N=%d, want %d: the unresolvable side must drive escalation to the cap",
+			got[0].Invocations, maxN)
+	}
+	if got[0].Resolved {
+		t.Error("cheap side resolved, want unresolved (its cost does not grow with N)")
+	}
+	if got[0].Note == "" {
+		t.Error("cheap side carries no note explaining why it is unresolved")
+	}
+	if !got[1].Resolved {
+		t.Error("expensive side did not resolve, want resolved")
+	}
 }

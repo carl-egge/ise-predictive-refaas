@@ -68,7 +68,7 @@ func main() {
 	flag.StringVar(&opt.report, "report", "", "optional path for the detailed measurement report (JSON)")
 	flag.StringVar(&opt.meter, "meter", "", "energy backend: rapl, perf or time (default: auto-detect)")
 	flag.Float64Var(&opt.watts, "watts", 0, "package power for the time backend; without it no joules are reported")
-	flag.IntVar(&opt.invocations, "invocations", 200, "invocations in the long run (the N of the two-point split)")
+	flag.IntVar(&opt.invocations, "invocations", 1000, "invocations in the long run (the N of the two-point split)")
 	flag.IntVar(&opt.maxInvocations, "max-invocations", 100000, "cap when escalating N to clear the noise floor")
 	flag.IntVar(&opt.reps, "reps", 5, "repetitions per measurement point; the minimum is kept")
 	flag.IntVar(&opt.maxPayloads, "max-payloads", 0, "cap the fixture payloads used per function (0 = all)")
@@ -317,18 +317,15 @@ func measureFunction(opt options, meter Meter, prov *provisioner, python, harnes
 		return result
 	}
 
-	pyMeasurement, err := measureSide(meter, py, payloads, opt.invocations, opt.reps, opt.maxInvocations)
+	// Both sides are measured together so they settle on the same invocation
+	// count; the error already names the side that failed.
+	measurements, err := measurePair(meter, []runner{py, gorun}, payloads, opt.invocations, opt.reps, opt.maxInvocations)
 	if err != nil {
-		result.Skipped = skipReason("python side", err)
+		result.Skipped = skipReason("measurement", err)
 		return result
 	}
-	goMeasurement, err := measureSide(meter, gorun, payloads, opt.invocations, opt.reps, opt.maxInvocations)
-	if err != nil {
-		result.Skipped = skipReason("go side", err)
-		return result
-	}
-	result.Python = &pyMeasurement
-	result.Go = &goMeasurement
+	result.Python = &measurements[0]
+	result.Go = &measurements[1]
 	return result
 }
 

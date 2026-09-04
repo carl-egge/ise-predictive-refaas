@@ -47,6 +47,13 @@ type Sample struct {
 	// HasEnergy is true.
 	Joules    float64
 	HasEnergy bool
+	// CPUSeconds is user+system CPU time charged to the measured process by
+	// the kernel, and MaxRSSBytes its peak resident set. Valid only when
+	// HasCPU is true - the perf backend wraps the process in `perf stat`, so
+	// the rusage that comes back describes the wrapper, not the function.
+	CPUSeconds  float64
+	MaxRSSBytes int64
+	HasCPU      bool
 	// worstDuration is the slowest of the repetitions at this point; the
 	// spread between it and Duration is the measurement noise the two-point
 	// difference has to clear.

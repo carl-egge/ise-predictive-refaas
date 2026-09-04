@@ -476,13 +476,31 @@ the startup side where they belong. Each point is repeated and the **minimum** i
 shared machine only ever adds time, so the minimum is the best available estimate of the true cost
 and is far more stable than a mean a single scheduling hiccup can dominate.
 
-**N escalates until the signal clears the noise.** Most functions in this corpus do microseconds of
+**N escalates until the signal clears the noise — for both sides together.** N starts at 1000, the
+count the ReFaaS paper's microbenchmark uses. Most functions in this corpus do microseconds of
 work against a millisecond of process startup, so at a fixed N the difference `T(N) − T(1)` is
 buried in scatter and the naive result is a per-invocation cost of *zero* — which would propagate
 into `runtime.json` as "this function is free to run" and make its `N*` infinite. The driver
 therefore raises N (×10, to `-max-invocations`) until the difference exceeds the measured
 repetition spread. A function that never resolves is reported as `UNRESOLVED` and **omitted** from
 `runtime.json`, because `cmd/energy` names a missing function but would cost a zero as free.
+
+The escalation is **joint**: Python and Go are measured at the same N, and a side that resolves
+early is carried up to whatever N the other side needs. The two are only ever compared as a ratio,
+and a ratio between measurements taken at different N is sound only if per-invocation cost is
+exactly linear in N — which GC onset and cache behaviour do not guarantee. Measuring both at one N
+removes the assumption instead of resting on it. It was not hypothetical: in
+`runtime-report-20260831-190900.json`, 25 functions had Python resolved at N=2000 against a Go side
+resolved at N=200.
+
+**CPU time is reported alongside energy and runtime**, as the paper's function-metrics table does.
+It comes from the `rusage` the kernel already returns at `wait4`, so it costs nothing and — unlike
+an in-process clock — cannot differ between the two runtimes by construction. It is split by the
+same two-point difference; peak RSS is reported from the long run rather than differenced, being a
+peak. The `perf` backend reports no CPU figure, because there the wrapped process is `perf stat`
+rather than the function. A per-invocation CPU delta of zero (the kernel charges CPU in clock
+ticks, so a short run can land on the same tick count twice) is dropped rather than reported as
+free, exactly as the energy path does.
 
 **No fabricated joules.** Three meters, and every figure carries which produced it:
 `rapl` (reads `/sys/class/powercap/intel-rapl:*/energy_uj` — no root, no perf, the primary),

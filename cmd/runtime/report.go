@@ -24,15 +24,19 @@ func logProgress(f FunctionResult) {
 		return
 	}
 	speedup := ratio(f.Python.SteadySeconds, f.Go.SteadySeconds)
+	cpu := ""
+	if f.Python.HasCPU && f.Go.HasCPU {
+		cpu = fmt.Sprintf("  cpu %.3f/%.3f ms", f.Python.SteadyCPUSeconds*1000, f.Go.SteadyCPUSeconds*1000)
+	}
 	if f.Python.HasEnergy && f.Go.HasEnergy {
-		fmt.Fprintf(os.Stderr, "  %-10s py %8.3f ms / %7.3f J    go %8.3f ms / %7.3f J    x%.1f\n",
+		fmt.Fprintf(os.Stderr, "  %-10s py %8.3f ms / %7.3f J    go %8.3f ms / %7.3f J    x%.1f%s\n",
 			f.FunctionID,
 			f.Python.SteadySeconds*1000, f.Python.SteadyJoules,
-			f.Go.SteadySeconds*1000, f.Go.SteadyJoules, speedup)
+			f.Go.SteadySeconds*1000, f.Go.SteadyJoules, speedup, cpu)
 		return
 	}
-	fmt.Fprintf(os.Stderr, "  %-10s py %8.3f ms    go %8.3f ms    x%.1f  (no energy)\n",
-		f.FunctionID, f.Python.SteadySeconds*1000, f.Go.SteadySeconds*1000, speedup)
+	fmt.Fprintf(os.Stderr, "  %-10s py %8.3f ms    go %8.3f ms    x%.1f%s  (no energy)\n",
+		f.FunctionID, f.Python.SteadySeconds*1000, f.Go.SteadySeconds*1000, speedup, cpu)
 }
 
 // printSummary reports what was measured, what was not, and - most
@@ -41,10 +45,11 @@ func logProgress(f FunctionResult) {
 func printSummary(w io.Writer, r *Report, outPath string) {
 	fmt.Fprintf(w, "\nRuntime measurement (%d functions attempted)\n", len(r.Functions))
 	fmt.Fprintf(w, "  meter:       %s - %s\n", r.Meter, r.MeterDetail)
-	fmt.Fprintf(w, "  method:      two-point split, %d invocations, best of %d\n", r.Invocations, r.Repetitions)
+	fmt.Fprintf(w, "  method:      two-point split, %d invocations (both sides at the same N), best of %d\n",
+		r.Invocations, r.Repetitions)
 
 	var measured, skipped, unresolved int
-	var speedups, coldSpeedups []float64
+	var speedups, coldSpeedups, cpuRatios []float64
 	byBucket := map[string][]float64{}
 	byAWS := map[bool][]float64{}
 
@@ -63,6 +68,12 @@ func printSummary(w io.Writer, r *Report, outPath string) {
 		s := ratio(f.Python.SteadySeconds, f.Go.SteadySeconds)
 		speedups = append(speedups, s)
 		coldSpeedups = append(coldSpeedups, ratio(f.Python.ColdSeconds, f.Go.ColdSeconds))
+		// CPU is reported over the functions that resolved it, which need not
+		// be all of them: the kernel charges CPU in clock ticks, so a
+		// function can resolve on the clock and not on rusage.
+		if f.Python.HasCPU && f.Go.HasCPU {
+			cpuRatios = append(cpuRatios, ratio(f.Python.SteadyCPUSeconds, f.Go.SteadyCPUSeconds))
+		}
 		bucket := f.Bucket
 		if bucket == "" {
 			bucket = "(none)"
@@ -99,6 +110,11 @@ func printSummary(w io.Writer, r *Report, outPath string) {
 	fmt.Fprintf(w, "  Go speedup (cold start, one process per invocation)\n")
 	fmt.Fprintf(w, "    median %.1fx   min %.1fx   max %.1fx\n",
 		medianOf(coldSpeedups), minOf(coldSpeedups), maxOf(coldSpeedups))
+	if len(cpuRatios) > 0 {
+		fmt.Fprintf(w, "  Go CPU-time reduction (python/go, steady state, n=%d)\n", len(cpuRatios))
+		fmt.Fprintf(w, "    median %.1fx   min %.1fx   max %.1fx\n",
+			medianOf(cpuRatios), minOf(cpuRatios), maxOf(cpuRatios))
+	}
 
 	// The dataset's two reporting axes (EVALUATION_DATASET.md §8-§9).
 	fmt.Fprintln(w, "\n  By complexity bucket")

@@ -40,6 +40,18 @@ type Measurement struct {
 	ColdJoules  float64 `json:"cold_joules_per_invocation"`
 	ColdSeconds float64 `json:"cold_seconds_per_invocation"`
 
+	// CPU time charged to the process by the kernel, split the same way. The
+	// ReFaaS microbenchmark reports CPU usage alongside energy and runtime;
+	// it is also what distinguishes "does less work" from "waits less", which
+	// wall clock alone cannot.
+	SteadyCPUSeconds  float64 `json:"steady_cpu_seconds_per_invocation,omitempty"`
+	StartupCPUSeconds float64 `json:"startup_cpu_seconds,omitempty"`
+	ColdCPUSeconds    float64 `json:"cold_cpu_seconds_per_invocation,omitempty"`
+	// MaxRSSBytes is the peak resident set of the long run. A peak, not a
+	// per-invocation cost, so it is reported rather than differenced.
+	MaxRSSBytes int64 `json:"max_rss_bytes,omitempty"`
+	HasCPU      bool  `json:"has_cpu,omitempty"`
+
 	HasEnergy bool `json:"has_energy"`
 	Derived   bool `json:"energy_derived,omitempty"`
 
@@ -63,7 +75,8 @@ type runner struct {
 	command func(input []byte) *exec.Cmd
 }
 
-// measureSide performs the two-point measurement for one language.
+// measurePair performs the two-point measurement for both language sides of
+// one function, escalating N for them **together**.
 //
 // Each point is repeated `reps` times and the **minimum** is taken, not the
 // mean: on a shared machine, noise from other processes only ever adds time
@@ -72,35 +85,52 @@ type runner struct {
 // scheduling hiccup can dominate. This is the standard practice for
 // microbenchmarks and is stated here because it is a methodological choice
 // the write-up has to defend.
-func measureSide(m Meter, r runner, payloads [][]byte, invocations, reps, maxInvocations int) (Measurement, error) {
-	out := Measurement{
-		Language:     r.name,
-		Repetitions:  reps,
-		PayloadsUsed: len(payloads),
-	}
+//
+// Why the sides escalate together rather than independently: they are only
+// ever compared as a ratio, and a ratio between two measurements taken at
+// different N is only sound if per-invocation cost is exactly linear in N.
+// It is not guaranteed to be - GC onset and cache behaviour both depend on
+// how long the process runs. Measuring both sides at the same N removes the
+// assumption instead of relying on it. This was not academic: in
+// runtime-report-20260831-190900.json, 25 functions had Python resolved at
+// N=2000 against Go resolved at N=200.
+//
+// The cost is that the faster-resolving side is carried up to the slower
+// one's N. That is the intended trade - it buys a comparison that needs no
+// linearity argument.
+func measurePair(m Meter, runners []runner, payloads [][]byte, invocations, reps, maxInvocations int) ([]Measurement, error) {
 	if len(payloads) == 0 {
-		return out, fmt.Errorf("%s: no payloads to run", r.name)
+		return nil, fmt.Errorf("no payloads to run")
 	}
 	if invocations < 2 {
-		return out, fmt.Errorf("%s: need at least 2 invocations to separate startup from steady state", r.name)
+		return nil, fmt.Errorf("need at least 2 invocations to separate startup from steady state")
 	}
 
 	single := buildStream(payloads, 1)
+	outs := make([]Measurement, len(runners))
+	point1s := make([]Sample, len(runners))
 
-	// One untimed run first: it pays the page-cache and (for Go) any
-	// first-exec cost, so the measured points are not charged for warming
-	// the machine rather than the runtime.
-	if _, err := runOnce(m, r, single, runBudget(1)); err != nil {
-		return out, fmt.Errorf("%s: warm-up failed: %w", r.name, err)
+	for i, r := range runners {
+		outs[i] = Measurement{
+			Language:     r.name,
+			Repetitions:  reps,
+			PayloadsUsed: len(payloads),
+		}
+		// One untimed run first: it pays the page-cache and (for Go) any
+		// first-exec cost, so the measured points are not charged for warming
+		// the machine rather than the runtime.
+		if _, err := runOnce(m, r, single, runBudget(1)); err != nil {
+			return nil, fmt.Errorf("%s: warm-up failed: %w", r.name, err)
+		}
+		p1, err := bestOf(m, r, single, reps, runBudget(1))
+		if err != nil {
+			return nil, fmt.Errorf("%s: single-invocation run: %w", r.name, err)
+		}
+		point1s[i] = p1
 	}
 
-	point1, err := bestOf(m, r, single, reps, runBudget(1))
-	if err != nil {
-		return out, fmt.Errorf("%s: single-invocation run: %w", r.name, err)
-	}
-
-	// Escalate N until the T(N)-T(1) difference clears the measurement noise,
-	// or the cap is reached.
+	// Escalate N until the T(N)-T(1) difference clears the measurement noise
+	// on *every* side, or the cap is reached.
 	//
 	// Without this the tool silently reports 0 for any function whose
 	// per-invocation work is smaller than the run-to-run scatter of process
@@ -112,44 +142,59 @@ func measureSide(m Meter, r runner, payloads [][]byte, invocations, reps, maxInv
 	// measurement working; failing to find one is a result to report, not a
 	// zero to invent.
 	for {
-		out.Invocations = invocations
-		pointN, err := bestOf(m, r, buildStream(payloads, invocations), reps, runBudget(invocations))
-		if err != nil {
-			return out, fmt.Errorf("%s: %d-invocation run: %w", r.name, invocations, err)
+		pointNs := make([]Sample, len(runners))
+		allResolved := true
+		for i, r := range runners {
+			pointN, err := bestOf(m, r, buildStream(payloads, invocations), reps, runBudget(invocations))
+			if err != nil {
+				return nil, fmt.Errorf("%s: %d-invocation run: %w", r.name, invocations, err)
+			}
+			pointNs[i] = pointN
+			if !resolves(point1s[i], pointN) {
+				allResolved = false
+			}
 		}
 
-		deltaSeconds := pointN.Duration.Seconds() - point1.Duration.Seconds()
-
-		// The signal must exceed the noise actually observed at both points,
-		// plus a floor for the reps==1 case where no scatter is available.
-		noise := point1.spreadSeconds() + pointN.spreadSeconds()
-		if noise < minResolvableSeconds {
-			noise = minResolvableSeconds
+		if !allResolved && invocations < maxInvocations {
+			invocations *= 10
+			if invocations > maxInvocations {
+				invocations = maxInvocations
+			}
+			continue
 		}
 
-		if deltaSeconds > noise {
-			out.Resolved = true
-			out.applySplit(twoPointSplit(point1, pointN, invocations))
-			return out, nil
-		}
-
-		if invocations >= maxInvocations {
+		for i := range runners {
+			outs[i].Invocations = invocations
+			if resolves(point1s[i], pointNs[i]) {
+				sp := twoPointSplit(point1s[i], pointNs[i], invocations)
+				sp.applyCPUSplit(point1s[i], pointNs[i], invocations)
+				outs[i].Resolved = true
+				outs[i].applySplit(sp)
+				continue
+			}
 			// Report what *was* resolved - startup dominates entirely - and
-			// mark the per-invocation figure as unresolved so it is excluded
+			// leave the per-invocation figure unresolved so it is excluded
 			// from runtime.json rather than written as zero.
-			out.StartupSeconds = point1.Duration.Seconds()
-			out.ColdSeconds = point1.Duration.Seconds()
-			out.Note = fmt.Sprintf(
+			outs[i].StartupSeconds = point1s[i].Duration.Seconds()
+			outs[i].ColdSeconds = point1s[i].Duration.Seconds()
+			outs[i].Note = fmt.Sprintf(
 				"per-invocation cost is below the noise floor even at %d invocations "+
 					"(startup %.3f ms dominates); no steady-state figure reported",
-				invocations, point1.Duration.Seconds()*1000)
-			return out, nil
+				invocations, point1s[i].Duration.Seconds()*1000)
 		}
-		invocations *= 10
-		if invocations > maxInvocations {
-			invocations = maxInvocations
-		}
+		return outs, nil
 	}
+}
+
+// resolves reports whether the two-point difference cleared the measurement
+// noise actually observed at both points, plus a floor for the reps==1 case
+// where no scatter is available.
+func resolves(point1, pointN Sample) bool {
+	noise := point1.spreadSeconds() + pointN.spreadSeconds()
+	if noise < minResolvableSeconds {
+		noise = minResolvableSeconds
+	}
+	return pointN.Duration.Seconds()-point1.Duration.Seconds() > noise
 }
 
 // minResolvableSeconds is the floor on what counts as a real difference,
@@ -198,6 +243,11 @@ func runOnce(m Meter, r runner, input []byte, budget time.Duration) (Sample, err
 	sample, runErr := m.Measure(func() error { return runWithTimeout(cmd, budget) })
 	if runErr != nil {
 		return sample, fmt.Errorf("%w: %s", runErr, truncate(stderr.String(), 400))
+	}
+	// Only on this path is cmd the measured process itself; under perf it is
+	// the wrapper, whose rusage would describe perf rather than the function.
+	if cpu, rss, ok := processCPU(cmd.ProcessState); ok {
+		sample.CPUSeconds, sample.MaxRSSBytes, sample.HasCPU = cpu, rss, ok
 	}
 	return sample, nil
 }
@@ -344,6 +394,11 @@ type split struct {
 	startupJoules  float64
 	hasEnergy      bool
 	derived        bool
+
+	steadyCPUSeconds  float64
+	startupCPUSeconds float64
+	maxRSSBytes       int64
+	hasCPU            bool
 }
 
 // twoPointSplit derives per-invocation and startup costs from the two
@@ -389,6 +444,35 @@ func twoPointSplit(point1, pointN Sample, invocations int) split {
 	return s
 }
 
+// applyCPUSplit adds the CPU columns to a split.
+//
+// Same two-point difference as time and energy, and non-positive deltas are
+// dropped for the same reason: a function whose per-invocation CPU is below
+// the accounting granularity (the kernel charges CPU in clock ticks, so a
+// short run can land on the same tick count twice) must report "not resolved"
+// rather than "runs for free".
+//
+// MaxRSS is carried over from the long run rather than differenced - it is a
+// peak, and the difference of two peaks means nothing.
+func (s *split) applyCPUSplit(point1, pointN Sample, invocations int) {
+	if !point1.HasCPU || !pointN.HasCPU {
+		return
+	}
+	n := float64(invocations)
+	steady := (pointN.CPUSeconds - point1.CPUSeconds) / (n - 1)
+	if steady <= 0 {
+		return
+	}
+	startup := point1.CPUSeconds - steady
+	if startup < 0 {
+		startup = 0
+	}
+	s.steadyCPUSeconds = steady
+	s.startupCPUSeconds = startup
+	s.maxRSSBytes = pointN.MaxRSSBytes
+	s.hasCPU = true
+}
+
 // applySplit copies a split onto the measurement, deriving the cold-start
 // figures (one invocation in a fresh process) from it.
 func (m *Measurement) applySplit(s split) {
@@ -401,5 +485,12 @@ func (m *Measurement) applySplit(s split) {
 		m.ColdJoules = s.startupJoules + s.steadyJoules
 		m.HasEnergy = true
 		m.Derived = s.derived
+	}
+	if s.hasCPU {
+		m.SteadyCPUSeconds = s.steadyCPUSeconds
+		m.StartupCPUSeconds = s.startupCPUSeconds
+		m.ColdCPUSeconds = s.startupCPUSeconds + s.steadyCPUSeconds
+		m.MaxRSSBytes = s.maxRSSBytes
+		m.HasCPU = true
 	}
 }
