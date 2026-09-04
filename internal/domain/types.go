@@ -53,24 +53,28 @@ type stagnationEntry struct {
 }
 
 // RecordFailure records that taskID just failed with failureText and reports
-// how many consecutive times (including this one) that exact text has now
-// been seen in a row for that task. A differing text resets the count to 1.
+// how many consecutive times (including this one) the same failure has now
+// been seen in a row for that task. A differing failure resets the count to 1.
 //
-// This is deliberately a simple exact-text comparison rather than a fuzzy
-// one: goTester's TestingError summary and the fixer's formatted compiler
-// diagnostics ({{ .issue }}) are both stable summaries (test names/kinds,
-// numbered diagnostic lines) rather than raw values, so a truly stuck repair
-// loop reliably reproduces byte-identical text, while genuine progress
-// (different tests failing, a different compiler error) reliably does not.
+// "The same failure" is decided by normaliseFailure, not by byte equality.
+// goTester's TestingError summary and the fixer's formatted compiler
+// diagnostics ({{ .issue }}) are stable *summaries* - test names and kinds,
+// numbered diagnostic lines - but they are not byte-stable: positions drift as
+// the code around them is rewritten, and `go mod tidy` reports in a
+// nondeterministic order. Comparing raw text therefore missed 8 of the 20
+// stuck builds in run 20260831-190900. See stagnation.go for exactly what is
+// normalised, why those two axes and no others, and the replay that showed the
+// change costs no successful conversion.
 func (cr *ConversionRequest) RecordFailure(taskID, failureText string) int {
 	if cr.stagnation == nil {
 		cr.stagnation = make(map[string]stagnationEntry)
 	}
+	normalised := normaliseFailure(failureText)
 	entry := cr.stagnation[taskID]
-	if entry.lastFailure == failureText {
+	if entry.lastFailure == normalised {
 		entry.repeats++
 	} else {
-		entry.lastFailure = failureText
+		entry.lastFailure = normalised
 		entry.repeats = 1
 	}
 	cr.stagnation[taskID] = entry

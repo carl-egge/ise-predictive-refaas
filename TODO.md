@@ -513,7 +513,7 @@ few-shot are the four highest-leverage changes; most are small, local patches.
   5. The pointer-vs-value bullet moved out of the generic pitfalls list (where it fired for every function) into `aws_hints`, and the generic slot now carries the package-shadowing rule the 14 shadowing diagnostics call for.
 - Coverage on `evaluation_set`: 58/95 functions get the idiom block (exactly the 58 AWS functions), 54 get at least one exact module path, 23 distinct services resolved, **0 unresolved**.
 - Tests: `internal/pyscan/pyscan_test.go` (`TestAWSServicesResolvesDivergentNames` pins the four traps and the unknown-service report; `TestLibHintsResolveServicesBehindAWrapper` covers f26's shape *and* asserts `boto3_services` stays untouched; `TestAWSHintsOnlyForAWSFunctions`), `internal/pipeline/pyscan_test.go` (exact path in `lib_hints`, `aws_hints` published), and `internal/translator/prompts_test.go` — new: every embedded prompt must parse and render both with and without the AWS vars, since a mismatched `{{ if }}`/`{{ end }}` otherwise surfaces only when a converter is constructed, potentially an hour into a run.
-- Not addressed here, and still worth doing: `extractDiagnostics`' 5-line cap discards the causal line of a `go mod tidy` failure (see the "further errors omitted" marker, 46 occurrences).
+- The other half of this failure — `extractDiagnostics` discarding the causal line of a `go mod tidy` failure, so the fixer could not act on a bad path even once it occurred — is fixed separately as [C13].
   - Interpreter: auto-detected `python3`/`python`, override with `PYSCAN_PYTHON`; added to the Dockerfile. The stage degrades to a warning when it cannot run (it enriches a prompt), except under `required: true`.
 
 ### [~] [C9] Support multi-file Python inputs — DROPPED
@@ -618,7 +618,45 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - Why: Precise, localized error context is the input format compiler-repair works best with — the Go toolchain already emits machine-parseable positions; removing the format contradiction eliminates a coin-flip in every fixer call.
 - Note: the broken `go.mod` example and the "other files" wording are already fixed by [C3] (single-`main.go` output stated in the prompt). Remaining scope: structured compiler errors and the minimal-change directive.
 - Status: **Implemented 2026-07-04** (together with [D4]/[E4]). `formatBuildError` in `builder.go` parses raw build output into a numbered, de-duplicated list of diagnostics (`file:line:col: message`, `go:` module errors, `go.mod:` parse errors), preserving the raw dump only when nothing is parseable — and keeping the marker lines verbatim so `isGoModFailure` still triggers. `2-stage-repair.md` rewritten: "change only what is necessary", "fix the first error first — later errors are often consequences", contradiction and step-by-step line removed, grammar fixed, full-file return required. Tests: `builder_test.go` (parsing, capping, marker preservation, raw fallback).
+- **Extraction corrected 2026-09-04 — see [C13]**: the numbered list was right for compiler output but wrong for `go mod tidy`, where it reported only progress lines and dropped the one line that named the failure.
 - Architecture impact: Local | Effort: S–M | Priority: P1
+
+### [x] [C14] Retry budgets: measured, left alone, and the stagnation guard made able to see a repeat
+- Category: Bug / Evaluation
+- Affected component(s): `internal/domain/stagnation.go` (new, `normaliseFailure`), `internal/domain/types.go` (`RecordFailure`), `internal/pipeline/pipeline.go` (threshold commentary), `scripts/benchmark.json` (documented budgets)
+- Problem as originally stated (2026-09-04 analysis of run 20260831-190900): the two repair stages consume 61% of all tokens, 30 jobs burned the full realign budget and aborted, and the proposal was to cut `builder` 4→3 and the stagnation abort 3→2.
+- **That proposal was wrong, and re-deriving the marginal yield per attempt is what showed it.** Passes gained by each successive attempt:
+  - `builder`: attempt 1 → 48, 2 → +19, 3 → +6, **4 → +2**. Cutting to 3 would have cost two functions.
+  - `goTester`: 1 → 29, 2 → +6, 3 → +5, 4 → +2, 5 → +0 (2 jobs, both failed).
+  - Stagnation guard: flagging at the 2nd identical failure produced **four rescues** — f41, f57, f60 on goTester and one on builder all failed identically twice, got the `{{ .stagnant }}` nudge, and then passed. Aborting at 2 would have cost all four. Aborting at 3 costs nothing: no task in 95 jobs ever recovered after three consecutive identical failures.
+  Every budget is therefore already at the knee of its yield curve. The numbers stay; they are now documented with the measurement beside them so they are not re-tightened on intuition.
+- **The real defect was that the guard could not recognise a repeat.** Of the 20 functions that never built, 8 exhausted their budget without the guard firing — not because they were progressing but because byte comparison could not see through cosmetic variation:
+  - f0 reported `undefined: mail.AddressList` four times at 101:52, 102:52, 102:74, 101:74 — one defect, four coordinates.
+  - f82 alternated the same type error between 69:19 and 73:25; f38 cycled `aws.Bool(undo)` → `&undo` → `aws.Bool(undo)`.
+  - f16/f26 failed `go mod tidy`, whose lines come back in nondeterministic order, so **a module-resolution loop could never be detected at all**. ([C13] shrinking that output to its causal line helps; normalising order is what makes it reliable.)
+- Change: `RecordFailure` compares normalised text. Exactly two axes are normalised — Go diagnostic **positions** (`file.go:101:52:` → `file.go:`) and the **order** of the numbered diagnostic list (sorted, de-duplicated). Identifiers, types, messages, test names and failure kinds are untouched, because those are what distinguish one defect from another.
+- **Validated by replaying the full run before changing anything**: the normalised guard newly fires on 8 builder jobs and 1 goTester job, **all of which failed anyway**, and on **zero** jobs that succeeded. f10, f20, f26 and f44 abort a full attempt earlier; the rest are at least recorded as stagnation rather than budget exhaustion, which is the difference between a run log that explains itself and one that does not.
+- **Caveat for the next run**: 23 of the 30 jobs that exhausted the goTester budget were Floci-route jobs failing on AWS credentials, so this whole yield curve was measured through the defect [C11a] fixes. Re-measure before drawing conclusions from it again.
+- Tests: `internal/domain/stagnation_test.go` — f0's position drift and f16/f26's diagnostic reordering are now detected, while four real-progress transitions (failure kind changes, fewer cases failing, a different fix attempt at the same position, one diagnostic resolved of two) must still reset the counter.
+- Architecture impact: Local | Effort: S | Priority: P1
+
+### [x] [C13] Diagnostic extraction reports the cause of a `go mod tidy` failure, not its progress
+- Category: Bug
+- Affected component(s): `internal/builder/builder.go` (`extractDiagnostics`, new `collectDiagnostics`/`appendCapped`, `goProgressRe`, `maxModuleErrors`, `maxContinuationLines`)
+- Problem / current state: [D3]'s extraction was designed against *compiler* output and is wrong for the module resolver. Verified against real `go mod tidy` output captured from the toolchain (`tidyFailureOutput` in `builder_test.go`), two independent defects compounded:
+  1. **Progress consumed the whole budget.** `go mod tidy` prints `go: finding module for package X` once per import — resolvable or not — then `go: downloading …` and `go: found … in …` per module. All match the `"go: "` prefix test, so `maxCompilerErrors = 5` was spent on them before any error line was reached.
+  2. **The causal line was unreachable at any cap.** The real failure is a two-line block whose second line is indented with a tab rather than prefixed `go: `, so the prefix test discarded it outright: `go: example.com imports` / `\t…/service/iotdata: module …@latest found (v1.45.1), but does not contain package …/service/iotdata`.
+  The result for f16 in run 20260831-190900 was a fixer prompt listing five `finding module for package <valid path>` lines — one per *correct* import — plus "further errors omitted". Nothing in it was wrong, the bogus `service/iotdata` never appeared, and the stage burned all four builder attempts. The marker occurs 46 times across that run.
+- Change (implemented 2026-09-04):
+  1. `goProgressRe` filters resolution chatter (`finding module for package`, `downloading`, `found … in`, `upgraded`, `extracting`) before anything is capped.
+  2. Indented lines are **folded into the diagnostic above them** instead of dropped. This also recovers the compiler's own explanations, which since Go 1.18 carry the reason for a type error on a continuation line (`*s3.Client does not implement Storer (missing method Put)`). Bounded at `maxContinuationLines = 4`.
+  3. **Two caps, not one.** The cascade argument justifying a cap of 5 is about compiler errors; module errors do not cascade — each block is an independent unresolvable import, and the last is as likely to be the culprit as the first — so they get their own, higher cap and cannot be crowded out by a compiler cascade.
+  4. The omission note is emitted only when real diagnostics were dropped, and says how many. The old unconditional note was itself misleading: what it had omitted was usually progress.
+- **Second, silent consequence, also fixed**: `isGoModFailure` runs on the *formatted* error, so a marker (`missing go.sum entry`, `unknown revision`, …) pushed past the cap by progress lines took the deterministic `rebuildWithFreshGoMod` fallback with it — the build then failed for a reason the pipeline already knew how to repair. Pinned by `TestGoModMarkerSurvivesProgressChatter`.
+- Result on the captured failure: the fixer now receives exactly one diagnostic — `go: example.com imports github.com/aws/aws-sdk-go-v2/service/iotdata: module github.com/aws/aws-sdk-go-v2@latest found (v1.45.1), but does not contain package …/service/iotdata` — instead of five correct import paths.
+- Complements [C8a], which makes the bad import less likely; this makes it recoverable when it happens anyway.
+- Tests: `builder_test.go` — `TestExtractDiagnosticsSurfacesTheModuleCause` (against the verbatim toolchain output: cause present, progress absent, no valid import reported), `TestExtractDiagnosticsFoldsCompilerExplanations`, `TestExtractDiagnosticsCapsClassesSeparately`, `TestGoModMarkerSurvivesProgressChatter`; the original [D3] tests are unchanged and still pass.
+- Architecture impact: Local | Effort: S | Priority: P1
 
 ### [x] [D4] All prompts: remove the "step by step" vs. "output nothing but JSON" contradiction
 - Category: Prompt-Convert / Prompt-FixErrors / Prompt-Align

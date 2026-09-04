@@ -51,6 +51,119 @@ func TestExtractDiagnostics(t *testing.T) {
 	}
 }
 
+// tidyFailureOutput is real `go mod tidy` output, captured verbatim from the
+// toolchain for the import set of f16 (evaluation_set) with its one invented
+// path, "service/iotdata" (the real module is service/iotdataplane).
+//
+// The shape is what matters: one "finding module for package" line per import
+// whether or not it resolves, one "found ... in ..." per module that does, and
+// only at the very end the two-line block naming the package that does not -
+// whose second line is indented with a tab rather than prefixed "go: ".
+const tidyFailureOutput = `go: finding module for package github.com/aws/aws-sdk-go-v2/service/iotdata
+go: finding module for package github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue
+go: finding module for package github.com/aws/aws-sdk-go-v2/aws
+go: finding module for package github.com/aws/aws-sdk-go-v2/config
+go: finding module for package github.com/aws/aws-sdk-go-v2/service/dynamodb/types
+go: finding module for package github.com/aws/aws-sdk-go-v2/service/dynamodb
+go: downloading github.com/aws/aws-sdk-go-v2/config v1.33.2
+go: found github.com/aws/aws-sdk-go-v2/aws in github.com/aws/aws-sdk-go-v2 v1.45.1
+go: found github.com/aws/aws-sdk-go-v2/config in github.com/aws/aws-sdk-go-v2/config v1.33.2
+go: found github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue in github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.21.2
+go: found github.com/aws/aws-sdk-go-v2/service/dynamodb in github.com/aws/aws-sdk-go-v2/service/dynamodb v1.66.0
+go: found github.com/aws/aws-sdk-go-v2/service/dynamodb/types in github.com/aws/aws-sdk-go-v2/service/dynamodb v1.66.0
+go: finding module for package github.com/aws/aws-sdk-go-v2/service/iotdata
+go: example.com imports
+	github.com/aws/aws-sdk-go-v2/service/iotdata: module github.com/aws/aws-sdk-go-v2@latest found (v1.45.1), but does not contain package github.com/aws/aws-sdk-go-v2/service/iotdata
+`
+
+// TestExtractDiagnosticsSurfacesTheModuleCause is the regression test for
+// [C13]. In run 20260831-190900 the fixer for f16 received five
+// "finding module for package <valid path>" lines and "... further errors
+// omitted" - a list in which nothing was actually wrong - and burned all four
+// builder attempts on it. Two independent defects produced that: progress
+// chatter consumed the whole cap, and the indented line naming the bad package
+// was discarded by the prefix test regardless of the cap.
+func TestExtractDiagnosticsSurfacesTheModuleCause(t *testing.T) {
+	diags := extractDiagnostics(tidyFailureOutput)
+
+	if len(diags) == 0 {
+		t.Fatal("no diagnostics extracted from a real tidy failure")
+	}
+	joined := strings.Join(diags, "\n")
+
+	// The whole point: the offending package and the reason must be present.
+	if !strings.Contains(joined, "service/iotdata") {
+		t.Errorf("the offending import is missing; the fixer cannot fix what it is not shown:\n%s", joined)
+	}
+	if !strings.Contains(joined, "does not contain package") {
+		t.Errorf("the reason is missing - it lives on the indented continuation line:\n%s", joined)
+	}
+	// Progress chatter must not appear at all: it is what crowded the cause out.
+	for _, noise := range []string{"finding module for package", "downloading ", "found github.com"} {
+		if strings.Contains(joined, noise) {
+			t.Errorf("progress line %q reached the fixer prompt:\n%s", noise, joined)
+		}
+	}
+	// One import failed, so one diagnostic is the honest answer.
+	if len(diags) != 1 {
+		t.Errorf("extractDiagnostics = %d entries, want 1 for a single unresolvable import: %v", len(diags), diags)
+	}
+	// A valid import must not be named: doing so is what sent the fixer after
+	// correct code.
+	if strings.Contains(joined, "service/dynamodb/types") {
+		t.Errorf("a correctly-resolved import was reported as a problem:\n%s", joined)
+	}
+}
+
+// TestExtractDiagnosticsFoldsCompilerExplanations covers the other half of the
+// continuation fix: since Go 1.18 the compiler puts the *reason* for a type
+// error on an indented line, which the previous prefix test dropped.
+func TestExtractDiagnosticsFoldsCompilerExplanations(t *testing.T) {
+	output := "# github.com/lambda/function\n" +
+		"./main.go:42:9: cannot use c (variable of type *s3.Client) as Storer value in argument to save:\n" +
+		"\t*s3.Client does not implement Storer (missing method Put)\n"
+
+	diags := extractDiagnostics(output)
+	if len(diags) != 1 {
+		t.Fatalf("extractDiagnostics = %d entries, want 1: %v", len(diags), diags)
+	}
+	if !strings.Contains(diags[0], "missing method Put") {
+		t.Errorf("the explanation should be folded into its diagnostic, got: %s", diags[0])
+	}
+	if !strings.Contains(diags[0], "main.go:42:9") {
+		t.Errorf("the position should be preserved, got: %s", diags[0])
+	}
+}
+
+// TestExtractDiagnosticsCapsClassesSeparately pins why there are two caps: the
+// compiler-cascade argument for capping at 5 does not apply to module errors,
+// where each block is an independent unresolvable import and the last one is as
+// likely to be the culprit as the first.
+func TestExtractDiagnosticsCapsClassesSeparately(t *testing.T) {
+	var mixed strings.Builder
+	for i := 1; i <= 7; i++ {
+		fmt.Fprintf(&mixed, "./main.go:%d:1: undefined: sym%d\n", i, i)
+	}
+	for i := 1; i <= 7; i++ {
+		fmt.Fprintf(&mixed, "go: example.com imports\n\tbogus/pkg%d: module bogus@latest found, but does not contain package bogus/pkg%d\n", i, i)
+	}
+
+	diags := extractDiagnostics(mixed.String())
+	joined := strings.Join(diags, "\n")
+
+	// 5 compiler + its omission note, then the module blocks (deduplicated by
+	// their shared "go: example.com imports" line, so one entry survives).
+	if !strings.Contains(joined, "undefined: sym5") || strings.Contains(joined, "undefined: sym6") {
+		t.Errorf("compiler errors should cap at %d, got:\n%s", maxCompilerErrors, joined)
+	}
+	if !strings.Contains(joined, "2 more errors omitted") {
+		t.Errorf("the omission note should say how many were dropped, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "does not contain package") {
+		t.Errorf("module errors must survive a compiler cascade, got:\n%s", joined)
+	}
+}
+
 // TestFormatBuildErrorKeepsGoModMarkers verifies the structured error still
 // contains the markers isGoModFailure matches on, so the deterministic
 // go.mod regeneration fallback keeps triggering.
@@ -69,6 +182,25 @@ func TestFormatBuildErrorKeepsGoModMarkers(t *testing.T) {
 	raw := formatBuildError("go build", "linker exploded in some novel way", errors.New("exit status 2"))
 	if !strings.Contains(raw.Error(), "linker exploded") {
 		t.Errorf("fallback should preserve the raw output, got: %v", raw)
+	}
+}
+
+// TestGoModMarkerSurvivesProgressChatter covers a second consequence of the
+// truncation, easy to miss because it is silent: isGoModFailure runs on the
+// *formatted* error, so a marker pushed past the cap by progress lines took the
+// deterministic go.mod-regeneration fallback (rebuildWithFreshGoMod) with it.
+// The build then failed for a reason the pipeline already knows how to repair.
+func TestGoModMarkerSurvivesProgressChatter(t *testing.T) {
+	var output strings.Builder
+	for i := 1; i <= 8; i++ {
+		fmt.Fprintf(&output, "go: finding module for package example.com/pkg%d\n", i)
+		fmt.Fprintf(&output, "go: downloading example.com/pkg%d v1.0.%d\n", i, i)
+	}
+	output.WriteString("go: updates to go.mod needed; to update it:\n\tmissing go.sum entry for module example.com/pkg1\n")
+
+	err := formatBuildError("go mod tidy", output.String(), errors.New("exit status 1"))
+	if !isGoModFailure(err) {
+		t.Errorf("the go.mod marker must survive; without it rebuildWithFreshGoMod never runs: %v", err)
 	}
 }
 

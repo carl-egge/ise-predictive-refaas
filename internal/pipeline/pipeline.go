@@ -11,13 +11,25 @@ import (
 )
 
 // Stagnation-guard thresholds ([C5]): the number of consecutive times a task
-// must fail with byte-identical error text before executeTask flags it as
-// stagnant for the recovery prompt (2nd occurrence) or gives up on it
-// entirely instead of invoking recovery again (3rd occurrence). Small,
+// must fail with the same error (see domain.RecordFailure, which decides
+// "same" after normalising position and diagnostic order) before executeTask
+// flags it as stagnant for the recovery prompt (2nd occurrence) or gives up on
+// it entirely instead of invoking recovery again (3rd occurrence). Small,
 // literal constants rather than task_args-configurable knobs: the behavior
-// they encode ("the same fix attempt twice in a row is a bad sign, three
-// times in a row means stop") is a property of LLM repair loops in general,
-// not something a specific pipeline config should need to tune per task.
+// they encode ("the same fix attempt twice in a row is a bad sign, three times
+// in a row means stop") is a property of LLM repair loops in general, not
+// something a specific pipeline config should need to tune per task.
+//
+// **Both thresholds were measured against run 20260831-190900 and are at the
+// right place; do not tighten them on intuition.**
+//
+//   - Flagging at 2 is not a formality - it is the most productive single step
+//     in the whole repair machinery. Four jobs failed identically twice, got
+//     the {{ .stagnant }} nudge, and then passed: f41, f57 and f60 on goTester
+//     plus one on builder. Aborting at 2 instead would have cost all four.
+//   - Aborting at 3 costs nothing: across 95 jobs, **no** task ever recovered
+//     after three consecutive identical failures. 30 goTester jobs and 4
+//     builder jobs reached it, and every one of them failed.
 const (
 	stagnationFlagThreshold  = 2
 	stagnationAbortThreshold = 3

@@ -334,40 +334,129 @@ func (cc *GolangBuilder) runBuildCommands(ctx context.Context, dir, buildCmd str
 	return stdout.String(), nil
 }
 
-// maxCompilerErrors caps how many diagnostics reach the fixer prompt: Go
-// compiler errors cascade, and later ones are usually consequences of the
-// first, so a small focused list beats the full dump.
+// maxCompilerErrors caps how many *compiler* diagnostics reach the fixer
+// prompt: Go compiler errors cascade, and later ones are usually consequences
+// of the first, so a small focused list beats the full dump.
 const maxCompilerErrors = 5
+
+// maxModuleErrors caps module diagnostics separately, and higher. They do not
+// cascade the way compiler errors do - `go mod tidy` reports one block per
+// unresolvable import - and the block that names the offending package is the
+// only line worth having, so crowding it out is the failure mode to avoid.
+const maxModuleErrors = 10
+
+// maxContinuationLines bounds how much of an indented explanation is folded
+// into its diagnostic. Both the compiler ("A does not implement B (missing
+// method M)") and the module resolver put the actual reason on these lines.
+const maxContinuationLines = 4
 
 // goDiagnosticRe matches Go compiler diagnostics like
 // "./main.go:11:50: syntax error: ..." (column optional).
 var goDiagnosticRe = regexp.MustCompile(`^(\./)?\S+\.go:\d+(:\d+)?:\s`)
 
-// extractDiagnostics pulls the individual compiler / module diagnostics out
-// of raw build output, de-duplicated and capped at maxCompilerErrors. It
-// returns nil when the output contains no recognizable diagnostics (the
-// caller then falls back to the raw output).
+// goProgressRe matches the "go: ..." lines that report *progress* rather than
+// a problem. `go mod tidy` prints one "finding module for package" line per
+// import and a "downloading"/"found" line per module resolved, whether or not
+// the command ultimately succeeds.
+//
+// Filtering them is the point of [C13]. Before it, a tidy failure filled the
+// entire five-line budget with these - the fixer for f16 was handed five
+// "finding module for package <valid path>" lines, one per *correct* import,
+// while the single bogus one (service/iotdata) never appeared. It then spent
+// four attempts on a diagnostic in which nothing was actually wrong.
+var goProgressRe = regexp.MustCompile(`^go: (finding module for package |downloading |found \S+ in |upgraded |extracting )`)
+
+// extractDiagnostics pulls the individual compiler / module diagnostics out of
+// raw build output, de-duplicated, progress-filtered and capped. It returns nil
+// when the output contains no recognizable diagnostics (the caller then falls
+// back to the raw output).
 func extractDiagnostics(output string) []string {
+	compiler, module := collectDiagnostics(output)
+	out := make([]string, 0, len(compiler)+len(module)+2)
+	out = appendCapped(out, compiler, maxCompilerErrors)
+	out = appendCapped(out, module, maxModuleErrors)
+	return out
+}
+
+// appendCapped appends at most limit diagnostics, noting how many were left
+// out. The note is only added when something real was dropped: the old
+// unconditional "further errors omitted" was itself misleading, since what had
+// been omitted was usually progress chatter rather than errors.
+func appendCapped(dst, diags []string, limit int) []string {
+	if len(diags) <= limit {
+		return append(dst, diags...)
+	}
+	dst = append(dst, diags[:limit]...)
+	return append(dst, fmt.Sprintf("... and %d more errors omitted; fix the ones above first", len(diags)-limit))
+}
+
+// collectDiagnostics walks the build output once, splitting what it keeps into
+// compiler diagnostics and module diagnostics so the two can be capped on their
+// own terms.
+//
+// Indented lines are folded into the diagnostic above them rather than being
+// dropped. This is not cosmetic: `go mod tidy` reports an unresolvable import
+// as a two-line block whose *second* line is the only one that names the
+// package and says why -
+//
+//	go: example.com imports
+//		.../service/iotdata: module github.com/aws/aws-sdk-go-v2@latest found
+//		(v1.45.1), but does not contain package .../service/iotdata
+//
+// and that line starts with a tab, not "go: ", so the previous prefix test
+// discarded it no matter how high the cap was set.
+func collectDiagnostics(output string) (compiler, module []string) {
 	seen := make(map[string]bool)
-	diags := make([]string, 0, maxCompilerErrors)
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || seen[line] {
+	// where the diagnostic currently open for continuations lives, so an
+	// indented line can be appended to the entry it belongs to
+	var current *[]string
+	continuations := 0
+
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
 			continue
 		}
-		// compiler diagnostics, module errors ("go: ...") and go.mod parse
-		// errors ("go.mod:6: unknown directive ...")
-		if !goDiagnosticRe.MatchString(line) && !strings.HasPrefix(line, "go: ") && !strings.HasPrefix(line, "go.mod:") {
+
+		if isContinuation(raw) {
+			if current == nil || continuations >= maxContinuationLines {
+				continue
+			}
+			list := *current
+			list[len(list)-1] += " " + line
+			continuations++
+			continue
+		}
+		// a non-indented line ends the previous diagnostic's explanation
+		current, continuations = nil, 0
+
+		isModule := strings.HasPrefix(line, "go: ") || strings.HasPrefix(line, "go.mod:")
+		if !goDiagnosticRe.MatchString(line) && !isModule {
+			continue
+		}
+		if isModule && goProgressRe.MatchString(line) {
+			continue
+		}
+		if seen[line] {
 			continue
 		}
 		seen[line] = true
-		if len(diags) >= maxCompilerErrors {
-			diags = append(diags, "... further errors omitted; fix the ones above first")
-			break
+
+		if isModule {
+			module = append(module, line)
+			current = &module
+		} else {
+			compiler = append(compiler, line)
+			current = &compiler
 		}
-		diags = append(diags, line)
 	}
-	return diags
+	return compiler, module
+}
+
+// isContinuation reports whether a line is the indented explanation of the
+// diagnostic above it. Blank lines are handled by the caller.
+func isContinuation(raw string) bool {
+	return strings.TrimSpace(raw) != "" && (strings.HasPrefix(raw, "\t") || strings.HasPrefix(raw, " "))
 }
 
 // formatBuildError turns raw build output into the structured error the

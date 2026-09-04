@@ -61,6 +61,16 @@
       ]
     },
     {
+      "_comment": [
+        "maxRetryCount 4 is measured, not guessed. Marginal builds per attempt",
+        "over run 20260831-190900's 95 functions: attempt 1 -> 48, 2 -> +19,",
+        "3 -> +6, 4 -> +2. Every attempt still pays, so cutting to 3 would cost",
+        "two functions; attempt 5 is untested but the trend (40% -> 21% -> 12%",
+        "hit rate) does not argue for it.",
+        "The cost of a high ceiling is bounded by the stagnation guard, not by",
+        "this number: a job that keeps reproducing the same failure is aborted",
+        "at the 3rd repeat regardless."
+      ],
       "id": "builder",
       "task": "goBuilder",
       "canApply": "canCompile",
@@ -82,7 +92,22 @@
       "maxRetryCount": 6
     },
     {
-      "_comment": "testRouter, not goTester: 40 of the 95 evaluation_set functions declare setup/sideEffects and can only be validated through the Floci route. Naming goTester directly would send them to the black-box tester, which ignores those assertions with a warning and reports a pass that validated nothing.",
+      "_comment": [
+        "testRouter, not goTester: 40 of the 95 evaluation_set functions declare",
+        "setup/sideEffects and can only be validated through the Floci route.",
+        "Naming goTester directly would send them to the black-box tester, which",
+        "ignores those assertions with a warning and reports a pass that",
+        "validated nothing.",
+        "",
+        "maxRetryCount 5, measured over run 20260831-190900: attempt 1 -> 29",
+        "passes, 2 -> +6, 3 -> +5, 4 -> +2, 5 -> +0 (2 jobs reached it, both",
+        "failed). Attempt 5 is the only one in the pipeline with a measured yield",
+        "of zero, but on n=2, so it is kept rather than trimmed for a saving of",
+        "roughly 0.6% of run tokens. Revisit once the Floci endpoint fix",
+        "([C11a]) has been run: 23 of the 30 jobs that exhausted this budget",
+        "were Floci-route jobs failing on AWS credentials, so this curve was",
+        "measured through a defect that no longer exists."
+      ],
       "id": "goTester",
       "task": "testRouter",
       "canApply": "canCompile",
