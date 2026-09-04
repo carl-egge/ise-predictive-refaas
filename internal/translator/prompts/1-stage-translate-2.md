@@ -94,10 +94,10 @@ func handle(ctx context.Context, event json.RawMessage) (any, error) {
 ```
 
 ## Input
-Intent:
+{{ if .intent }}Intent:
 {{ .intent }}
 
-Python code:
+{{ end }}Python code:
 {{ .code }}
 
 {{ if .lib_hints }}## Library mapping

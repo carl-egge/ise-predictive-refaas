@@ -136,6 +136,7 @@ In short: `args` answers "how do I reach the LLM backend," `options`/`task_args`
       "task": "string",
       "task_args": { "key": "value" },
       "maxRetryCount": "integer",
+      "optional": "boolean",
       "validation": "string",
       "canApply": "string",
       "recovery": "string",
@@ -149,6 +150,7 @@ In short: `args` answers "how do I reach the LLM backend," `options`/`task_args`
 - `LLMClient` / `args`: selects and configures the LLM backend (`ollama`, `gemini`, or `chatai`). `args` is merged with environment-derived defaults (e.g. `OLLAMA_API_URL`, `GEMINI_API_KEY`, `ACADEMIC_CLOUD_ENDPOINT`, `ACADEMIC_CLOUD_API_KEY`) — see [internal/pipeline/defaults.go](internal/pipeline/defaults.go).
 - `options`: Settings for the LLM model and inference behavior, merged into every task unless overridden by that task's own `task_args`.
 - `tasks`: A list of tasks executed sequentially or conditionally, each with retry logic, validation, and recovery tasks.
+- `optional` (default `false`): marks a stage that *enriches* the conversion rather than performing it — a summary whose sentence becomes `{{ .intent }}`, say. When such a stage exhausts its retries the pipeline logs, records the error, and carries on rather than failing the job. Only the exhausted-retries path is affected: a cancelled job still aborts, and a failed optional stage skips its own `validation` (there is nothing it produced to validate).
 
 The same `options`/`tasks` shape is used standalone for the embedded default pipeline in [internal/pipeline/default.yaml](internal/pipeline/default.yaml). A full `ConverterOptions` JSON example is available in default.json at the repository root.
 

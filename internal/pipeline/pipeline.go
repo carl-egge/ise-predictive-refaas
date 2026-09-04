@@ -47,6 +47,21 @@ type ConversionTask struct {
 	Next          []*ConversionTask // Next tasks (normal execution flow)
 	OnFailure     *ConversionTask   // Recovery task if this task fails
 	Validation    Converter
+	// Optional marks a stage whose failure must not fail the conversion.
+	//
+	// It exists for stages that *enrich* the translation rather than perform
+	// it - a summary whose one sentence becomes {{ .intent }}, say. Without
+	// it, such a stage is a single point of failure for the whole job: in run
+	// 20260831-190900 f62's ChatAI call timed out twice in the opening
+	// `cleaner` stage and the conversion died there, with zero build attempts,
+	// over a prompt embellishment.
+	//
+	// Only the *exhausted-retries* path is affected. Cancellation and a
+	// prediction-gate decline still return early from the retry loop, so
+	// marking a task optional never keeps a stopped or declined job running.
+	// A failed optional task also skips its own Validation: there is nothing
+	// it produced to validate.
+	Optional bool
 }
 
 // Pipeline represents a sequence of ConversionTask steps with a defined root.
@@ -139,6 +154,9 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 
 	var err error
 	var workingPackage *domain.DeploymentPackage
+	// degraded records that an Optional task exhausted its attempts and was
+	// waved through, so its Validation is skipped below.
+	degraded := false
 	if task.Execute != nil {
 
 		// Loop for retry attempts, executing the task and handling errors as needed.
@@ -261,15 +279,27 @@ func (p *Pipeline) executeTask(runner *Runner, req *domain.ConversionRequest, ta
 		}
 
 		if err != nil {
-			log.Debugf("task (%s) failed. %+v", task.ID, err)
+			if !task.Optional {
+				log.Debugf("task (%s) failed. %+v", task.ID, err)
+				req.AddError(err)
+				return err
+			}
+			// The stage is an enrichment; losing it costs a prompt some
+			// context, not the conversion. The error is still recorded - the
+			// run log's issue list is how a degraded job is told apart from a
+			// clean one afterwards, and RecordTaskAttempt has already counted
+			// every failed attempt against this task.
+			log.Warnf("optional task (%s) failed after %d attempt(s); continuing without it: %v",
+				task.ID, task.RetryCount, err)
 			req.AddError(err)
-			return err
+			err = nil
+			degraded = true
 		}
 	} else {
 		log.Debugf("task (%s) is not an executable task. Skipping", task.ID)
 	}
 	// Perform validation if defined
-	if task.Validation != nil {
+	if task.Validation != nil && !degraded {
 		log.Debugf("performing validation task (%s)", task.ID)
 		err = task.Validation.Apply(runner, req)
 		if err != nil {

@@ -36,21 +36,48 @@
       },
       "maxRetryCount": 1,
       "next": [
-        "clean"
+        "summarize"
       ]
     },
     {
-      "id": "clean",
-      "task": "cleaner",
+      "_comment": [
+        "summary, not cleaner (changed 2026-09-04). The cleaner asked the model",
+        "to re-emit the whole Python file with comments added, which cost 409853",
+        "tokens (14.6% of run 20260831-190900) and 86 of its 436 wall-clock",
+        "minutes to produce an artifact that is thrown away after translation -",
+        "and, worse, put an LLM rewrite of the source *between* the original",
+        "function and its translation, where any drift it introduces is invisible.",
+        "summary runs in metadata mode: it returns one sentence into",
+        "{{ .intent }} and leaves the working package alone, so convert below",
+        "translates the untouched original.",
+        "",
+        "optional: true is the fault-safety half. This stage enriches a prompt;",
+        "it must not be able to fail the job. In the last run f62 died right",
+        "here - two ChatAI timeouts in the opening stage, zero build attempts,",
+        "one function lost to a prompt embellishment. With this flag the",
+        "translation proceeds without an intent sentence instead.",
+        "",
+        "Keep maxRetryCount 2: the degrade is the last resort, after the retry."
+      ],
+      "id": "summarize",
+      "task": "summary",
       "maxRetryCount": 2,
+      "optional": true,
       "next": [
         "convert"
       ],
       "validation": "canCompile"
     },
     {
+      "_comment": [
+        "coder2, not coder: coder's prompt (1-stage-translate-1.md) has no",
+        "{{ .intent }} placeholder, so pairing it with the summary stage above",
+        "would pay for a sentence nobody reads. The two changes are one change.",
+        "The intent block is guarded by {{ if .intent }}, so a degraded summary",
+        "renders no empty heading."
+      ],
       "id": "convert",
-      "task": "coder",
+      "task": "coder2",
       "task_args": {
         "reader": "go"
       },

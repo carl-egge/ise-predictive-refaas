@@ -621,6 +621,24 @@ few-shot are the four highest-leverage changes; most are small, local patches.
 - **Extraction corrected 2026-09-04 — see [C13]**: the numbered list was right for compiler output but wrong for `go mod tidy`, where it reported only progress lines and dropped the one line that named the failure.
 - Architecture impact: Local | Effort: S–M | Priority: P1
 
+### [x] [C15] Replace the `cleaner` opening stage with `summary`, and make prompt-enrichment stages fault-safe
+- Category: Feature / Fault Tolerance
+- Affected component(s): `scripts/benchmark.json`, `internal/pipeline/pipeline.go` + `pipeline_io.go` (`Optional`), `internal/translator/prompts/1-stage-translate-2.md`, `internal/pipeline/shipped_configs_test.go`
+- Problem / current state: the benchmark pipeline opened with `cleaner`, which asks the model to re-emit the entire Python file with comments added. Measured over run 20260831-190900:
+  - **409,853 tokens — 14.6% of the run** — and **86 of its 436 wall-clock minutes**, at a mean 2,404 *output* tokens per job, to produce an artifact that is discarded after translation.
+  - Worse than the cost: it puts an LLM rewrite of the source *between* the original function and its translation. Every later stage translates the model's Python, not the user's, and any drift introduced there is invisible — nothing in the pipeline compares the two.
+  - It was also a single point of failure. **f62 died here**: two ChatAI timeouts (`context deadline exceeded`) exhausted the stage's retries and ended the conversion with zero build attempts, over a prompt embellishment.
+- Change (2026-09-04):
+  1. **`clean`/`cleaner` → `summarize`/`summary`.** `summary` runs in metadata mode: it returns one sentence into `{{ .intent }}` and leaves `WorkingPackage` untouched, so `convert` translates the original source. The prompt-input cost is the same, the output cost drops from ~2,400 tokens to a sentence.
+  2. **`convert`: `coder` → `coder2`.** These are one change, not two: only `1-stage-translate-2.md` reads `{{ .intent }}`. Pairing `summary` with `coder` would pay for a sentence nobody reads — and the mistake is silent, since the run completes and looks normal. `shipped_configs_test.go` now pins the pairing.
+  3. **New task field `optional`** (default false, so every existing pipeline is unchanged). When an optional task exhausts its retries, `executeTask` logs, records the error and continues rather than failing the job, and skips that task's own `Validation` — there is nothing it produced to validate. This is the generalisation of the failure policy `pyScan` already had, moved to the layer that owns retry/abort: a stage that only enriches a prompt must not be able to fail a conversion.
+  4. `{{ .intent }}` is guarded with `{{ if .intent }}`, so a degraded summary leaves no dangling "Intent:" heading.
+- **Deliberately rejected**: the alternative of keeping a code-rewriting stage that inserts the intent back as a comment. It reintroduces exactly the problem — the model regenerates the whole file to add one line, paying the output cost again and reopening the drift window — for a comment the translate prompt can receive directly as a template variable.
+- Limits of `optional`, pinned by tests: cancellation and a prediction-gate decline return early from the retry loop, so marking a task optional never keeps a stopped or declined job running; the retry budget is still spent in full before degrading; and the failure is still recorded in `req.Errors()` and `Metrics.PerTask`, so a degraded job is distinguishable from a clean one in the run log.
+- Expected effect on the next run: ~8% fewer tokens and ~80 fewer wall-clock minutes, the translation performed against the unmodified source, and f62's failure mode eliminated.
+- Tests: `internal/pipeline/optional_test.go` (degrade after retries, default still fails the job, validation skipped, cancellation still aborts, the flag survives compilation), `shipped_configs_test.go` (summary present and optional, paired with coder2, `cleaner` rejected outright), `internal/translator/prompts_test.go` (no "Intent:" heading without an intent).
+- Architecture impact: Local | Effort: S | Priority: P1
+
 ### [x] [C14] Retry budgets: measured, left alone, and the stagnation guard made able to see a repeat
 - Category: Bug / Evaluation
 - Affected component(s): `internal/domain/stagnation.go` (new, `normaliseFailure`), `internal/domain/types.go` (`RecordFailure`), `internal/pipeline/pipeline.go` (threshold commentary), `scripts/benchmark.json` (documented budgets)

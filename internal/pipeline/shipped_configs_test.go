@@ -111,6 +111,41 @@ func TestBenchmarkConfigIsFitForTheEvaluationRun(t *testing.T) {
 		t.Error("benchmark config does not use testRouter")
 	}
 
+	// The summary stage and coder2 are one change, not two. summary writes
+	// {{ .intent }}; only 1-stage-translate-2.md (coder2) reads it. Pairing
+	// summary with coder would pay for a sentence nobody reads, and the
+	// mistake is invisible - the run completes and looks normal.
+	var summaryTask, convertTask *ConversionTaskStub
+	for i, task := range opts.Tasks {
+		switch task.Task {
+		case "summary":
+			summaryTask = &opts.Tasks[i]
+		case "coder", "coder2":
+			convertTask = &opts.Tasks[i]
+		case "cleaner":
+			t.Errorf("task %q uses the cleaner: it re-emits the whole Python file "+
+				"(14.6%% of run 20260831-190900's tokens) and puts an LLM rewrite between "+
+				"the original function and its translation", task.ID)
+		}
+	}
+	if summaryTask == nil {
+		t.Error("benchmark config has no summary stage; the translate prompt's {{ .intent }} would be empty")
+	}
+	if convertTask == nil {
+		t.Fatal("benchmark config has no translate stage")
+	}
+	if summaryTask != nil && convertTask.Task != "coder2" {
+		t.Errorf("translate stage is %q while a summary stage is present; only coder2 reads {{ .intent }}, "+
+			"so this pays for a summary nobody reads", convertTask.Task)
+	}
+	// A stage that only enriches a prompt must never be able to fail the job.
+	// f62 was lost exactly this way: two API timeouts in the opening stage,
+	// zero build attempts.
+	if summaryTask != nil && !summaryTask.Optional {
+		t.Errorf("summary task %q is not optional; an API timeout in a prompt-enrichment stage would fail the whole conversion",
+			summaryTask.ID)
+	}
+
 	// The energy coefficients in evaluation/energy.config.json were derived
 	// for one specific model. Costing a different model's tokens with them
 	// would put every energy figure in the thesis on the wrong constants.

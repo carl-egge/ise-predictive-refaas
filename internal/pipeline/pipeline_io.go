@@ -40,8 +40,13 @@ type ConversionTaskStub struct {
 	onFailure     *ConversionTask
 	MaxRetryCount int           `json:"maxRetryCount" yaml:"maxRetryCount"`
 	RetryDelay    time.Duration `json:"retryDelay" yaml:"retryDelay"`
-	Next          []string      `json:"next" yaml:"next"`
-	next          []*ConversionTask
+	// Optional marks a stage that *enriches* the conversion rather than
+	// performing it: when it fails every attempt, the pipeline logs and carries
+	// on instead of failing the job. Off by default, so existing pipelines are
+	// unchanged. See ConversionTask.Optional for when this is appropriate.
+	Optional bool     `json:"optional" yaml:"optional"`
+	Next     []string `json:"next" yaml:"next"`
+	next     []*ConversionTask
 }
 
 // canConvert reports whether the stub has been fully resolved into concrete
@@ -83,6 +88,7 @@ func (c *ConversionTaskStub) asConversionTask() ConversionTask {
 		RetryCount:    0,
 		MaxRetryCount: c.MaxRetryCount,
 		RetryDelay:    c.RetryDelay,
+		Optional:      c.Optional,
 		Next:          c.next,
 	}
 }

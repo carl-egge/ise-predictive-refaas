@@ -56,6 +56,12 @@ func TestEmbeddedPromptsParseAndRender(t *testing.T) {
 			if strings.Contains(empty.String(), "AWS SDK for Go v2") {
 				t.Error("the AWS block rendered for a function with no aws_hints")
 			}
+			// The summary stage is optional, so {{ .intent }} can legitimately
+			// be absent; an unguarded placeholder would leave the model a bare
+			// "Intent:" heading with nothing under it.
+			if strings.Contains(empty.String(), "Intent:") {
+				t.Error("the intent heading rendered with no intent behind it")
+			}
 		})
 	}
 }
