@@ -64,6 +64,7 @@
       "facility_joules": 1304.7167549306785,
       "co2e_grams": 0.1315589394555101,
       "repair_joules": 0,
+      "host_joules": 0,
       "tests_passed": 1,
       "tests_failed": 0,
       "shape_only_tests": 0
@@ -132,6 +133,7 @@
       "facility_joules": 1390.3446379366158,
       "co2e_grams": 0.1401930843252754,
       "repair_joules": 0,
+      "host_joules": 0,
       "tests_passed": 3,
       "tests_failed": 0,
       "shape_only_tests": 0
@@ -200,6 +202,7 @@
       "facility_joules": 2052.0938750434248,
       "co2e_grams": 0.2069194657335453,
       "repair_joules": 0,
+      "host_joules": 0,
       "tests_passed": 4,
       "tests_failed": 0,
       "shape_only_tests": 0
@@ -268,6 +271,7 @@
       "facility_joules": 2108.6287520922815,
       "co2e_grams": 0.2126200658359717,
       "repair_joules": 0,
+      "host_joules": 0,
       "tests_passed": 3,
       "tests_failed": 0,
       "shape_only_tests": 0
@@ -336,6 +340,7 @@
       "facility_joules": 2242.452534720029,
       "co2e_grams": 0.2261139639176029,
       "repair_joules": 0,
+      "host_joules": 0,
       "tests_passed": 3,
       "tests_failed": 0,
       "shape_only_tests": 0
@@ -404,6 +409,7 @@
       "facility_joules": 1832.9316034179194,
       "co2e_grams": 0.18482060334464023,
       "repair_joules": 0,
+      "host_joules": 0,
       "tests_passed": 3,
       "tests_failed": 0,
       "shape_only_tests": 0
@@ -494,6 +500,7 @@
       "facility_joules": 6659.345678550562,
       "co2e_grams": 0.6714840225871817,
       "repair_joules": 2531.5846643664727,
+      "host_joules": 0,
       "tests_passed": 5,
       "tests_failed": 0,
       "shape_only_tests": 0
@@ -562,6 +569,7 @@
       "facility_joules": 1822.5110115193909,
       "co2e_grams": 0.18376986032820522,
       "repair_joules": 0,
+      "host_joules": 0,
       "tests_passed": 3,
       "tests_failed": 0,
       "shape_only_tests": 0
@@ -630,6 +638,7 @@
       "facility_joules": 2036.2306534037075,
       "co2e_grams": 0.2053199242182072,
       "repair_joules": 0,
+      "host_joules": 0,
       "tests_passed": 3,
       "tests_failed": 0,
       "shape_only_tests": 0
@@ -698,6 +707,7 @@
       "facility_joules": 904.4761742436204,
       "co2e_grams": 0.09120134756956506,
       "repair_joules": 0,
+      "host_joules": 0,
       "tests_passed": 1,
       "tests_failed": 0,
       "shape_only_tests": 0
@@ -804,6 +814,7 @@
         "facility_joules": 6173.135335080849,
         "co2e_grams": 0.6224578129539855,
         "repair_joules": 3409.580083059626,
+        "host_joules": 0,
         "tests_passed": 2,
         "tests_failed": 1,
         "shape_only_tests": 0,
@@ -897,6 +908,7 @@
         "facility_joules": 6812.294504800405,
         "co2e_grams": 0.6869063625673741,
         "repair_joules": 3861.630445853335,
+        "host_joules": 0,
         "tests_passed": 2,
         "tests_failed": 1,
         "shape_only_tests": 0,
@@ -990,6 +1002,7 @@
         "facility_joules": 3944.690722310826,
         "co2e_grams": 0.3977563144996749,
         "repair_joules": 2068.3116565079163,
+        "host_joules": 0,
         "tests_passed": 1,
         "tests_failed": 2,
         "shape_only_tests": 0,
@@ -1083,6 +1096,7 @@
         "facility_joules": 12948.610832491158,
         "co2e_grams": 1.3056515922761918,
         "repair_joules": 8706.992319090028,
+        "host_joules": 0,
         "tests_passed": 1,
         "tests_failed": 2,
         "shape_only_tests": 0,
@@ -1096,16 +1110,19 @@
   "total_facility_joules": 22353.73167585823,
   "mean_facility_joules": 2235.373167585823,
   "median_facility_joules": 1934.5811284108136,
+  "total_compute_joules": 21289.268262722122,
+  "total_host_joules": 0,
+  "translations_without_host_energy": 10,
   "total_co2e_grams": 2.2540012773157048,
   "total_co2e_grams_market": 0,
   "total_prompt_tokens": 35577,
   "total_eval_tokens": 13103,
-  "repair_share": 0.11891365326065814,
+  "repair_share": 0.11891365326065816,
   "by_stage": [
     {
       "task": "convert",
       "joules": 13413.388203085524,
-      "share": 0.6300539801347985,
+      "share": 0.6300539801347986,
       "executions": 10,
       "failures": 0,
       "llm_calls": 10,
@@ -1114,7 +1131,7 @@
     {
       "task": "clean",
       "joules": 5344.295395270127,
-      "share": 0.2510323666045432,
+      "share": 0.25103236660454326,
       "executions": 10,
       "failures": 0,
       "llm_calls": 10,
@@ -1123,7 +1140,7 @@
     {
       "task": "testRecovery",
       "joules": 2531.5846643664727,
-      "share": 0.11891365326065814,
+      "share": 0.11891365326065816,
       "executions": 1,
       "failures": 0,
       "llm_calls": 1,

@@ -15,6 +15,14 @@ the repo therefore already holds three measured quantities:
 | `E_i`  | facility joules that attempt actually cost — **failures included** | `go run ./cmd/energy -json` |
 | `ΔE_i` | per-invocation joules the Go version saves over Python | `evaluation/runtime-20260831-190900.json` ([H6], RAPL, bare metal) |
 
+`ΔE_i` exists only for translations that **passed their fixtures**. `cmd/runtime` used to
+measure any Go package it found, and `scripts/run-benchmark.sh` archives the package of a
+failed job too, so the runtime files once carried rows for translations that compute the wrong
+answer (24 of 66 in the 20260831 file). They were rebuilt with `cmd/runtime -runlog` on
+2026-09-06. Nothing in this directory's published results moves: `benefit` is weighted by
+`y_i`, so a `ΔE` on a failed function was multiplied by zero. Rebuild the dataset anyway if you
+regenerate it, so the CSV's `runtime_measured` column means what it says.
+
 A prediction gate is then a decision vector `d ∈ {translate, skip}^95` and its effect is a
 sum over already-measured numbers:
 

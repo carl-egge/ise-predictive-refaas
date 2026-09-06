@@ -8,6 +8,7 @@ data
 /examples/output/*
 /examples/metrics/*
 /docs/writing/*
+/docs/paper/*
 /docs/*.bkp
 faasllm
 *.txt

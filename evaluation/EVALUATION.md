@@ -449,9 +449,103 @@ Implemented as `cmd/runtime`, with the two harnesses in `evaluation/harness/`.
 ```sh
 # measure both sides, then turn the result into break-even counts
 go run ./cmd/runtime -artifacts evaluation/evaluation_set \
-    -packages runs/packages-<run-id>.zip -out evaluation/runtime.json -report evaluation/runtime-report.json
+    -packages runs/packages-<run-id>.zip -runlog runs/run-<run-id>.jsonl \
+    -out evaluation/runtime.json -report evaluation/runtime-report-<run-id>.json
 go run ./cmd/energy -runtime evaluation/runtime.json runs/run-<run-id>.jsonl
 ```
+
+**`-runlog` is not optional in practice.** A translated Go package on disk is not evidence
+that the translation is correct: `scripts/run-benchmark.sh` archives the package of a *failed*
+job too (the service returns it with HTTP 406, and it is worth keeping as evidence), so the
+packages directory is a superset of the validated translations. Timing one that fails its
+fixtures measures how fast the wrong answer is produced — usually fast, since the work it
+skips is the work it was supposed to do. `-runlog` restricts the measurement to the functions
+the pipeline recorded as completed; without it the tool still runs and says, in both the report
+(`validated_only: false`) and the summary (`validated: NO`), that it did not filter.
+
+The flag arrived after the first measurement runs did, so the archived files were rebuilt from
+their own reports rather than re-measured — `-from-report` applies the filter to measurements
+that were already taken, which keeps the surviving numbers identical to the ones the rest of the
+analysis used:
+
+```sh
+go run ./cmd/runtime -from-report evaluation/runtime-report-<run-id>.json \
+    -runlog runs/run-<run-id>.jsonl -out evaluation/runtime.json
+```
+
+How much each file held before the filter: `runtime-20260830-230152.json` 57 → 11 (that run
+completed only 11 translations), `runtime-20260831-190900.json` 66 → 42, `runtime.json`
+(20260904-190539) 59 → 46, `runtime-functionset.json` 14 → 10. **Break-even `N*` is unaffected**
+— `cmd/energy` joins runtime measurements against the run's *completed* translations, so the
+extra rows were never costed — but every descriptive Go-vs-Python ratio computed straight from
+these files was. On 20260904-190539 the steady-state median moves from 1.7× (all 59) to 1.4×
+(the 46 validated); cold start is unchanged at ≈46× either way.
+
+#### How far a translation gets, by complexity bucket (2026-09-06)
+
+`evaluation/figures/pipeline_funnel.py` draws the three nested outcomes of run
+`20260904-190539` per complexity bucket. **buildable** = the pipeline produced Go
+that compiles and reached the test stage; **validated** = every fixture also
+*executed* cleanly in the final round (no execution error, timeout, setup failure
+or unusable fixture); **tested** = every fixture *passed*, which is the pipeline's
+own success criterion. They nest by construction, and the run log confirms it in
+all four buckets.
+
+| bucket | n | buildable | validated | tested |
+|:---|--:|--:|--:|--:|
+| A (cc ≤ 5) | 25 | 84% | 72% | 64% |
+| B (cc ≤ 10) | 25 | 96% | 72% | 56% |
+| C (cc ≤ 20) | 25 | 84% | 80% | 56% |
+| D+ (cc > 20) | 20 | 45% | 20% | 15% |
+| **all** | 95 | **79%** | **63%** | **49%** |
+
+Two things the middle column buys. First, **A/B/C lose more functions to
+behavioural divergence than to anything else** — B goes 96 → 72 → 56, so a fifth
+of the bucket compiles and runs but answers differently, and another fifth runs
+and mismatches. That is a different engineering problem from code that does not
+run, and a bare pass/fail rate cannot separate them. Second, **D+ is the only
+bucket that fails before it runs**: 55% never compile at all, and of the 45% that
+do, more than half then fail to execute. Complexity is not degrading the
+*translation quality* here so much as preventing a translation from existing —
+which is the shape a pre-translation gate could act on, and the reason the D+
+regression from run `20260831-190900` (7/20 → 3/20 completed) matters more than
+its three functions suggest.
+
+The [A19] caveat applies: `Metrics.TestOutcomes` describes the last validation
+round, so "validated" is a property of the final artifact, not a claim that no
+fixture ever errored during repair.
+
+#### Where the saving actually is (2026-09-06)
+
+`evaluation/figures/savings_histogram.py` draws the analogue of Werner et al.
+Figure 1 — "Consumption Reductions [J]" over the translated functions — for the 46
+validated translations of run `20260904-190539`, as two overlapping series split on
+the corpus's own AWS axis. It emits TikZ/pgfplots for the write-up, an SVG preview,
+and a generated caption; both renderers share one geometry function so the preview
+cannot drift from the figure.
+
+The split is the result:
+
+| | n | median | mean | positive | sign test |
+|:---|--:|--:|--:|--:|--:|
+| AWS | 23 | 21.7 J | 57.4 J | 21/23 | p = 7 × 10⁻⁵ |
+| non-AWS | 23 | −0.001 J | 0.10 J | 10/23 | p = 0.68 |
+
+(joules saved over 1,000 invocations; divide by 1,000 for the per-invocation figure
+`N*` uses). Mann–Whitney between the groups: p = 1.2 × 10⁻⁵. **Translating a
+non-AWS function in this corpus does not save energy** — its savings are a coin
+flip around zero, and 13 of the 23 are negative. Every joule of the corpus-level
+win comes from the AWS functions, where the Go SDK replaces boto3's import and
+client-construction cost. That is also why the corpus median steady-state ratio is
+only 1.28×: half the corpus has nothing to win.
+
+Two things about the comparison to the paper. Its x-axis is labelled per
+invocation, but a mean of 201 J per single invocation cannot be reconciled with its
+own break-even range of 3,000–10⁶ invocations against a 61-second translation; the
+figure is only coherent as savings accumulated over its 1,000-invocation run, which
+is the basis used here. And its seven bars sum to 60%, not 100%, so their histogram
+is normalised over more data than it draws — it is reproduced in panel (a) as a
+shape to compare against, not a distribution to do arithmetic on.
 
 **Symmetry is structural, not conventional.** `evaluation/harness/handler.py` and
 `bench_handler.go.txt` read the *same* fixture payloads as JSON Lines on stdin, invoke the

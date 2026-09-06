@@ -5,6 +5,14 @@
   "energy_derived": false,
   "invocations": 200,
   "repetitions": 5,
+  "python": {
+    "interpreter": "",
+    "version": ""
+  },
+  "validated_only": true,
+  "run_logs": [
+    "20260831-170746"
+  ],
   "functions": [
     {
       "function_id": "f0",
@@ -124,34 +132,7 @@
       "function_id": "f13",
       "bucket": "C",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.09420890452261307,
-        "steady_seconds_per_invocation": 0.007277837648241205,
-        "startup_joules": 4.187518095477387,
-        "startup_seconds": 0.3497507463517588,
-        "cold_joules_per_invocation": 4.281727,
-        "cold_seconds_per_invocation": 0.357028584,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.01486094974874372,
-        "steady_seconds_per_invocation": 0.0010412631608040202,
-        "startup_joules": 0.03482105025125628,
-        "startup_seconds": 0.0036817968391959803,
-        "cold_joules_per_invocation": 0.049682,
-        "cold_seconds_per_invocation": 0.00472306,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
@@ -238,34 +219,7 @@
       "function_id": "f18",
       "bucket": "C",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.03521535175879397,
-        "steady_seconds_per_invocation": 0.0028167919849246227,
-        "startup_joules": 4.452505648241206,
-        "startup_seconds": 0.3694356050150754,
-        "cold_joules_per_invocation": 4.487721,
-        "cold_seconds_per_invocation": 0.372252397,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.01152365326633166,
-        "steady_seconds_per_invocation": 0.0008778798291457287,
-        "startup_joules": 0.05262434673366834,
-        "startup_seconds": 0.004218408170854272,
-        "cold_joules_per_invocation": 0.064148,
-        "cold_seconds_per_invocation": 0.005096288,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
@@ -345,34 +299,7 @@
       "function_id": "f21",
       "bucket": "B",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.09482293467336685,
-        "steady_seconds_per_invocation": 0.007369504517587939,
-        "startup_joules": 4.186477065326633,
-        "startup_seconds": 0.34772167948241206,
-        "cold_joules_per_invocation": 4.2813,
-        "cold_seconds_per_invocation": 0.355091184,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 4,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.015933206030150752,
-        "steady_seconds_per_invocation": 0.0011500030000000001,
-        "startup_joules": 0.04900779396984925,
-        "startup_seconds": 0.004018913,
-        "cold_joules_per_invocation": 0.064941,
-        "cold_seconds_per_invocation": 0.005168916,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 4,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
@@ -397,34 +324,7 @@
       "function_id": "f25",
       "bucket": "A",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 1.1506808944723619,
-        "steady_seconds_per_invocation": 0.22286733367839195,
-        "startup_joules": 4.505372105527638,
-        "startup_seconds": 0.35687158732160806,
-        "cold_joules_per_invocation": 5.656053,
-        "cold_seconds_per_invocation": 0.579738921,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.9261797487437186,
-        "steady_seconds_per_invocation": 0.20427269354271357,
-        "startup_joules": 0,
-        "startup_seconds": 0.003532971457286427,
-        "cold_joules_per_invocation": 0.9261797487437186,
-        "cold_seconds_per_invocation": 0.207805665,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
@@ -438,34 +338,7 @@
       "function_id": "f27",
       "bucket": "B",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.09747136180904523,
-        "steady_seconds_per_invocation": 0.007592555381909548,
-        "startup_joules": 4.1005766381909545,
-        "startup_seconds": 0.34682158361809046,
-        "cold_joules_per_invocation": 4.198048,
-        "cold_seconds_per_invocation": 0.354414139,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.01269221105527638,
-        "steady_seconds_per_invocation": 0.0008945187688442212,
-        "startup_joules": 0.06512778894472362,
-        "startup_seconds": 0.0042224552311557785,
-        "cold_joules_per_invocation": 0.07782,
-        "cold_seconds_per_invocation": 0.005116974,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
@@ -743,34 +616,7 @@
       "function_id": "f4",
       "bucket": "D+",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.365148783919598,
-        "steady_seconds_per_invocation": 0.028541369090452257,
-        "startup_joules": 6.201546216080402,
-        "startup_seconds": 0.5155751539095478,
-        "cold_joules_per_invocation": 6.566695,
-        "cold_seconds_per_invocation": 0.544116523,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.04246502512562814,
-        "steady_seconds_per_invocation": 0.002962420502512563,
-        "startup_joules": 0.03492697487437186,
-        "startup_seconds": 0.002462800497487437,
-        "cold_joules_per_invocation": 0.077392,
-        "cold_seconds_per_invocation": 0.005425221,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      }
+      "skipped": "not a validated translation: the pipeline did not record this function as completed"
     },
     {
       "function_id": "f40",
@@ -842,67 +688,13 @@
       "function_id": "f42",
       "bucket": "C",
       "aws": false,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.0023840452261306537,
-        "steady_seconds_per_invocation": 0.00018343564824120604,
-        "startup_joules": 0.8345889547738693,
-        "startup_seconds": 0.06519735035175879,
-        "cold_joules_per_invocation": 0.836973,
-        "cold_seconds_per_invocation": 0.065380786,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.0007719849246231155,
-        "steady_seconds_per_invocation": 0.0000504336231155779,
-        "startup_joules": 0.025656015075376886,
-        "startup_seconds": 0.001547146376884422,
-        "cold_joules_per_invocation": 0.026428,
-        "cold_seconds_per_invocation": 0.00159758,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      }
+      "skipped": "not a validated translation: the pipeline did not record this function as completed"
     },
     {
       "function_id": "f43",
       "bucket": "B",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.06343806030150753,
-        "steady_seconds_per_invocation": 0.004803803271356783,
-        "startup_joules": 4.320705939698493,
-        "startup_seconds": 0.35839687972864326,
-        "cold_joules_per_invocation": 4.384144,
-        "cold_seconds_per_invocation": 0.363200683,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.019935753768844218,
-        "steady_seconds_per_invocation": 0.0014298017236180902,
-        "startup_joules": 0.0855322462311558,
-        "startup_seconds": 0.00595681427638191,
-        "cold_joules_per_invocation": 0.105468,
-        "cold_seconds_per_invocation": 0.007386616,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
@@ -983,102 +775,21 @@
       "function_id": "f47",
       "bucket": "C",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.08509260804020101,
-        "steady_seconds_per_invocation": 0.006602605748743718,
-        "startup_joules": 4.176370391959799,
-        "startup_seconds": 0.3521540792512563,
-        "cold_joules_per_invocation": 4.261463,
-        "cold_seconds_per_invocation": 0.358756685,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 4,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.032479517587939696,
-        "steady_seconds_per_invocation": 0.002284973934673367,
-        "startup_joules": 0.0310574824120603,
-        "startup_seconds": 0.0025107470653266332,
-        "cold_joules_per_invocation": 0.063537,
-        "cold_seconds_per_invocation": 0.004795721,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 4,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
       "function_id": "f48",
       "bucket": "A",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.01839607537688442,
-        "steady_seconds_per_invocation": 0.0014098212613065325,
-        "startup_joules": 4.2403209246231155,
-        "startup_seconds": 0.3583391107386935,
-        "cold_joules_per_invocation": 4.258717,
-        "cold_seconds_per_invocation": 0.359748932,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.006875175879396985,
-        "steady_seconds_per_invocation": 0.00048477112060301515,
-        "startup_joules": 0.04469982412060302,
-        "startup_seconds": 0.004091287879396985,
-        "cold_joules_per_invocation": 0.051575,
-        "cold_seconds_per_invocation": 0.004576059,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
       "function_id": "f49",
       "bucket": "C",
       "aws": false,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.00012216158079039519,
-        "steady_seconds_per_invocation": 0.000011649643821910958,
-        "startup_joules": 0.6931748384192097,
-        "startup_seconds": 0.05032057935617809,
-        "cold_joules_per_invocation": 0.693297,
-        "cold_seconds_per_invocation": 0.050332229,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 2000,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.00011504752376188095,
-        "steady_seconds_per_invocation": 0.000007620641820910456,
-        "startup_joules": 0.012640952476238119,
-        "startup_seconds": 0.0012962663581790896,
-        "cold_joules_per_invocation": 0.012756,
-        "cold_seconds_per_invocation": 0.001303887,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 2000,
-        "resolved": true
-      }
+      "skipped": "not a validated translation: the pipeline did not record this function as completed"
     },
     {
       "function_id": "f5",
@@ -1090,67 +801,13 @@
       "function_id": "f50",
       "bucket": "B",
       "aws": false,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.0005590860430215107,
-        "steady_seconds_per_invocation": 0.00003405004052026013,
-        "startup_joules": 0.6163819139569785,
-        "startup_seconds": 0.04825539095947974,
-        "cold_joules_per_invocation": 0.616941,
-        "cold_seconds_per_invocation": 0.048289441,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 2000,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.0006815025125628142,
-        "steady_seconds_per_invocation": 0.000040566145728643214,
-        "startup_joules": 0.025258497487437186,
-        "startup_seconds": 0.0014802348542713568,
-        "cold_joules_per_invocation": 0.02594,
-        "cold_seconds_per_invocation": 0.001520801,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      }
+      "skipped": "not a validated translation: the pipeline did not record this function as completed"
     },
     {
       "function_id": "f51",
       "bucket": "A",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.030255567839195977,
-        "steady_seconds_per_invocation": 0.0023624432110552766,
-        "startup_joules": 4.486334432160804,
-        "startup_seconds": 0.3687280197889447,
-        "cold_joules_per_invocation": 4.51659,
-        "cold_seconds_per_invocation": 0.371090463,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.021638286432160803,
-        "steady_seconds_per_invocation": 0.0014986356030150755,
-        "startup_joules": 0.0431807135678392,
-        "startup_seconds": 0.0031929793969849244,
-        "cold_joules_per_invocation": 0.064819,
-        "cold_seconds_per_invocation": 0.004691615,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
@@ -1164,102 +821,21 @@
       "function_id": "f53",
       "bucket": "B",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.029837221105527643,
-        "steady_seconds_per_invocation": 0.002257367738693467,
-        "startup_joules": 4.093015778894473,
-        "startup_seconds": 0.33374764426130654,
-        "cold_joules_per_invocation": 4.122853,
-        "cold_seconds_per_invocation": 0.336005012,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.01121970351758794,
-        "steady_seconds_per_invocation": 0.0008712692261306533,
-        "startup_joules": 0.04493229648241206,
-        "startup_seconds": 0.004369092773869347,
-        "cold_joules_per_invocation": 0.056152,
-        "cold_seconds_per_invocation": 0.005240362,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
       "function_id": "f54",
       "bucket": "C",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.07363857788944723,
-        "steady_seconds_per_invocation": 0.005733465944723618,
-        "startup_joules": 4.587298422110552,
-        "startup_seconds": 0.3671600120552764,
-        "cold_joules_per_invocation": 4.660937,
-        "cold_seconds_per_invocation": 0.372893478,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.038197175879396986,
-        "steady_seconds_per_invocation": 0.0026931235628140705,
-        "startup_joules": 0.096506824120603,
-        "startup_seconds": 0.00576376943718593,
-        "cold_joules_per_invocation": 0.134704,
-        "cold_seconds_per_invocation": 0.008456893,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
       "function_id": "f55",
       "bucket": "B",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.11160878391959798,
-        "steady_seconds_per_invocation": 0.008464231984924624,
-        "startup_joules": 4.087843216080402,
-        "startup_seconds": 0.3394449330150754,
-        "cold_joules_per_invocation": 4.199452,
-        "cold_seconds_per_invocation": 0.347909165,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.020989597989949753,
-        "steady_seconds_per_invocation": 0.0014765214522613067,
-        "startup_joules": 0.029303402010050245,
-        "startup_seconds": 0.003534022547738693,
-        "cold_joules_per_invocation": 0.050293,
-        "cold_seconds_per_invocation": 0.005010544,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
@@ -1450,34 +1026,7 @@
       "function_id": "f63",
       "bucket": "D+",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.029884145728643213,
-        "steady_seconds_per_invocation": 0.0023503583015075376,
-        "startup_joules": 4.328991854271357,
-        "startup_seconds": 0.3549233046984925,
-        "cold_joules_per_invocation": 4.358876,
-        "cold_seconds_per_invocation": 0.357273663,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.011578859296482414,
-        "steady_seconds_per_invocation": 0.0008159140351758793,
-        "startup_joules": 0.05140914070351759,
-        "startup_seconds": 0.0043556069648241205,
-        "cold_joules_per_invocation": 0.062988,
-        "cold_seconds_per_invocation": 0.005171521,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
@@ -1742,34 +1291,7 @@
       "function_id": "f74",
       "bucket": "B",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.11405110050251255,
-        "steady_seconds_per_invocation": 0.00870612852763819,
-        "startup_joules": 4.223706899497487,
-        "startup_seconds": 0.3519382054723618,
-        "cold_joules_per_invocation": 4.337758,
-        "cold_seconds_per_invocation": 0.360644334,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.023061723618090453,
-        "steady_seconds_per_invocation": 0.0016270373517587938,
-        "startup_joules": 0.04114727638190955,
-        "startup_seconds": 0.003186720648241206,
-        "cold_joules_per_invocation": 0.064209,
-        "cold_seconds_per_invocation": 0.004813758,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
@@ -1910,68 +1432,14 @@
       "function_id": "f79",
       "bucket": "A",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.03724698994974874,
-        "steady_seconds_per_invocation": 0.00291689671356784,
-        "startup_joules": 4.333469010050251,
-        "startup_seconds": 0.3553823302864322,
-        "cold_joules_per_invocation": 4.370716,
-        "cold_seconds_per_invocation": 0.358299227,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.02466734170854271,
-        "steady_seconds_per_invocation": 0.0017271565326633165,
-        "startup_joules": 0.05327465829145729,
-        "startup_seconds": 0.003872901467336683,
-        "cold_joules_per_invocation": 0.077942,
-        "cold_seconds_per_invocation": 0.005600058,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
       "function_id": "f8",
       "bucket": "B",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.009246341708542716,
-        "steady_seconds_per_invocation": 0.0006824645075376884,
-        "startup_joules": 4.246418658291457,
-        "startup_seconds": 0.34905856149246234,
-        "cold_joules_per_invocation": 4.255665,
-        "cold_seconds_per_invocation": 0.349741026,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.00010374987493746873,
-        "steady_seconds_per_invocation": 0.000006830795897948974,
-        "startup_joules": 0.03517525012506253,
-        "startup_seconds": 0.002836657204102051,
-        "cold_joules_per_invocation": 0.035279,
-        "cold_seconds_per_invocation": 0.002843488,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 2000,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
@@ -2050,34 +1518,7 @@
       "function_id": "f83",
       "bucket": "A",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.21013460804020104,
-        "steady_seconds_per_invocation": 0.016035268758793967,
-        "startup_joules": 4.918148391959798,
-        "startup_seconds": 0.396744533241206,
-        "cold_joules_per_invocation": 5.128283,
-        "cold_seconds_per_invocation": 0.412779802,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 4,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.031040738693467337,
-        "steady_seconds_per_invocation": 0.0021695226381909546,
-        "startup_joules": 0.04775626130653267,
-        "startup_seconds": 0.003830977361809045,
-        "cold_joules_per_invocation": 0.078797,
-        "cold_seconds_per_invocation": 0.0060005,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 4,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
@@ -2269,68 +1710,14 @@
       "function_id": "f91",
       "bucket": "A",
       "aws": true,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.03601984924623116,
-        "steady_seconds_per_invocation": 0.002764816914572864,
-        "startup_joules": 4.424784150753769,
-        "startup_seconds": 0.36627089908542715,
-        "cold_joules_per_invocation": 4.460804,
-        "cold_seconds_per_invocation": 0.369035716,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.02340400502512563,
-        "steady_seconds_per_invocation": 0.0016289821959798994,
-        "startup_joules": 0.042879994974874366,
-        "startup_seconds": 0.003296440804020101,
-        "cold_joules_per_invocation": 0.066284,
-        "cold_seconds_per_invocation": 0.004925423,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
+      "skipped": "not a validated translation: the pipeline did not record this function as completed",
       "provisioned": true
     },
     {
       "function_id": "f92",
       "bucket": "D+",
       "aws": false,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.004180437185929649,
-        "steady_seconds_per_invocation": 0.00030680257286432163,
-        "startup_joules": 0.7544845628140704,
-        "startup_seconds": 0.06080148842713568,
-        "cold_joules_per_invocation": 0.758665,
-        "cold_seconds_per_invocation": 0.061108291,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.0009348492462311558,
-        "steady_seconds_per_invocation": 0.0000584671055276382,
-        "startup_joules": 0.026347150753768846,
-        "startup_seconds": 0.0013835748944723617,
-        "cold_joules_per_invocation": 0.027282,
-        "cold_seconds_per_invocation": 0.001442042,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      }
+      "skipped": "not a validated translation: the pipeline did not record this function as completed"
     },
     {
       "function_id": "f93",
@@ -2369,34 +1756,10 @@
       "function_id": "f94",
       "bucket": "D+",
       "aws": false,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.004042110552763819,
-        "steady_seconds_per_invocation": 0.0003061038693467337,
-        "startup_joules": 0.7596888894472362,
-        "startup_seconds": 0.059626023130653266,
-        "cold_joules_per_invocation": 0.763731,
-        "cold_seconds_per_invocation": 0.059932127,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.0006259899497487438,
-        "steady_seconds_per_invocation": 0.000042081180904522617,
-        "startup_joules": 0.010971010050251256,
-        "startup_seconds": 0.0013546018190954772,
-        "cold_joules_per_invocation": 0.011597,
-        "cold_seconds_per_invocation": 0.001396683,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 5,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      }
+      "skipped": "not a validated translation: the pipeline did not record this function as completed"
     }
+  ],
+  "notes": [
+    "Rebuilt from evaluation/runtime-report.json without re-measuring: 24 of 66 measurable functions were dropped as unvalidated translations. The figures that remain are the measurements that report already held."
   ]
 }

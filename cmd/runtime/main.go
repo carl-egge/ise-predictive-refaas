@@ -5,11 +5,25 @@
 // It never runs during a conversion - it is analysis tooling, like cmd/energy
 // and cmd/pyscan.
 //
-//	# measure one function pair
-//	go run ./cmd/runtime -artifacts evaluation/evaluation_set -packages runs/packages-<id> -out evaluation/runtime.json
+//	# measure the translations a run produced, restricted to the ones that passed
+//	go run ./cmd/runtime -artifacts evaluation/evaluation_set -packages runs/packages-<id> \
+//	    -runlog runs/run-<ts>.jsonl -out evaluation/runtime.json -report evaluation/runtime-report-<id>.json
+//
+//	# correct an existing runtime.json from its report, without re-measuring
+//	go run ./cmd/runtime -from-report evaluation/runtime-report-<id>.json \
+//	    -runlog runs/run-<ts>.jsonl -out evaluation/runtime.json
 //
 //	# then turn the energy report into break-even counts
 //	go run ./cmd/energy -runtime evaluation/runtime.json runs/run-*.jsonl
+//
+// -runlog is what separates a translation from a Go package that merely
+// exists. scripts/run-benchmark.sh archives the package of a failed job too -
+// the service returns it with HTTP 406 and it is worth keeping as evidence -
+// so the packages directory is not a set of correct translations. Timing one
+// that fails its fixtures measures how fast the wrong answer is produced,
+// which is usually fast, because the work it skips is the work it was supposed
+// to do. Without the flag the tool still runs, and says loudly in its report
+// and its summary that it did not filter.
 //
 // Method (EVALUATION.md §6): both sides run the *same* fixture payloads
 // through the *same* envelope (evaluation/harness/), on the same machine, for
@@ -54,6 +68,8 @@ type options struct {
 	reps           int
 	maxPayloads    int
 	only           string
+	runLog         string
+	fromReport     string
 	flociEndpt     string
 	flociRegion    string
 	keepWork       bool
@@ -73,6 +89,10 @@ func main() {
 	flag.IntVar(&opt.reps, "reps", 5, "repetitions per measurement point; the minimum is kept")
 	flag.IntVar(&opt.maxPayloads, "max-payloads", 0, "cap the fixture payloads used per function (0 = all)")
 	flag.StringVar(&opt.only, "only", "", "comma-separated function ids to measure")
+	flag.StringVar(&opt.runLog, "runlog", "",
+		"comma-separated run logs (runs/run-*.jsonl); only functions recorded as completed are measured")
+	flag.StringVar(&opt.fromReport, "from-report", "",
+		"rebuild -out from an existing -report JSON instead of measuring; combine with -runlog to drop unvalidated translations")
 	flag.StringVar(&opt.flociEndpt, "floci-endpoint", "", "AWS endpoint both sides are pinned to (default http://localhost:4566)")
 	flag.StringVar(&opt.flociRegion, "floci-region", "", "AWS region both sides run in (default us-east-1)")
 	flag.BoolVar(&opt.keepWork, "keep", false, "keep the scratch build directory")
@@ -97,9 +117,16 @@ type Report struct {
 	Repetitions    int    `json:"repetitions"`
 	// Python is the interpreter the Python side ran under, including the
 	// installed package versions - they run inside the measured region.
-	Python    PythonEnv        `json:"python"`
-	Functions []FunctionResult `json:"functions"`
-	Notes     []string         `json:"notes,omitempty"`
+	Python PythonEnv `json:"python"`
+	// ValidatedOnly reports whether the figures below were restricted to
+	// translations the pipeline recorded as passing their fixtures, and
+	// RunLogs names the run ids that decided it. Both are written on every
+	// report, including as false, because "this file did not filter" is the
+	// fact a reader needs and an absent field would not state it.
+	ValidatedOnly bool             `json:"validated_only"`
+	RunLogs       []string         `json:"run_logs,omitempty"`
+	Functions     []FunctionResult `json:"functions"`
+	Notes         []string         `json:"notes,omitempty"`
 }
 
 // FunctionResult pairs the two sides for one function.
@@ -110,6 +137,10 @@ type FunctionResult struct {
 	Python     *Measurement `json:"python,omitempty"`
 	Go         *Measurement `json:"go,omitempty"`
 	Skipped    string       `json:"skipped,omitempty"`
+	// Validated records that the pipeline reported this translation as
+	// passing its fixtures. It is only ever set when -runlog said so, so a
+	// report written without the flag carries no false assurance.
+	Validated bool `json:"validated,omitempty"`
 	// Provisioned records whether this function needed emulator state set up
 	// before it could be measured, so the report can separate "no AWS work" from
 	// "AWS work against a provisioned emulator".
@@ -124,6 +155,20 @@ func (f FunctionResult) Measurable() bool {
 }
 
 func run(opt options) error {
+	// The validation set is read first either way: it is cheap, and finding a
+	// mistyped run-log path after an hour of measuring wastes the run.
+	var valid *validation
+	if paths := splitPaths(opt.runLog); len(paths) > 0 {
+		var err error
+		if valid, err = readValidation(paths); err != nil {
+			return err
+		}
+	}
+
+	if opt.fromReport != "" {
+		return rebuild(opt, valid)
+	}
+
 	if opt.artifacts == "" || opt.packages == "" {
 		flag.Usage()
 		return fmt.Errorf("-artifacts and -packages are required")
@@ -180,6 +225,7 @@ func run(opt options) error {
 		Repetitions: opt.reps,
 		Python:      describePython(python),
 	}
+	noteValidation(report, valid)
 	// A stdlib-only interpreter imports 23 of the 95 evaluation_set sources;
 	// the rest are reported SKIP and never reach runtime.json, so a pass run
 	// against the wrong Python quietly produces a fraction of the N* values
@@ -224,7 +270,7 @@ func run(opt options) error {
 	}
 
 	for _, path := range artifacts {
-		result := measureFunction(opt, meter, prov, python, harnessPath, work, path, translations, only)
+		result := measureFunction(opt, meter, prov, python, harnessPath, work, path, translations, only, valid)
 		if result == nil {
 			continue
 		}
@@ -245,7 +291,7 @@ func run(opt options) error {
 }
 
 func measureFunction(opt options, meter Meter, prov *provisioner, python, harness, work, artifactPath string,
-	translations map[string]string, only map[string]bool) *FunctionResult {
+	translations map[string]string, only map[string]bool, valid *validation) *FunctionResult {
 
 	pkg, err := inputhandler.ReadFromFile(artifactPath)
 	if err != nil {
@@ -264,6 +310,17 @@ func measureFunction(opt options, meter Meter, prov *provisioner, python, harnes
 		result.Bucket = pkg.Meta.Bucket
 		result.AWS = pkg.Meta.AWS
 	}
+
+	// A package on disk is not evidence that the translation is correct.
+	// scripts/run-benchmark.sh archives the package of a failed job too, and
+	// timing one measures how fast the wrong answer is produced - fast, since
+	// the work it skips is the work it was supposed to do. Refuse before
+	// building rather than after, so an unvalidated function costs nothing.
+	if !valid.ok(id) {
+		result.Skipped = unvalidatedSkip
+		return result
+	}
+	result.Validated = valid != nil
 
 	goSource, ok := translations[id]
 	if !ok {

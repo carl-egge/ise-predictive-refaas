@@ -5,6 +5,14 @@
   "energy_derived": false,
   "invocations": 200,
   "repetitions": 5,
+  "python": {
+    "interpreter": "",
+    "version": ""
+  },
+  "validated_only": true,
+  "run_logs": [
+    "20260831-084331"
+  ],
   "functions": [
     {
       "function_id": "pf1",
@@ -43,67 +51,13 @@
       "function_id": "pf10",
       "bucket": "A",
       "aws": false,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.1514683216080402,
-        "steady_seconds_per_invocation": 0.03315430928643216,
-        "startup_joules": 1.72517467839196,
-        "startup_seconds": 0.12320697071356783,
-        "cold_joules_per_invocation": 1.876643,
-        "cold_seconds_per_invocation": 0.15636128,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.10855182412060302,
-        "steady_seconds_per_invocation": 0.0238458373919598,
-        "startup_joules": 0,
-        "startup_seconds": 0,
-        "cold_joules_per_invocation": 0.10855182412060302,
-        "cold_seconds_per_invocation": 0.0238458373919598,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      }
+      "skipped": "not a validated translation: the pipeline did not record this function as completed"
     },
     {
       "function_id": "pf11",
       "bucket": "A",
       "aws": false,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.00019919609804902447,
-        "steady_seconds_per_invocation": 0.000013873353176588297,
-        "startup_joules": 0.5489938039019511,
-        "startup_seconds": 0.04635584464682341,
-        "cold_joules_per_invocation": 0.549193,
-        "cold_seconds_per_invocation": 0.046369718,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 2000,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.0001262226113056528,
-        "steady_seconds_per_invocation": 0.000008525040020010005,
-        "startup_joules": 0.023738777388694347,
-        "startup_seconds": 0.00194293495997999,
-        "cold_joules_per_invocation": 0.023865,
-        "cold_seconds_per_invocation": 0.00195146,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 2000,
-        "resolved": true
-      }
+      "skipped": "not a validated translation: the pipeline did not record this function as completed"
     },
     {
       "function_id": "pf12",
@@ -175,34 +129,7 @@
       "function_id": "pf14",
       "bucket": "A",
       "aws": false,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.0007502816408204102,
-        "steady_seconds_per_invocation": 0.00005779913656828414,
-        "startup_joules": 0.6465267183591796,
-        "startup_seconds": 0.051213569863431715,
-        "cold_joules_per_invocation": 0.647277,
-        "cold_seconds_per_invocation": 0.051271369,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 2000,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.0004901206030150754,
-        "steady_seconds_per_invocation": 0.000035647904522613066,
-        "startup_joules": 0.023618879396984923,
-        "startup_seconds": 0.001923835095477387,
-        "cold_joules_per_invocation": 0.024109,
-        "cold_seconds_per_invocation": 0.001959483,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 200,
-        "resolved": true
-      }
+      "skipped": "not a validated translation: the pipeline did not record this function as completed"
     },
     {
       "function_id": "pf2",
@@ -406,34 +333,7 @@
       "function_id": "pf8",
       "bucket": "B",
       "aws": false,
-      "python": {
-        "language": "python",
-        "steady_joules_per_invocation": 0.00025482591295647824,
-        "steady_seconds_per_invocation": 0.00001789513756878439,
-        "startup_joules": 0.6002691740870435,
-        "startup_seconds": 0.04938562886243121,
-        "cold_joules_per_invocation": 0.600524,
-        "cold_seconds_per_invocation": 0.049403524,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 2000,
-        "resolved": true
-      },
-      "go": {
-        "language": "go",
-        "steady_joules_per_invocation": 0.00009529314657328664,
-        "steady_seconds_per_invocation": 0.000006487361180590295,
-        "startup_joules": 0.023585706853426713,
-        "startup_seconds": 0.0019315396388194096,
-        "cold_joules_per_invocation": 0.023681,
-        "cold_seconds_per_invocation": 0.001938027,
-        "has_energy": true,
-        "repetitions": 5,
-        "payloads_used": 3,
-        "invocations_in_long_run": 2000,
-        "resolved": true
-      }
+      "skipped": "not a validated translation: the pipeline did not record this function as completed"
     },
     {
       "function_id": "pf9",
@@ -468,5 +368,8 @@
         "resolved": true
       }
     }
+  ],
+  "notes": [
+    "Rebuilt from evaluation/runtime-report-functionset-20260831.json without re-measuring: 4 of 14 measurable functions were dropped as unvalidated translations. The figures that remain are the measurements that report already held."
   ]
 }

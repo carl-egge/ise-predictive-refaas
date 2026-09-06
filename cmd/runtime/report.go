@@ -49,15 +49,31 @@ func printSummary(w io.Writer, r *Report, outPath string) {
 		r.Invocations, r.Repetitions)
 	fmt.Fprintf(w, "  python:      %s (%s)%s\n", r.Python.Interpreter, r.Python.Version,
 		pinnedSummary(r.Python.Packages))
+	// Whether the figures were restricted to validated translations belongs
+	// next to the meter and the method, not in a footnote: it changes what
+	// the ratios below are ratios *of*.
+	if r.ValidatedOnly {
+		fmt.Fprintf(w, "  validated:   yes - only translations completed in %s\n",
+			strings.Join(r.RunLogs, ", "))
+	} else {
+		fmt.Fprintln(w, "  validated:   NO - no -runlog given; failed translations may be included")
+	}
 
-	var measured, skipped, unresolved int
+	var measured, skipped, unresolved, unvalidated int
 	var speedups, coldSpeedups, cpuRatios []float64
 	byBucket := map[string][]float64{}
 	byAWS := map[bool][]float64{}
 
 	for _, f := range r.Functions {
 		if f.Skipped != "" {
-			skipped++
+			// An unvalidated translation is counted apart from the genuine
+			// skips: it is not a gap in the measurement, it is a package the
+			// run deliberately refused to time.
+			if f.Skipped == unvalidatedSkip {
+				unvalidated++
+			} else {
+				skipped++
+			}
 			continue
 		}
 		// An unresolved per-invocation figure is zero, not small; averaging
@@ -96,6 +112,10 @@ func printSummary(w io.Writer, r *Report, outPath string) {
 	}
 	if skipped > 0 {
 		fmt.Fprintf(w, "  skipped:     %d\n", skipped)
+	}
+	if unvalidated > 0 {
+		fmt.Fprintf(w, "  unvalidated: %d  (translated package exists but never passed its fixtures; excluded)\n",
+			unvalidated)
 	}
 	if unresolved > 0 {
 		fmt.Fprintf(w, "  unresolved:  %d  (per-invocation work below the noise floor even at -max-invocations)\n", unresolved)

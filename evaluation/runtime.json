@@ -19,10 +19,6 @@
     "go_joules_per_invocation": 0.000510031031031031,
     "python_joules_per_invocation": 0.0010910540540540541
   },
-  "f13": {
-    "go_joules_per_invocation": 0.011483011011011011,
-    "python_joules_per_invocation": 0.06931016016016016
-  },
   "f14": {
     "go_joules_per_invocation": 0.00008773373373373373,
     "python_joules_per_invocation": 0.00028391391391391374
@@ -51,14 +47,6 @@
     "go_joules_per_invocation": 0.012492624624624624,
     "python_joules_per_invocation": 0.07032252252252252
   },
-  "f23": {
-    "go_joules_per_invocation": 0.00010074774774774774,
-    "python_joules_per_invocation": 0.00019196296296296298
-  },
-  "f27": {
-    "go_joules_per_invocation": 0.00007783583583583585,
-    "python_joules_per_invocation": 0.07293163163163163
-  },
   "f28": {
     "go_joules_per_invocation": 0.00015787287287287287,
     "python_joules_per_invocation": 0.0002575815815815815
@@ -75,10 +63,6 @@
     "go_joules_per_invocation": 0.00026692892892892894,
     "python_joules_per_invocation": 0.0003778788788788789
   },
-  "f34": {
-    "go_joules_per_invocation": 0.022279851851851853,
-    "python_joules_per_invocation": 0.04276476176176176
-  },
   "f36": {
     "go_joules_per_invocation": 0.0001647147147147147,
     "python_joules_per_invocation": 0.00013380080080080078
@@ -91,10 +75,6 @@
     "go_joules_per_invocation": 0.00010507600760076006,
     "python_joules_per_invocation": 0.0001120897089708971
   },
-  "f4": {
-    "go_joules_per_invocation": 0.02548012712712713,
-    "python_joules_per_invocation": 0.26295313713713714
-  },
   "f40": {
     "go_joules_per_invocation": 0.006026458458458458,
     "python_joules_per_invocation": 0.027740194194194195
@@ -102,14 +82,6 @@
   "f41": {
     "go_joules_per_invocation": 0.00010074774774774774,
     "python_joules_per_invocation": 0.0000685505505505506
-  },
-  "f42": {
-    "go_joules_per_invocation": 0.0008842442442442441,
-    "python_joules_per_invocation": 0.0019086426426426423
-  },
-  "f43": {
-    "go_joules_per_invocation": 0.02889594994994995,
-    "python_joules_per_invocation": 0.04787758858858859
   },
   "f45": {
     "go_joules_per_invocation": 0.047363038038038034,
@@ -119,14 +91,6 @@
     "go_joules_per_invocation": 0.03236535135135136,
     "python_joules_per_invocation": 0.06223553853853854
   },
-  "f48": {
-    "go_joules_per_invocation": 0.010310882882882882,
-    "python_joules_per_invocation": 0.013154294294294294
-  },
-  "f49": {
-    "go_joules_per_invocation": 0.00010838438438438439,
-    "python_joules_per_invocation": 0.00012109209209209214
-  },
   "f50": {
     "go_joules_per_invocation": 0.0004504004004004004,
     "python_joules_per_invocation": 0.0004851031031031031
@@ -135,17 +99,9 @@
     "go_joules_per_invocation": 0.017489001001001002,
     "python_joules_per_invocation": 0.021568143143143145
   },
-  "f54": {
-    "go_joules_per_invocation": 0.029240714714714715,
-    "python_joules_per_invocation": 0.053579931931931925
-  },
   "f55": {
     "go_joules_per_invocation": 0.021804890890890893,
     "python_joules_per_invocation": 0.082351
-  },
-  "f56": {
-    "go_joules_per_invocation": 0.0005442442442442443,
-    "python_joules_per_invocation": 0.06400188688688689
   },
   "f57": {
     "go_joules_per_invocation": 0.00017125225225225226,
@@ -158,10 +114,6 @@
   "f61": {
     "go_joules_per_invocation": 0.000040689689689689694,
     "python_joules_per_invocation": 0.00012298698698698707
-  },
-  "f65": {
-    "go_joules_per_invocation": 0.00007258158158158159,
-    "python_joules_per_invocation": 0.0005636726726726726
   },
   "f67": {
     "go_joules_per_invocation": 0.00011535035035035035,
@@ -202,10 +154,6 @@
   "f77": {
     "go_joules_per_invocation": 0.0680144964964965,
     "python_joules_per_invocation": 0.2826367107107107
-  },
-  "f8": {
-    "go_joules_per_invocation": 0.00007447647647647648,
-    "python_joules_per_invocation": 0.0067101851851851845
   },
   "f81": {
     "go_joules_per_invocation": 0.0000913993993993994,
