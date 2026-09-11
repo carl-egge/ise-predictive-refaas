@@ -71,6 +71,16 @@ func deployLambda(ctx context.Context, c *Clients, name string, zipBytes []byte,
 
 // lambdaTimeoutSeconds bounds one invocation. See lambdaenv.go for the
 // environment the function runs with.
+//
+// Raising this does not fix the `Function.TimedOut` failures on this route,
+// and was measured rather than assumed ([C11b], 2026-09-11): at 60 s, f46
+// still produced 7 timeouts and f63 8, with the same outcomes as at 30 s. The
+// timeouts are not a budget that is too tight - they co-occur with handler
+// panics (f63 also raises 7 `reflect.Value.Convert` errors, f46 and f6 a
+// `TypeAssertionError`), which is consistent with a panicking handler leaving
+// its container unable to answer the next invocation. A dead container does
+// not finish sooner given more time, so doubling the budget only doubles the
+// wait on an already-failing function. Left at 30 s.
 const lambdaTimeoutSeconds = 30
 
 func functionExists(ctx context.Context, c *Clients, name string) (bool, error) {
