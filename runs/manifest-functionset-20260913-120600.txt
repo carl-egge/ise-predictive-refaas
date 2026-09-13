@@ -1,0 +1,17 @@
+run_id:        functionset-20260913-120600
+started:       2026-09-13T12:06:32+02:00
+config:        scripts/benchmark.json (sha256 f9e30f4bf6e8bcb1)
+artifacts:     evaluation/function_set/ (14 functions)
+service:       http://localhost:8080
+host:          Linux 7.0.0-31-generic x86_64 / carl-eikermann-UX310UAK
+git_commit:    eb48c318cb712d84669f17db9e7ce741b9d1f4bc
+git_dirty:     no
+job_timeout_s: 1800
+require_meta:  true
+floci_enabled: true
+llm_interval:  2s
+finished:      2026-09-13T12:13:14+02:00
+completed:     11
+failed:        3
+errors:        0
+skipped:       0
