@@ -25,20 +25,29 @@
 # harness disagree about which Python is in use would be a nasty source of
 # unexplained differences.
 #
-# Resolved and verified 2026-09-05 on CPython 3.14.4, x86_64 Linux
-# (carl-eikermann-UX310UAK). The transitive pins are listed too, because
-# "boto3==1.43.89" alone does not fix botocore, and botocore is where the
-# import cost is.
+# These are the versions that actually produced the committed measurements:
+# every runtime-report-*.json of the replicate series (20260904-190539,
+# 20260911-165103, 20260912-172904) records boto3/botocore 1.43.83, because
+# the interpreter that ran them was ~/.venvs/refaas - a PYSCAN_PYTHON exported
+# from the shell wins over the one in .env, since godotenv never overrides a
+# variable that is already set. This file first pinned 1.43.89 (resolved
+# 2026-09-05 into a repo-local .venv that measured nothing) and was re-pinned
+# 2026-09-13 to match. The report's `python.packages` block is the authority;
+# if the two ever disagree again, fix this file, not the report. CPython 3.14.4,
+# x86_64 Linux (carl-eikermann-UX310UAK).
+#
+# The transitive pins are listed too, because "boto3==1.43.83" alone does not
+# fix botocore, and botocore is where the import cost is.
 
 # Direct: the modules the dataset's functions import.
-boto3==1.43.89
+boto3==1.43.83
 python-dateutil==2.9.0.post0
 requests==2.34.2
 beautifulsoup4==4.15.0
 urllib3==2.7.0
 
 # Transitive, pinned for reproducibility.
-botocore==1.43.89
+botocore==1.43.83
 certifi==2026.7.22
 charset-normalizer==3.5.1
 idna==3.19

@@ -1226,6 +1226,17 @@ harness recognises (`lambda_handler`/`handler`/`main`).
   not the PyPI/rsyslog one) and `pyseccomp` (needs libseccomp headers). Both appear once and both
   load anyway - they are inside function bodies or guarded, not at module scope.
 
+  **Correction 2026-09-13: the pins above did not match the measurements, and were re-pinned to
+  `boto3==1.43.83` / `botocore==1.43.83`.** Every runtime report of the replicate series
+  (`20260904-190539`, `20260911-165103`, `20260912-172904`) records `python.interpreter =
+  ~/.venvs/refaas/bin/python` with 1.43.83 - not the repo `.venv` with 1.43.89 resolved here.
+  `~/.bashrc` exports `PYSCAN_PYTHON`, and `godotenv/autoload` never overrides a variable already
+  present in the environment, so the `.env` entry pointing at `.venv` was silently inert. The two
+  interpreters differ in boto3/botocore only; every transitive version is identical. The three runs
+  are consistent with each other, and each report carries its own versions, so no figure is
+  affected - but the committed pins described an environment that produced none of the numbers,
+  which defeats the point of pinning. The report's `python.packages` block is the authority.
+
 **2. RAPL counter permissions.** `/sys/class/powercap/intel-rapl:*/energy_uj` is root-only by default
 on most distributions (post-CVE-2020-8694). Verify `cmd/runtime -meter rapl` succeeds *before* the
 run — it fails loudly with the fix in the message. This is the difference between measured joules
