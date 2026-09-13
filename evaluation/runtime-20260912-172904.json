@@ -1,0 +1,242 @@
+{
+  "f1": {
+    "go_joules_per_invocation": 0.0003768617861786179,
+    "python_joules_per_invocation": 0.0021064491449144913
+  },
+  "f10": {
+    "go_joules_per_invocation": 0.015786803803803803,
+    "python_joules_per_invocation": 0.020888327327327327
+  },
+  "f12": {
+    "go_joules_per_invocation": 0.0005444264264264264,
+    "python_joules_per_invocation": 0.001072908908908909
+  },
+  "f13": {
+    "go_joules_per_invocation": 0.011641554554554555,
+    "python_joules_per_invocation": 0.06910927627627628
+  },
+  "f14": {
+    "go_joules_per_invocation": 0.00012164264264264263,
+    "python_joules_per_invocation": 0.0003228928928928927
+  },
+  "f17": {
+    "go_joules_per_invocation": 0.00029570570570570573,
+    "python_joules_per_invocation": 0.00036645345345345326
+  },
+  "f18": {
+    "go_joules_per_invocation": 0.009136737737737738,
+    "python_joules_per_invocation": 0.026855277277277278
+  },
+  "f19": {
+    "go_joules_per_invocation": 0.0005040652065206521,
+    "python_joules_per_invocation": 0.00038335643564356436
+  },
+  "f2": {
+    "go_joules_per_invocation": 0.0001367947947947948,
+    "python_joules_per_invocation": 0.0000875505505505505
+  },
+  "f20": {
+    "go_joules_per_invocation": 0.0004911511511511512,
+    "python_joules_per_invocation": 0.01188429129129129
+  },
+  "f21": {
+    "go_joules_per_invocation": 0.012957625625625626,
+    "python_joules_per_invocation": 0.07056036936936938
+  },
+  "f24": {
+    "go_joules_per_invocation": 0.00026802802802802805,
+    "python_joules_per_invocation": 0.0004076936936936937
+  },
+  "f27": {
+    "go_joules_per_invocation": 0.00020839939939939939,
+    "python_joules_per_invocation": 0.07155470870870871
+  },
+  "f28": {
+    "go_joules_per_invocation": 0.00017161861861861863,
+    "python_joules_per_invocation": 0.00030981881881881875
+  },
+  "f30": {
+    "go_joules_per_invocation": 0.0001934914914914915,
+    "python_joules_per_invocation": 0.09168886686686686
+  },
+  "f32": {
+    "go_joules_per_invocation": 0.00040842604260426043,
+    "python_joules_per_invocation": 0.00031531383138313834
+  },
+  "f34": {
+    "go_joules_per_invocation": 0.018842524524524527,
+    "python_joules_per_invocation": 0.01374478878878879
+  },
+  "f36": {
+    "go_joules_per_invocation": 0.0001755905905905906,
+    "python_joules_per_invocation": 0.00013508408408408412
+  },
+  "f37": {
+    "go_joules_per_invocation": 0.0002941161161161161,
+    "python_joules_per_invocation": 0.0001864644644644644
+  },
+  "f39": {
+    "go_joules_per_invocation": 0.00009707970797079707,
+    "python_joules_per_invocation": 0.00010889728972897285
+  },
+  "f4": {
+    "go_joules_per_invocation": 0.02480324224224224,
+    "python_joules_per_invocation": 0.26243632532532535
+  },
+  "f40": {
+    "go_joules_per_invocation": 0.005813964964964964,
+    "python_joules_per_invocation": 0.028265376376376376
+  },
+  "f41": {
+    "go_joules_per_invocation": 0.00009243943943943944,
+    "python_joules_per_invocation": 0.00008797897897897904
+  },
+  "f42": {
+    "go_joules_per_invocation": 0.0006190870870870872,
+    "python_joules_per_invocation": 0.0018634314314314316
+  },
+  "f43": {
+    "go_joules_per_invocation": 0.041073012012012015,
+    "python_joules_per_invocation": 0.04705346446446446
+  },
+  "f45": {
+    "go_joules_per_invocation": 0.06709041641641642,
+    "python_joules_per_invocation": 0.37778557057057055
+  },
+  "f47": {
+    "go_joules_per_invocation": 0.025137621621621625,
+    "python_joules_per_invocation": 0.061576556556556555
+  },
+  "f48": {
+    "go_joules_per_invocation": 0.0073023273273273275,
+    "python_joules_per_invocation": 0.012986463463463462
+  },
+  "f49": {
+    "go_joules_per_invocation": 0.00010251851851851852,
+    "python_joules_per_invocation": 0.00014553153153153156
+  },
+  "f51": {
+    "go_joules_per_invocation": 0.000844104104104104,
+    "python_joules_per_invocation": 0.02223005805805806
+  },
+  "f52": {
+    "go_joules_per_invocation": 0.07287658358358359,
+    "python_joules_per_invocation": 0.2580725365365365
+  },
+  "f53": {
+    "go_joules_per_invocation": 0.040193966639666394,
+    "python_joules_per_invocation": 0.02168828575285753
+  },
+  "f55": {
+    "go_joules_per_invocation": 0.02201090790790791,
+    "python_joules_per_invocation": 0.08305721121121121
+  },
+  "f56": {
+    "go_joules_per_invocation": 0.0005118628628628628,
+    "python_joules_per_invocation": 0.06326122022022022
+  },
+  "f57": {
+    "go_joules_per_invocation": 0.00007801901901901901,
+    "python_joules_per_invocation": 0.00014913513513513515
+  },
+  "f59": {
+    "go_joules_per_invocation": 0.0005037977977977978,
+    "python_joules_per_invocation": 0.00035753453453453454
+  },
+  "f60": {
+    "go_joules_per_invocation": 0.000641021021021021,
+    "python_joules_per_invocation": 0.0014435175175175174
+  },
+  "f61": {
+    "go_joules_per_invocation": 0.00001942924292429243,
+    "python_joules_per_invocation": 0.0001396559655965597
+  },
+  "f63": {
+    "go_joules_per_invocation": 0.00853035935935936,
+    "python_joules_per_invocation": 0.02036943843843844
+  },
+  "f67": {
+    "go_joules_per_invocation": 0.00011412712712712712,
+    "python_joules_per_invocation": 0.00008932232232232233
+  },
+  "f68": {
+    "go_joules_per_invocation": 0.00020546546546546546,
+    "python_joules_per_invocation": 0.00016740340340340334
+  },
+  "f69": {
+    "go_joules_per_invocation": 0.05341368968968969,
+    "python_joules_per_invocation": 0.167489021021021
+  },
+  "f70": {
+    "go_joules_per_invocation": 0.00020552535253525353,
+    "python_joules_per_invocation": 0.00014103550355035505
+  },
+  "f71": {
+    "go_joules_per_invocation": 0.00022165565565565565,
+    "python_joules_per_invocation": 0.00016447047047047042
+  },
+  "f72": {
+    "go_joules_per_invocation": 0.00011773273273273273,
+    "python_joules_per_invocation": 0.07020717217217216
+  },
+  "f73": {
+    "go_joules_per_invocation": 0.00021792892892892894,
+    "python_joules_per_invocation": 0.0001129049049049049
+  },
+  "f74": {
+    "go_joules_per_invocation": 0.01803513913913914,
+    "python_joules_per_invocation": 0.08484805905905905
+  },
+  "f75": {
+    "go_joules_per_invocation": 0.00016257657657657657,
+    "python_joules_per_invocation": 0.000123048048048048
+  },
+  "f76": {
+    "go_joules_per_invocation": 0.019632924924924928,
+    "python_joules_per_invocation": 0.20657170470470468
+  },
+  "f77": {
+    "go_joules_per_invocation": 0.06541186386386387,
+    "python_joules_per_invocation": 0.2842541091091091
+  },
+  "f8": {
+    "go_joules_per_invocation": 0.00006274574574574575,
+    "python_joules_per_invocation": 0.006743541541541542
+  },
+  "f81": {
+    "go_joules_per_invocation": 0.00010062462462462462,
+    "python_joules_per_invocation": 0.00009958758758758767
+  },
+  "f83": {
+    "go_joules_per_invocation": 0.024691803803803803,
+    "python_joules_per_invocation": 0.15428633833833832
+  },
+  "f84": {
+    "go_joules_per_invocation": 0.05234938179381793,
+    "python_joules_per_invocation": 0.020759112581125807
+  },
+  "f85": {
+    "go_joules_per_invocation": 0.00019593493493493493,
+    "python_joules_per_invocation": 0.0001843883883883884
+  },
+  "f87": {
+    "go_joules_per_invocation": 0.00010917917917917918,
+    "python_joules_per_invocation": 0.00013618318318318315
+  },
+  "f88": {
+    "go_joules_per_invocation": 0.01726135735735736,
+    "python_joules_per_invocation": 0.12413688088088087
+  },
+  "f89": {
+    "go_joules_per_invocation": 0.0002691281281281281,
+    "python_joules_per_invocation": 0.0003350510510510511
+  },
+  "f92": {
+    "go_joules_per_invocation": 0.00039358158158158156,
+    "python_joules_per_invocation": 0.0028090770770770775
+  },
+  "f94": {
+    "go_joules_per_invocation": 0.00037781881881881877,
+    "python_joules_per_invocation": 0.0028542872872872873
+  }
+}
