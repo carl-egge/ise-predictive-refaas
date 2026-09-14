@@ -98,7 +98,7 @@
 - [x] [I1a] Bare-metal run checklist — done 2026-08-30 on the Ubuntu host (real RAPL, venv, Floci, module cache)
 - [x] [I2] Signal check — **answered 2026-08-31 on the second pass: criterion PASSES.** Base rate 44.2%; complexity still no signal (A vs D+ p=0.37), AWS strong (27.6% vs 70.3%, p=0.0001). Modelling is worth doing; beat the skip-AWS baseline, not always-translate
 - [ ] [I4] One feature/label table every method and baseline consumes **(P0)**
-- [ ] [I5] Baselines: always-translate, never, majority, `cc` threshold, infeasibility rule list
+- [ ] [I5] Baselines: always-translate, never, `cc` threshold, infeasibility rule list
 - [ ] [I6] Candidate methods: M1 logistic regression + M2 random forest (M3 LLM-judge optional; MLP deferred) **(P0)**
 - [ ] [I7] Split protocol (repeated stratified *group* k-fold, not one holdout) + net energy vs. always-translate **(P0)**
 - [ ] [I8] Measure the predictor's own energy in the same units as the pipeline
@@ -1415,7 +1415,7 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
 - Proposed change: implement and report all of these alongside the learned models, under the identical split protocol of [I7]:
   - **B0 always-translate** — the current pipeline, the baseline the thesis is actually arguing against. Zero prediction energy, zero missed opportunities, maximum waste.
   - **B1 never-translate** — the degenerate lower bound; makes the energy axis honest.
-  - **B2 majority class** — the accuracy floor that exposes an unbalanced corpus.
+  - ~~B2 majority class~~ — **dropped 2026-09-13.** At a 44.2% base rate it declines everything in every fold, so it was numerically identical to B1. Later baselines keep their numbers (B3/B4/B5) because they are cited by id elsewhere.
   - **B3 single-threshold on `cc`** — one number, no training, fully interpretable. If the random forest cannot beat this, that *is* the finding, and it is a good one: it says complexity alone explains translation feasibility. Fit the threshold **inside each training fold**, never on the whole set, or it is not a baseline but a peek.
   - **B4 hard-infeasibility rule list** — the `numpy`/`pandas`/`scipy` blocklist from [I3] plus perhaps an lloc cap. Costs nothing, is trivially explainable to an examiner, and may capture most of the achievable saving.
 - Why: the comparison against B0 is the thesis claim; the comparison against B3/B4 is what separates "machine learning helped" from "machine learning was ceremony around a threshold". Both belong in the write-up regardless of which way they come out.

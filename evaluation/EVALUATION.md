@@ -606,8 +606,12 @@ appears. This is the same assumption `energy.config.json` already makes for the 
 assumption, and the tool says so rather than letting a derived number read as a measurement.
 
 > **Neither RAPL nor perf is available under WSL2**, which is where this was developed. Measured
-> energy therefore requires a bare-metal Linux host with readable powercap counters; that run is
-> still outstanding and is a prerequisite for quoting any absolute joule figure or any `N*` here.
+> energy therefore requires a bare-metal Linux host with readable powercap counters. **That run has
+> since happened** (2026-08-31 and 2026-09-04, host `carl-eikermann-UX310UAK`, `meter: rapl`,
+> `energy_derived: false`), so absolute joule figures and `N*` are measured rather than derived.
+> The `evaluation_set` results are in "Break-even, per function and per policy" at the end of this
+> section; the paper-set table immediately below predates that run and is kept only for the
+> cold-versus-steady argument it makes.
 
 **First result (paper set, 14 functions, derived energy at 15 W — timings are measurements, joules
 are not):**
@@ -629,8 +633,59 @@ cold figures are in `-report` for the write-up to use explicitly.
 Caveats specific to this first run: the paper set is deliberately trivial (12 of 14 in bucket A,
 none using AWS), so its steady-state ratios are dominated by interpreter overhead on functions that
 do almost no work, and the resulting `N*` values are correspondingly enormous (median ~2×10⁷). The
-`evaluation_set` numbers are the ones to report, and they need the [I1] run's translated packages
-before they can be produced.
+`evaluation_set` numbers, below, are the ones to report.
+
+#### Break-even, per function and per policy (2026-09-07)
+
+`evaluation/figures/amortisation_spread.py` draws the analogue of Werner et al. **Figure 6** —
+invocations required before a translation repays the energy spent producing it — for the
+46 validated translations of run `20260904-190539`. It emits TikZ/pgfplots, an SVG preview and a
+generated caption, and consumes `evaluation/prediction/energy-20260904-190539.json` (per-function
+facility joules) together with `evaluation/runtime.json` (per-invocation savings).
+
+**Their figure is a bounding box; this one is a distribution.** Werner et al. draw one box per
+model, width from best case to worst case, height the number of functions that amortise. Decoding
+the vector drawing gives qwq 18 functions over 3.8×10³ to 3.9×10⁵, qwen2.5-coder_32b 9 over
+1.9×10³ to 1.9×10⁵, and gemma3_27b 6 over 1.3×10³ to 1.4×10⁵. **All three spans are exactly
+101×**, which is the signature of one translation cost per model crossed with a single global
+savings range taken from their Figure 1. Here both terms are per function — each translation
+carries its own measured facility energy and its own measured per-invocation saving — so
+`N*ᵢ = E_translation,ᵢ / ΔEᵢ` is a genuine per-function quantity.
+
+**Panel (a), the per-function spread.** 31 of the 46 repay at some invocation count, spanning
+**1.44×10⁴ to 6.65×10⁸, i.e. 4.7 orders of magnitude**, median 1.02×10⁶. The remaining 15 are not
+faster than their Python original and never repay at any `N`; they are drawn censored at the right
+edge rather than dropped, because dropping them is what makes a median look optimistic. The
+AWS structure is stark: **the 15 lowest break-even points are all AWS functions**, and the first
+non-AWS function appears at rank 16, already past 10⁶ invocations.
+
+**Panel (b), the same quantity per screening policy**, on their axes, with the box replaced by the
+cumulative curve whose bounding rectangle the box would have been:
+
+| policy | translated | succeeded | amortise | portfolio break-even |
+|:---|--:|--:|--:|--:|
+| translate all | 95 | 47 | 31 | 9.3 × 10⁵ |
+| skip AWS functions | 37 | 23 | 10 | **2.0 × 10⁸** |
+| prediction gate | 45 | 34 | 20 | 1.1 × 10⁶ |
+| oracle | 47 | 47 | 31 | 2.3 × 10⁵ |
+
+The vertical markers are the **portfolio** break-even, which is not the median of the per-function
+values: it charges each policy for the attempts that failed, so it is the number a deployment
+decision actually turns on.
+
+Two results fall out of that table. **Skipping AWS functions is catastrophic**, two orders of
+magnitude worse than translating everything, because it removes precisely the functions where the
+saving lives — which is a sharper statement of the asymmetry than the histogram in "Where the
+saving actually is" makes on its own. And **the oracle curve coincides exactly with
+translate-all**, since both translate every function that succeeds and therefore amortise the same
+31; their entire difference is in attempts not paid for, visible only in the portfolio marker.
+Perfect screening buys avoided waste, not additional successes.
+
+Two things the write-up must state. The gate curve uses the model fitted on the **previous** run
+(`model-20260831-190900.json`) scored against this one, which is the honest transfer setting.
+And this corpus sits at 10⁴ to 10⁹ invocations where theirs sits at 10² to 10⁵: explainable rather
+than contradictory, since they used 27B to 32B models against this pipeline's 123B, and their
+per-invocation savings were larger.
 
 ---
 

@@ -237,9 +237,7 @@ def baseline_decisions(name, X, cols, y, groups, E, dE, aws, N, n_splits, seed):
     d = np.zeros(n, int)
     outer = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
     for tr, te in outer.split(X, y, groups):
-        if name.startswith("B2"):
-            d[te] = 1 if y[tr].mean() >= 0.5 else 0
-        elif name.startswith("B3"):
+        if name.startswith("B3"):
             j = cols.index("cc")
             best_t, best_v = None, -np.inf
             for t in np.unique(X[tr, j]):
@@ -421,7 +419,7 @@ def export_model(path, X, y, groups, E, dE, cols, N, folds, repeats,
     return path
 
 
-BASELINES = ["B0 always-translate", "B1 never-translate", "B2 majority-class",
+BASELINES = ["B0 always-translate", "B1 never-translate",
              "B3 cc threshold", "B4 infeasible-lib blocklist", "B5 skip-AWS"]
 
 

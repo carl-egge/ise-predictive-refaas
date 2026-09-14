@@ -16,7 +16,6 @@ policy                                                transl  kept  spend Wh  Wh
 ORACLE (upper bound)                                    11.0  11.0      18.9     1.72   0.262      --      --       313.4 +-0
 B0 always-translate                                     95.0  42.0     427.2    10.17   1.000      --      --      -135.2 +-0
 B1 never-translate                                       0.0   0.0       0.0      inf   0.000      --      --         0.0 +-0
-B2 majority-class                                        0.0   0.0       0.0      inf   0.000      --      --         0.0 +-0
 B3 cc threshold                                         38.4  17.6      83.8     4.76   0.419      --      --       55.8 +-10
 B4 infeasible-lib blocklist                             95.0  42.0     427.2    10.17   1.000      --      --      -135.2 +-0
 B5 skip-AWS                                             37.0  26.0     198.1     7.62   0.619      --      --      -196.7 +-0
@@ -39,7 +38,6 @@ policy                                                      N=1e+03       N=1e+0
 ORACLE (upper bound)                                            0.0          17.5         313.4        3304.5      333524.1
 B0 always-translate                                          -426.9        -398.0        -135.2        2492.0      291487.2
 B1 never-translate                                              0.0           0.0           0.0           0.0           0.0
-B2 majority-class                                               0.0           0.0           0.0           0.0           0.0
 B3 cc threshold                                               -83.7         -69.9          55.8        1312.0      139498.8
 B4 infeasible-lib blocklist                                  -426.9        -398.0        -135.2        2492.0      291487.2
 B5 skip-AWS                                                  -198.1        -198.0        -196.7        -184.1        1204.3
@@ -61,7 +59,6 @@ policy                                                      N=1e+03       N=1e+0
 ---------------------------------------------------------------------------------------------------------------------------
 ORACLE (upper bound)                                          426.9         415.5         448.7         812.6       42036.9
 B1 never-translate                                            426.9         398.0         135.2       -2492.0     -291487.2
-B2 majority-class                                             426.9         398.0         135.2       -2492.0     -291487.2
 B3 cc threshold                                               343.2         328.1         191.0       -1180.0     -151988.4
 B4 infeasible-lib blocklist                                     0.0           0.0           0.0           0.0           0.0
 B5 skip-AWS                                                   228.7         200.0         -61.5       -2676.1     -290283.0
