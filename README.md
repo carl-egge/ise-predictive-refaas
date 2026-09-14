@@ -235,13 +235,16 @@ scikit-learn's own probabilities and requires agreement to 1e-9, so the deployed
 classifier is provably the one that was evaluated.
 
 ```sh
-# 1. export a model from the offline evaluation
+# 1. export a model from the offline evaluation: one --dataset per run of the
+#    frozen configuration (see evaluation/prediction/README.md)
 python3 evaluation/prediction/evaluate.py \
-    --dataset evaluation/prediction/dataset-20260831-190900.csv \
-    --export-model evaluation/prediction/model-20260831-190900.json
+    --dataset evaluation/prediction/dataset-20260904-190539.csv \
+    --dataset evaluation/prediction/dataset-20260911-165103.csv \
+    --dataset evaluation/prediction/dataset-20260912-172904.csv \
+    --export-model evaluation/prediction/model-replicates-f9e30f4b.json
 
 # 2. run with the gate scoring every job but changing no outcome
-PREDICT_ENABLED=true PREDICT_MODEL=evaluation/prediction/model-20260831-190900.json \
+PREDICT_ENABLED=true PREDICT_MODEL=evaluation/prediction/model-replicates-f9e30f4b.json \
     go run ./cmd/refaas
 
 # 3. score an artifact without translating it
@@ -262,7 +265,7 @@ a deployment grows the labelled corpus over time.
 
 The `predictGate` task must be a descendant of `pyScan` — it reads the vector
 that stage records rather than scanning again, which is what keeps its marginal
-cost the inference alone (~1.6 mJ against a translation's ~16 kJ). It fails
+cost the inference alone (~1.6 mJ against a translation attempt's mean ~13.5 kJ over the replicate series). It fails
 closed rather than passing a job through when the model or the vector is
 missing.
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """How far a translation gets, by complexity bucket.
 
-Three nested outcomes per function, from the run log of 20260904-190539:
+Three nested outcomes per function, from the run logs of the replicate series
+(see replicates.py):
 
   buildable  the pipeline produced Go that compiles - it reached the test stage
   validated  every fixture *executed* cleanly in the final test round: no
@@ -11,12 +12,17 @@ Three nested outcomes per function, from the run log of 20260904-190539:
   tested     every fixture *passed*. This is the job's own success criterion,
              so it is exactly the run's completion rate.
 
-They nest by construction (buildable >= validated >= tested), and the run log
-confirms it holds in all four buckets. Separating the middle term is what makes
-the chart worth drawing: a bar that stops between "validated" and "tested" is a
+They nest by construction (buildable >= validated >= tested), and the generator
+refuses a run in which they do not. Separating the middle term is what makes the
+chart worth drawing: a bar that stops between "validated" and "tested" is a
 behavioural divergence - the Go code runs and answers differently - which is a
 different engineering problem from one that stops before "validated", where the
 code does not run at all.
+
+Each bar is the mean over the selected runs and its whisker spans the lowest and
+the highest run. A bucket of 20 or 25 functions moves four to five percentage
+points per function, so a difference of that size between two runs is one
+function; the whiskers are what stop a single run from being over-read.
 
 Caveat, from [A19]: Metrics.TestOutcomes describes the *last* validation round,
 not every round, because the pipeline re-enters the test stage after each
@@ -26,28 +32,20 @@ not a claim that no fixture ever errored during repair.
 
 Emits TikZ/pgfplots for the write-up, an SVG preview, and a caption. Stdlib only.
 
-    python3 evaluation/figures/pipeline_funnel.py
+    python3 evaluation/figures/pipeline_funnel.py                          # the series
+    python3 evaluation/figures/pipeline_funnel.py --runs 20260904-190539   # one run
 """
 
+import argparse
 import collections
-import json
 import os
+import sys
 
+import replicates as rep
 from plotkit import Panel, esc, wrap
 
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-HERE = os.path.join(REPO, "evaluation", "figures")
-RUN_LOG = os.path.join(REPO, "runs", "run-20260904-170428.jsonl")
-RUN_ID = "20260904-190539"
-STEM = "pipeline-funnel-" + RUN_ID
-
-BUCKETS = ["A", "B", "C", "D+"]
-
-# Failure kinds that mean the fixture never produced a usable answer, as opposed
-# to producing the wrong one. domain.Metrics records these as the outcome Kind;
-# "output mismatch" and "side-effect mismatch" are deliberately *not* here,
-# because a mismatch is a translation that ran.
-EXECUTION_FAILURES = {"execution error", "timeout", "setup failed", "invalid fixture"}
+HERE = os.path.join(rep.REPO, "evaluation", "figures")
+GROUPS = rep.BUCKETS + ["all"]
 
 SERIES = [
     ("buildable", "#4c72b0", "compiles and reaches the test stage"),
@@ -58,56 +56,54 @@ SERIES = [
 
 # ---------------------------------------------------------------- data ------
 
-def load():
-    """counts[bucket] -> (n, buildable, validated, tested)."""
-    counts = collections.OrderedDict((b, [0, 0, 0, 0]) for b in BUCKETS)
+def counts(run):
+    """group -> [n, buildable, validated, tested] for one run."""
+    out = collections.OrderedDict((g, [0, 0, 0, 0]) for g in GROUPS)
     unknown = 0
-
-    with open(RUN_LOG) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            rec = json.loads(line)
-            if rec.get("type") != "job":
-                continue
-            metrics = rec.get("metrics") or {}
-            bucket = (metrics.get("meta") or {}).get("bucket")
-            if bucket not in counts:
-                unknown += 1
-                continue
-            outcomes = metrics.get("test_outcomes") or []
-            row = counts[bucket]
+    for j in rep.load_jobs(run).values():
+        if j["bucket"] not in rep.BUCKETS:
+            unknown += 1
+            continue
+        for g in (j["bucket"], "all"):
+            row = out[g]
             row[0] += 1
-            # Reaching the test stage at all is the buildable signal: a package
-            # that does not compile is never executed, so it records no
-            # outcomes. (Cross-checked against per_task["builder"] successes -
-            # the two agree on all 95 jobs of this run.)
-            if outcomes:
-                row[1] += 1
-                if all(o.get("passed") or o.get("kind") not in EXECUTION_FAILURES
-                       for o in outcomes):
-                    row[2] += 1
-            # completed is a pointer-like field in the log: absent means true,
-            # for the same reason cmd/energy reads it that way.
-            if rec.get("completed", True):
-                row[3] += 1
-
+            row[1] += j["buildable"]
+            row[2] += j["validated"]
+            row[3] += j["completed"]
+    for g, row in out.items():
+        if not row[1] >= row[2] >= row[3]:
+            sys.exit("run %s, group %s: outcomes do not nest %s" % (run.id, g, row))
     if unknown:
-        print("  note: %d job(s) had no complexity bucket and were skipped" % unknown)
-    return counts
+        print("  note: run %s has %d job(s) without a complexity bucket" % (run.id, unknown))
+    return out
 
 
-def percent(row):
-    n = row[0]
-    return [100.0 * v / n for v in row[1:]] if n else [0.0, 0.0, 0.0]
+def summarize(per_run):
+    """group -> n, per-run percentages, and (mean, lowest, highest) per series."""
+    out = collections.OrderedDict()
+    for g in GROUPS:
+        rows = [c[g] for c in per_run]
+        n = rows[0][0]
+        if n == 0:
+            continue
+        if any(r[0] != n for r in rows):
+            sys.exit("group %s does not have the same size in every run" % g)
+        pct = [[100.0 * r[i + 1] / n for i in range(3)] for r in rows]
+        out[g] = {
+            "n": n,
+            "counts": [r[1:] for r in rows],
+            "per_run": pct,
+            "stats": [(sum(p[i] for p in pct) / len(pct), min(p[i] for p in pct),
+                       max(p[i] for p in pct)) for i in range(3)],
+        }
+    return out
 
 
 # ---------------------------------------------------------------- tikz ------
 
-TIKZ = r"""% How far a translation gets, by complexity bucket - run @RUNID@.
+TIKZ = r"""% How far a translation gets, by complexity bucket - @DESC@.
 % Generated by evaluation/figures/pipeline_funnel.py - do not edit by hand.
-%
+@SPREADNOTE@%
 % Requires, in the document preamble:
 %   \usepackage{pgfplots}
 %   \pgfplotsset{compat=1.18}
@@ -120,8 +116,8 @@ TIKZ = r"""% How far a translation gets, by complexity bucket - run @RUNID@.
 \begin{axis}[
   ybar,
   width=\linewidth, height=6.4cm,
-  bar width=0.62cm,
-  enlarge x limits=0.16,
+  bar width=0.5cm,
+  enlarge x limits=0.12,
   ymin=0, ymax=112,
   ytick={0,20,40,60,80,100},
   ylabel={Functions [\%]},
@@ -130,11 +126,7 @@ TIKZ = r"""% How far a translation gets, by complexity bucket - run @RUNID@.
   xtick=data, xticklabels={@XLABELS@},
   x tick label style={font=\small},
   grid=major, grid style={draw=black!10},
-  nodes near coords,
-  nodes near coords style={font=\scriptsize, /pgf/number format/precision=0,
-                           /pgf/number format/fixed, /pgf/number format/fixed zerofill=false},
-  every node near coord/.append style={yshift=1pt},
-  legend style={at={(0.5,-0.20)}, anchor=north, legend columns=3,
+@OPTIONS@  legend style={at={(0.5,-0.20)}, anchor=north, legend columns=3,
                 draw=black!25, font=\small, /tikz/every even column/.append style={column sep=0.4cm}},
 ]
 \addplot[draw=buildable, fill=buildable, fill opacity=0.85] coordinates {@S0@};
@@ -145,16 +137,26 @@ TIKZ = r"""% How far a translation gets, by complexity bucket - run @RUNID@.
 \end{tikzpicture}
 """
 
+OPTIONS_SINGLE = r"""  nodes near coords,
+  nodes near coords style={font=\scriptsize, /pgf/number format/precision=0,
+                           /pgf/number format/fixed, /pgf/number format/fixed zerofill=false},
+  every node near coord/.append style={yshift=1pt},
+"""
+
+OPTIONS_SPREAD = r"""  error bars/y dir=both, error bars/y explicit,
+  error bars/error bar style={black!75, line width=0.6pt},
+  error bars/error mark options={black!75, line width=0.6pt, mark size=1.8pt},
+"""
+
 CAPTION = r"""% Suggested caption - the numbers are generated, so edit the prose only.
 \caption{How far a translation gets, by complexity bucket, over all @TOTAL@
-  functions of run \texttt{@RUNID@}. \emph{Buildable} is Go that compiles and
+  functions @OF@ @DESC@. \emph{Buildable} is Go that compiles and
   reaches the test stage; \emph{validated} additionally requires every fixture to
   execute cleanly, with no execution error, timeout or setup failure;
   \emph{tested} requires every fixture to pass, which is the pipeline's own
-  success criterion. The three nest by construction. Overall
+  success criterion. The three nest by construction.@SPREAD@ Overall
   @BU@\,\% / @VA@\,\% / @TE@\,\%; the D+ bucket (@DN@ functions with
-  cyclomatic complexity above 20) reaches @DBU@\,\% / @DVA@\,\% / @DTE@\,\%,
-  and is the only bucket in which most functions fail before they ever run.}
+  cyclomatic complexity above 20) reaches @DBU@\,\% / @DVA@\,\% / @DTE@\,\%@DRANGE@@DCLAUSE@.}
 """
 
 
@@ -165,40 +167,61 @@ def coordname(label):
     return label.replace("+", "plus")
 
 
-def tikz_coords(labels, values):
-    return " ".join("(%s,%.1f)" % (coordname(lab), v)
-                    for lab, v in zip(labels, values))
+def tikz_coords(stats, i, spread):
+    out = []
+    for g, s in stats.items():
+        mean, lo, hi = s["stats"][i]
+        if spread:
+            out.append("(%s,%.1f) += (0,%.1f) -= (0,%.1f)"
+                       % (coordname(g), mean, hi - mean, mean - lo))
+        else:
+            out.append("(%s,%.1f)" % (coordname(g), mean))
+    return " ".join(out)
 
 
-def write_tikz(path, labels, series):
+def write_tikz(path, stem, runs, stats):
+    spread = len(runs) > 1
     text = (TIKZ
-            .replace("@RUNID@", RUN_ID)
-            .replace("@STEM@", STEM)
+            .replace("@DESC@", rep.describe(runs))
+            .replace("@SPREADNOTE@", "% Bars are means over the runs; whiskers span the lowest "
+                                     "and highest run.\n" if spread else "")
+            .replace("@STEM@", stem)
             .replace("@C0@", SERIES[0][1][1:])
             .replace("@C1@", SERIES[1][1][1:])
             .replace("@C2@", SERIES[2][1][1:])
-            .replace("@XCOORDS@", ",".join(coordname(l) for l in labels))
-            .replace("@XLABELS@", ",".join(labels))
-            .replace("@S0@", tikz_coords(labels, series[0]))
-            .replace("@S1@", tikz_coords(labels, series[1]))
-            .replace("@S2@", tikz_coords(labels, series[2])))
+            .replace("@XCOORDS@", ",".join(coordname(g) for g in stats))
+            .replace("@XLABELS@", ",".join(stats))
+            .replace("@OPTIONS@", OPTIONS_SPREAD if spread else OPTIONS_SINGLE)
+            .replace("@S0@", tikz_coords(stats, 0, spread))
+            .replace("@S1@", tikz_coords(stats, 1, spread))
+            .replace("@S2@", tikz_coords(stats, 2, spread)))
     with open(path, "w") as fh:
         fh.write(text)
 
 
-def write_caption(path, counts, totals):
-    n, bu, va, te = totals
-    d = counts["D+"]
+def write_caption(path, runs, stats):
+    spread = len(runs) > 1
+    a, d = stats["all"], stats.get("D+")
+    others_compile = all(s["stats"][0][0] >= 50 for g, s in stats.items()
+                         if g not in ("D+", "all"))
     text = (CAPTION
-            .replace("@TOTAL@", str(n))
-            .replace("@RUNID@", RUN_ID)
-            .replace("@BU@", "%.0f" % (100 * bu / n))
-            .replace("@VA@", "%.0f" % (100 * va / n))
-            .replace("@TE@", "%.0f" % (100 * te / n))
-            .replace("@DN@", str(d[0]))
-            .replace("@DBU@", "%.0f" % (100 * d[1] / d[0]))
-            .replace("@DVA@", "%.0f" % (100 * d[2] / d[0]))
-            .replace("@DTE@", "%.0f" % (100 * d[3] / d[0])))
+            .replace("@TOTAL@", str(a["n"]))
+            .replace("@OF@", "in each of" if spread else "of")
+            .replace("@DESC@", rep.describe(runs, tex=True))
+            .replace("@SPREAD@", " Bars are means over the runs; whiskers span the lowest "
+                                 "and the highest run." if spread else "")
+            .replace("@BU@", "%.0f" % a["stats"][0][0])
+            .replace("@VA@", "%.0f" % a["stats"][1][0])
+            .replace("@TE@", "%.0f" % a["stats"][2][0])
+            .replace("@DN@", str(d["n"]))
+            .replace("@DBU@", "%.0f" % d["stats"][0][0])
+            .replace("@DVA@", "%.0f" % d["stats"][1][0])
+            .replace("@DTE@", "%.0f" % d["stats"][2][0])
+            .replace("@DRANGE@", " (tested: %.0f--%.0f\\,\\%% across runs)"
+                     % (d["stats"][2][1], d["stats"][2][2]) if spread else "")
+            .replace("@DCLAUSE@", ", and is the only bucket in which fewer than half of the "
+                                  "functions compile"
+                     if d["stats"][0][0] < 50 and others_compile else ""))
     with open(path, "w") as fh:
         fh.write(text)
 
@@ -212,28 +235,38 @@ GROUP_W = 0.78
 BAR_W = GROUP_W / len(SERIES)
 
 
-def write_svg(path, counts, totals):
-    labels = list(counts)
-    W, H = 900, 550
+def write_svg(path, runs, stats):
+    spread = len(runs) > 1
+    labels = list(stats)
+    W, H = 940, 560
     svg = ['<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" '
            'viewBox="0 0 %d %d" font-family="DejaVu Sans, Helvetica, Arial, sans-serif">'
            % (W, H, W, H),
            '<rect width="%d" height="%d" fill="#ffffff"/>' % (W, H)]
 
-    p = Panel(78, 56, 790, 300, (0, len(labels)), (0, 112))
-    p.frame("How far a translation gets, by complexity bucket (run %s)" % RUN_ID,
+    p = Panel(78, 56, 830, 300, (0, len(labels)), (0, 112))
+    p.frame("How far a translation gets, by complexity bucket (%s)" % rep.describe(runs),
             "Complexity bucket (max cyclomatic complexity)", "Functions [%]",
             [i + 0.5 for i in range(len(labels))], [0, 20, 40, 60, 80, 100],
-            xfmt=lambda t: "%s  (n = %d)" % (labels[int(t)], counts[labels[int(t)]][0]))
+            xfmt=lambda t: "%s  (n = %d)" % (labels[int(t)], stats[labels[int(t)]]["n"]))
 
     for gi, lab in enumerate(labels):
-        pcts = percent(counts[lab])
         for si, (name, color, _) in enumerate(SERIES):
+            mean, lo, hi = stats[lab]["stats"][si]
             x0 = gi + 0.5 - GROUP_W / 2 + si * BAR_W
-            p.bars([(x0 + 0.012, x0 + BAR_W - 0.012, pcts[si])], color, 0.85)
+            xc = p.px(x0 + BAR_W / 2)
+            p.bars([(x0 + 0.012, x0 + BAR_W - 0.012, mean)], color, 0.85)
+            top = mean
+            if spread:
+                top = hi
+                p.out.append('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="#333" '
+                             'stroke-width="1"/>' % (xc, p.py(lo), xc, p.py(hi)))
+                for v in (lo, hi):
+                    p.out.append('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" '
+                                 'stroke="#333" stroke-width="1"/>'
+                                 % (xc - 4, p.py(v), xc + 4, p.py(v)))
             p.out.append('<text x="%.2f" y="%.2f" font-size="10" fill="#333" '
-                         'text-anchor="middle">%.0f</text>'
-                         % (p.px(x0 + BAR_W / 2), p.py(pcts[si]) - 4, pcts[si]))
+                         'text-anchor="middle">%.0f</text>' % (xc, p.py(top) - 4, mean))
 
     # Below the axis, like the TikZ version: the tallest bar reaches 96%, so
     # anything inside the plot area collides with a bucket.
@@ -241,15 +274,18 @@ def write_svg(path, counts, totals):
              0.0, 1.16)
     svg += p.out
 
-    n, bu, va, te = totals
-    caption = ("All %d functions of run %s. buildable = Go that compiles and reaches "
-               "the test stage; validated = every fixture also executes cleanly "
-               "(no execution error, timeout or setup failure); tested = every fixture "
-               "passes. Overall %.0f%% / %.0f%% / %.0f%%."
-               % (n, RUN_ID, 100 * bu / n, 100 * va / n, 100 * te / n))
-    for i, line in enumerate(wrap(caption, 118)):
+    a = stats["all"]
+    caption = ("All %d functions %s %s. buildable = Go that compiles and reaches the test "
+               "stage; validated = every fixture also executes cleanly (no execution error, "
+               "timeout or setup failure); tested = every fixture passes.%s Overall "
+               "%.0f%% / %.0f%% / %.0f%%."
+               % (a["n"], "in each of" if spread else "of", rep.describe(runs),
+                  " Bars are means over the runs, whiskers the lowest and highest run."
+                  if spread else "",
+                  a["stats"][0][0], a["stats"][1][0], a["stats"][2][0]))
+    for i, line in enumerate(wrap(caption, 122)):
         svg.append('<text x="78" y="%d" font-size="11" fill="#444">%s</text>'
-                   % (H - 55 + i * 15, esc(line)))
+                   % (H - 62 + i * 15, esc(line)))
     svg.append("</svg>")
 
     with open(path, "w") as fh:
@@ -259,25 +295,28 @@ def write_svg(path, counts, totals):
 # ---------------------------------------------------------------- build -----
 
 def main():
-    counts = load()
-    labels = list(counts)
-    totals = [sum(counts[b][i] for b in labels) for i in range(4)]
-    series = [[percent(counts[b])[i] for b in labels] for i in range(len(SERIES))]
+    ap = argparse.ArgumentParser()
+    rep.add_runs_argument(ap)
+    args = ap.parse_args()
+    runs = rep.select(args.runs)
+    stem = rep.stem("pipeline-funnel", runs)
 
+    stats = summarize([counts(r) for r in runs])
     os.makedirs(HERE, exist_ok=True)
-    write_tikz(os.path.join(HERE, STEM + ".tex"), labels, series)
-    write_svg(os.path.join(HERE, STEM + ".svg"), counts, totals)
-    write_caption(os.path.join(HERE, STEM + "-caption.tex"), counts, totals)
+    write_tikz(os.path.join(HERE, stem + ".tex"), stem, runs, stats)
+    write_svg(os.path.join(HERE, stem + ".svg"), runs, stats)
+    write_caption(os.path.join(HERE, stem + "-caption.tex"), runs, stats)
 
-    print("wrote %s.{tex,svg,-caption.tex}" % os.path.join(HERE, STEM))
-    print("  %-4s %4s %12s %12s %12s" % ("", "n", "buildable", "validated", "tested"))
-    for b in labels:
-        n, bu, va, te = counts[b]
-        print("  %-4s %4d  %3d (%3.0f%%) %3d (%3.0f%%) %3d (%3.0f%%)"
-              % (b, n, bu, 100 * bu / n, va, 100 * va / n, te, 100 * te / n))
-    n, bu, va, te = totals
-    print("  %-4s %4d  %3d (%3.0f%%) %3d (%3.0f%%) %3d (%3.0f%%)"
-          % ("all", n, bu, 100 * bu / n, va, 100 * va / n, te, 100 * te / n))
+    print("wrote %s.{tex,svg,-caption.tex}" % os.path.join(HERE, stem))
+    print("  runs: %s" % ", ".join(r.id for r in runs))
+    print("  %-4s %4s  %-26s %-26s %-26s" % ("", "n", "buildable", "validated", "tested"))
+    for g, s in stats.items():
+        cells = []
+        for i in range(3):
+            mean, lo, hi = s["stats"][i]
+            per = "/".join("%d" % c[i] for c in s["counts"])
+            cells.append("%3.0f%% (%3.0f-%3.0f) [%s]" % (mean, lo, hi, per))
+        print("  %-4s %4d  %-26s %-26s %-26s" % (g, s["n"], cells[0], cells[1], cells[2]))
 
 
 if __name__ == "__main__":

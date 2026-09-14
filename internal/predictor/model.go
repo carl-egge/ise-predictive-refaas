@@ -26,10 +26,13 @@ import (
 )
 
 // Kind is the model family an exported file describes. Only logistic
-// regression is implemented: [I7] measured it as the arm that both transfers
-// to a second corpus (AUC 0.850 vs the forest's 0.525) and stays above chance
-// on the most expensive complexity bucket, and it is the arm whose output is a
-// calibrated probability rather than a vote fraction.
+// regression is implemented: its output is a calibrated probability rather
+// than a vote fraction, and the exported model is a short, auditable list of
+// coefficients. The comparison that first chose it ([I7], one run) has not held
+// up: retrained on the replicate series ([I12]) the random forest is the better
+// in-corpus gate (AUC 0.764 vs 0.642), while the logistic regression still
+// transfers better to function_set (0.697 vs 0.394). Shipping the forest would
+// need a tree reader here and a parity test for it.
 type Kind string
 
 const LogisticRegression Kind = "logistic_regression"

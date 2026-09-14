@@ -11,9 +11,10 @@ This writes the golden file that pins it: for every function in the corpus, the
 feature values and the probability scikit-learn assigns them under the exported
 model. `go test ./internal/predictor/...` replays it.
 
-Run this whenever the model is re-exported, together with
+Run this whenever the model is re-exported, with the same --dataset list the
+export used, together with
 
-    cp evaluation/prediction/model-<run-id>.json internal/predictor/testdata/model.json
+    cp evaluation/prediction/model-<id>.json internal/predictor/testdata/model.json
 """
 import argparse
 import json
@@ -22,38 +23,41 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from evaluate import load, make_model  # noqa: E402
+from evaluate import Corpus, make_model  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset", required=True)
+    ap.add_argument("--dataset", action="append", required=True,
+                    help="dataset CSV; repeat once per replicate run, as for the export")
     ap.add_argument("--model", required=True, help="the exported model JSON")
     ap.add_argument("--label", default="all_tests_passed")
     ap.add_argument("--out", default=os.path.join(
         REPO, "internal", "predictor", "testdata", "parity.json"))
     args = ap.parse_args()
 
-    rows, cols, X, y, groups, E, dE, ids, aws = load(args.dataset, args.label)
-    # The same full-corpus refit the export uses, so the fixture pins the
-    # coefficients that were actually shipped rather than a fold's.
-    probs = make_model("lr", 0).fit(X, y).predict_proba(X)[:, 1]
+    c = Corpus(args.dataset, args.label)
+    Xs, Ys, _, _, _ = c.stacked()
+    # The same full-corpus refit the export uses (every (function, run) row), so
+    # the fixture pins the coefficients that were actually shipped rather than a
+    # fold's. One case per function: the features are shared by every run.
+    probs = make_model("lr", 0).fit(Xs, Ys).predict_proba(c.X)[:, 1]
     model = json.load(open(args.model))
 
     payload = {
         # The Go test resolves this next to itself, so it is a bare filename.
         "model": "model.json",
-        "feature_names": cols,
+        "feature_names": c.cols,
         "cases": [
             {
                 "function_id": fid,
-                "values": [float(v) for v in X[i]],
+                "values": [float(v) for v in c.X[i]],
                 "sklearn_score": float(probs[i]),
                 "translate": bool(probs[i] >= model["threshold"]),
             }
-            for i, fid in enumerate(ids)
+            for i, fid in enumerate(c.ids)
         ],
     }
     os.makedirs(os.path.dirname(args.out), exist_ok=True)

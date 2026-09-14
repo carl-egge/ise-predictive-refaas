@@ -28,7 +28,8 @@ def main():
     ap.add_argument("--pyscan-bin", required=True)
     ap.add_argument("--artifacts", required=True, help="glob for the artifact .zip files")
     ap.add_argument("--config", default="evaluation/energy.config.json")
-    ap.add_argument("--energy-json", default="", help="cmd/energy -json, for E_translation")
+    ap.add_argument("--energy-json", action="append", default=[],
+                    help="cmd/energy -json, for E_translation; repeat once per replicate run")
     ap.add_argument("--repeats", type=int, default=3)
     args = ap.parse_args()
 
@@ -86,15 +87,23 @@ def main():
     total_s = per_fn_s + infer_s
     print("\npredictor total, per function    : %.3f s -> %.1f J" % (total_s, joules(total_s)))
 
-    if args.energy_json and os.path.exists(args.energy_json):
-        d = json.load(open(args.energy_json))
+    # Every attempt of every run is one sample of "what a translation attempt
+    # costs", so replicate runs are pooled rather than averaged per run.
+    e = []
+    for path in args.energy_json:
+        if not os.path.exists(path):
+            raise SystemExit("no such energy report: %s" % path)
+        d = json.load(open(path))
         rows = list(d["translations"]) + list(
             d.get("failed_attempts", {}).get("translations", []))
-        e = [t["facility_joules"] for t in rows]
+        e += [t["facility_joules"] for t in rows]
+    if e:
         mean_e = sum(e) / len(e)
         med_e = sorted(e)[len(e) // 2]
         p = joules(total_s)
-        print("\nagainst the measured translation cost of the same corpus:")
+        print("\nagainst the measured translation cost of the same corpus (%d attempts "
+              "over %d run%s):" % (len(e), len(args.energy_json),
+                                   "" if len(args.energy_json) == 1 else "s"))
         print("  mean E_translation   %.0f J   -> E_predictor / E_translation = %.2e"
               % (mean_e, p / mean_e))
         print("  median E_translation %.0f J   -> E_predictor / E_translation = %.2e"

@@ -496,6 +496,11 @@ it.
 
 #### How far a translation gets, by complexity bucket (2026-09-06)
 
+> **Figure superseded by the replicate version.** `pipeline_funnel.py` now defaults to the
+> replicate series (`evaluation/figures/pipeline-funnel-replicates-f9e30f4b.*`: bars are means over
+> the three runs, whiskers the lowest and highest run). The single-run table in this subsection is
+> reproduced exactly with `--runs 20260904-190539`.
+
 `evaluation/figures/pipeline_funnel.py` draws the three nested outcomes of run
 `20260904-190539` per complexity bucket. **buildable** = the pipeline produced Go
 that compiles and reached the test stage; **validated** = every fixture also
@@ -532,6 +537,11 @@ round, so "validated" is a property of the final artifact, not a claim that no
 fixture ever errored during repair.
 
 #### Where the saving actually is (2026-09-06)
+
+> **Figure superseded by the replicate version.** `savings_histogram.py` now defaults to the
+> replicate series (`evaluation/figures/energy-savings-replicates-f9e30f4b.*`: one value per function,
+> the median of its saving over the runs in which it was validated). The single-run numbers in this
+> subsection are reproduced exactly with `--runs 20260904-190539`.
 
 `evaluation/figures/savings_histogram.py` draws the analogue of Werner et al.
 Figure 1 — "Consumption Reductions [J]" over the translated functions — for the 46
@@ -660,6 +670,15 @@ do almost no work, and the resulting `N*` values are correspondingly enormous (m
 
 #### Break-even, per function and per policy (2026-09-07)
 
+> **Figure superseded by the replicate version.** `amortisation_spread.py` now draws the replicate
+> series (`evaluation/figures/amortisation-spread-replicates-f9e30f4b.*`): (a) each function at the
+> median of its `N*` over the runs in which it was validated, (b) the mean curve per policy with the
+> lowest-to-highest run as a band and every run's portfolio break-even as a tick. Its gate is the
+> model fitted on the replicate series, acting through out-of-fold decisions, so the transfer-setting
+> gate described below (the model fitted on `20260831-190900`) is not what the generator draws any
+> more. The spread of one function's `N*` across runs has its own figure,
+> `nstar-distribution-replicates-f9e30f4b.*`.
+
 `evaluation/figures/amortisation_spread.py` draws the analogue of Werner et al. **Figure 6** —
 invocations required before a translation repays the energy spent producing it — for the
 46 validated translations of run `20260904-190539`. It emits TikZ/pgfplots, an SVG preview and a
@@ -711,9 +730,12 @@ at which it beats both baselines — and the replicates do not rescue it (see
 
 Two things the write-up must state. The gate curve uses the model fitted on the **previous** run
 (`model-20260831-190900.json`) scored against this one, which is the honest transfer setting.
-And this corpus sits at 10⁴ to 10⁹ invocations where theirs sits at 10² to 10⁵: explainable rather
-than contradictory, since they used 27B to 32B models against this pipeline's 123B, and their
-per-invocation savings were larger.
+And this corpus sits at 10⁴ to 10⁹ invocations where theirs, by their own text, sits at 3,000 to 5,000
+at best and "nearly 10⁶" at worst (the drawn boxes decode to 1.3 × 10³ to 3.9 × 10⁵;
+`docs/paper/Werner et al.md`). The gap is not translation cost: they report 5 to 14 Wh per valid
+translation, against 1.4 to 2.0 Wh per completed translation here (7.5 to 8.5 Wh with failed
+attempts amortised). It is the per-invocation saving, which on their hand-picked functions averaged
+a 70% reduction and on this corpus is a median steady-state ratio of about 1.3×.
 
 ---
 
@@ -737,8 +759,9 @@ All four use `scripts/benchmark.json` sha `f9e30f4b` on the same host with Floci
 only change between the commits is a comment in `internal/floci/deployer.go`. (The `20260911`
 manifest counts one of its 52 failures as a client-side error; the run log records all 52 as
 failed jobs.) Run `20260831-190900` (config `e82fbaf9`: `cleaner` → `coder`, before [C8a], [C11a],
-[C13], [C14], [C15]) is a different pipeline version. It stays the prediction model's training
-run and is not pooled with these.
+[C13], [C14], [C15]) is a different pipeline version. The prediction models are
+now fitted on this series (below); `20260831-190900` survives only as the training run of the
+earlier, out-of-configuration model, and is never pooled with these.
 
 ### Outcomes and label stability
 
@@ -848,24 +871,116 @@ The cheapest functions are the same in every run — f76 (1.4–1.5 × 10⁴), f
 f45 (2.6–3.9 × 10⁴), f30 (3.3–3.5 × 10⁴) — while the median moves by almost an order of magnitude.
 **Quote the distribution, not the median.**
 
+**A function's own break-even is stable; which functions repay is not.** Of the 43 functions that
+repay in at least one run, the 27 that repay in two or more differ between their highest and lowest
+run by a median factor of only 1.6, and every one of them stays within a factor of ten. The run-level
+median moves because the *set* changes: only 55 functions are validated in any run, several cheap
+ones are validated in a single run (f52, f4, f72, f56 all in `20260912-172904` only), and 10 functions
+repay in one run and never in another (f20, f53 and f84 among them). The instability is in what the
+model writes, not in the measurement of what it wrote (`nstar-distribution-replicates-f9e30f4b`).
+
 | policy: translated / succeeded / amortise, portfolio `N*` | 0904 | 0911 | 0912 |
 |:---|:---|:---|:---|
 | translate all | 95 / 47 / 31, 9.3 × 10⁵ | 95 / 43 / 29, 8.6 × 10⁵ | 95 / 46 / 29, 7.9 × 10⁵ |
 | skip AWS functions | 37 / 23 / 10, 2.0 × 10⁸ | 37 / 18 / 8, 1.9 × 10⁸ | 37 / 22 / 8, 1.2 × 10⁸ |
-| prediction gate (M1 fitted on `20260831-190900`) | 45 / 34 / 20, 1.1 × 10⁶ | 45 / 29 / 19, 7.0 × 10⁵ | 45 / 32 / 17, 9.1 × 10⁵ |
+| prediction gate (M1 fitted on these runs, out-of-fold) | 49 / 32 / 18, 8.4 × 10⁵ | 49 / 28 / 18, 6.8 × 10⁵ | 49 / 28 / 16, 1.0 × 10⁶ |
 | oracle | 47 / 47 / 31, 2.3 × 10⁵ | 43 / 43 / 29, 1.6 × 10⁵ | 46 / 46 / 29, 1.9 × 10⁵ |
 
-**The gate has no robust useful range.** It beats translate-all only below 8.7 × 10⁵ /
-9.4 × 10⁵ / 7.4 × 10⁵ invocations and is net-positive only above 1.1 × 10⁶ / 7.0 × 10⁵ /
-9.1 × 10⁵. The window in which it beats both baselines is empty in 0904, 7.0–9.4 × 10⁵ in 0911,
-and empty in 0912 (with or without the early exits: 7.9 × 10⁵ against 1.3 × 10⁶). Both ends scale
-with the same energy constants, so the window's existence does not depend on §8's assumptions.
+**Whether a gate has a useful range depends on which model it is.** A gate is useful where it
+beats both baselines at once: net-positive (better than translating nothing) and better than
+translating everything. Both ends scale with the same energy constants, so whether the window
+exists does not depend on §8's assumptions.
+
+| gate (out-of-fold decisions, majority over repeats) | translated | 0904 | 0911 | 0912 |
+|:---|--:|:---|:---|:---|
+| M1 logistic regression (the shipped model) | 49 | 8.4 × 10⁵ – 9.9 × 10⁵ | 6.8 × 10⁵ – 9.9 × 10⁵ | empty (1.0 × 10⁶ against 7.0 × 10⁵) |
+| M2 random forest | 46 | 2.2 × 10⁵ – 4.6 × 10⁶ | 2.4 × 10⁵ – 4.0 × 10⁶ | 2.7 × 10⁵ – 1.7 × 10⁶ |
+
+The logistic-regression gate is at best marginally useful and not in every run. The forest gate is
+useful in all three, over roughly one order of magnitude of invocations, and its portfolio break-even
+(2.2–2.7 × 10⁵) is close to the oracle's (1.6–2.3 × 10⁵). The model fitted on `20260831-190900` and
+scored on these runs, the transfer setting, had an empty window in 0904 and 0912 and a narrow one
+(7.0–9.4 × 10⁵) in 0911.
 Skipping AWS functions is two orders of magnitude worse than translating everything in every run.
 
-### The shipped predictor on the replicates
+### Prediction, retrained on this series
 
-`model-20260831-190900.json` (M1, threshold 0.465) translates the same 45 functions in every run,
-since the features are deterministic.
+**The prediction results the thesis reports come from these three runs.** `evaluate.py` takes one
+`--dataset` per run and fits on every (function, run) row, so a function that passed twice and
+failed once is seen as exactly that. Folds are drawn over functions on `group_id` (10 folds × 5
+repeats), so no function and no near-duplicate is ever scored by a model that saw it. Every figure
+is a mean over 5 repeats × 3 runs, with each policy judged against each run's own outcomes and
+energies. Horizon N = 10⁶ (`evaluation/prediction/results-replicates-f9e30f4b.txt`).
+
+| policy | AUC | translated | successes kept (of 45.3) | spend Wh (of 356.3) | Wh per success | net Wh saved vs. always-translate at 10⁶ |
+|:---|--:|--:|--:|--:|--:|--:|
+| B0 always-translate | — | 95.0 | 45.3 | 356.3 | 7.86 | 0 |
+| B3 single `cc` threshold | — | 64.2 | 38.6 | 134.6 | 3.49 | +123.9 |
+| B5 skip AWS functions | — | 37.0 | 21.0 | 155.1 | 7.38 | −203.6 |
+| M1 logistic regression, balanced point | 0.642 | 49.0 | 28.9 | 129.9 | 4.49 | −11.8 |
+| M1 logistic regression, energy point | 0.642 | 70.0 | 37.2 | 200.1 | 5.38 | +27.1 |
+| M2 random forest, balanced point | 0.764 | 45.2 | 30.7 | 77.1 | 2.51 | +146.7 |
+| M2 cost-weighted, energy point | 0.681 | 48.4 | 31.3 | 82.9 | 2.65 | +225.3 |
+| M2 energy-target, balanced point | 0.866 (own target) | 28.0 | 16.5 | 56.3 | 3.41 | +204.5 |
+| oracle (knows each run's outcome and ΔE) | — | 16.7 | 16.7 | 22.2 | 1.33 | +341.9 |
+
+Replicate ceiling for any per-function score: AUC 0.894.
+
+- **There is ex-ante signal, but less than the single run suggested.** M1 reaches AUC 0.642 ± 0.033
+  (mean per run); a group-level permutation test puts the null at 0.507 ± 0.076, **p = 0.040** over
+  200 permutations. The single-run model on `20260831-190900` reported 0.763 at p = 0.010. Both
+  families sit well below the 0.894 the runs themselves permit (against the majority label: M1
+  0.656, M2 0.764).
+- **The ranking of the two model families reversed, and does not settle.** On `20260831-190900` the
+  logistic regression won (0.763 against 0.728) and the forest was anti-predictive on D+ (0.242). On
+  the replicates the forest wins (0.764 against 0.642), and in the representative repeat it is the
+  logistic regression that falls below chance inside buckets B (0.43) and D+ (0.42). On
+  `function_set` it flips back: M1 0.697, M2 0.394 (n = 14, no AWS function, and M1's threshold
+  translates all 14 anyway). At this sample size neither family is robustly the better one.
+- **A single complexity threshold is the baseline to beat, and only the forests beat it.** B3 keeps
+  38.6 of 45.3 successes for 38% of the spend and saves 123.9 Wh at 10⁶. The forest variants save
+  146.7 to 225.3 Wh; the logistic regression saves between −11.8 Wh (balanced point) and +27.1 Wh
+  (energy point). B3 also beat both plain models on the single run; what is new is that the forest
+  now beats B3.
+- **What the refitted logistic regression leans on.** Size and complexity lead: `halstead_vocabulary`
+  −1.63, `n_decorators` +1.36, `n_raise` −0.87, `n_cases_with_setup` −0.70, `n_loops` −0.63,
+  `cc_total` −0.57, `cc` −0.47. The fixture-side feature that led the single-run fit
+  (`n_cases_with_setup`, −1.19 there) is still present but no longer dominant, and `lib_boto3` has
+  left the top twelve — consistent with the outcome table above, where complexity separates and the
+  AWS split no longer does.
+- **Worthwhileness stays as predictable as feasibility, and it is the more useful target.** The
+  energy-target forest reaches AUC 0.866 against its own label, and the cost-weighted forest saves the
+  most at 10⁶ (+225.3 Wh). With thresholds fitted at 10⁶, no policy beats translating nothing at
+  10⁵, and none beats translating everything at 10⁷ (closest: the cost-weighted forest, −114.6 Wh).
+  Fitting the thresholds at the horizon instead (`results-replicates-f9e30f4b-N1e8.txt`) changes
+  the upper end but not the conclusion: at 10⁸ translating everything nets +40,204 Wh against the
+  oracle's +41,595, so only 3.5% headroom is left, and only the two forest energy-point variants
+  beat it — the cost-weighted forest by +132 Wh (+174 Wh at 10⁷), the plain forest by +28 Wh. Every
+  logistic-regression policy and the `cc` threshold lose there (−1,557 to −23,586 Wh). The target
+  also gets harder to learn as N rises (energy-target forest AUC 0.866 → 0.636, logistic regression
+  0.715 → 0.586), because "worth it" at 10⁸ admits 79 of 285 (function, run) pairs rather than
+  the 50 structurally distinctive ones at 10⁶. Selection earns its keep around 10⁶; above that the
+  achievable gain is a few percent and only the forest reaches it.
+- **Only the forest gives a gate with a useful range in every run.** Applied through its
+  out-of-fold decisions, the forest gate beats both translating everything and translating nothing
+  from 2.2–2.7 × 10⁵ up to 1.7–4.6 × 10⁶ invocations in all three runs; the logistic-regression gate
+  manages 8.4–9.9 × 10⁵ and 6.8–9.9 × 10⁵ in two runs and nothing in the third (table under
+  "Break-even" above). The forest AUC spread over repeats and runs is ±0.054, the logistic
+  regression's ±0.033.
+- **Which model ships.** `internal/predictor` reads a logistic regression only, so
+  `model-replicates-f9e30f4b.json` is M1 refitted on all 285 rows (threshold 0.579;
+  `export_parity.py` regenerated `internal/predictor/testdata/parity.json` and the Go parity test
+  passes). On the replicate evidence the forest is the better in-corpus gate; shipping it needs a
+  tree reader in Go. That decision is open.
+- **The predictor's own cost.** Pooled over the 285 attempts (mean 13.5 kJ), the standalone predictor
+  (48.8 J) is 3.6 × 10⁻³ of an attempt and pays for itself if it avoids one wasted attempt per 277
+  screened; its marginal cost (1.6 mJ) is 1.2 × 10⁻⁷ of an attempt.
+
+#### The earlier model, scored out of configuration
+
+`model-20260831-190900.json` (M1 fitted on run `20260831-190900`, threshold 0.465) translates the same
+45 functions in every run, since the features are deterministic. This is a transfer test, kept
+because it is what shows a gate learning a pipeline version; it is not the model the thesis reports.
 
 | | 0904 | 0911 | 0912 |
 |:---|--:|--:|--:|
@@ -889,10 +1004,28 @@ correct translation can satisfy (a live API body, `datetime.now()` timestamps un
 matching) and pf8 as a genuine divergence. The earlier run on the old configuration (dirty tree) scored 10 of 14, and only pf11
 changed. Energy 10.30 Wh in total, 49.8% on failures, 0.94 Wh per success. Runtime over the 11
 validated translations: **1.05× steady-state, 19.0× cold-start energy**, 6 of 11 faster at steady
-state; `N*` computed for 6 (median 3.3 × 10⁷, range 2.9 × 10⁴ – 2.4 × 10⁸), 5 never repay. M1
-scores AUC 0.85 and translates 13 of 14, keeping all 11 successes. Report it separately from
+state; `N*` computed for 6 (median 3.3 × 10⁷, range 2.9 × 10⁴ – 2.4 × 10⁸), 5 never repay. The logistic regression
+fitted on the replicate series scores AUC 0.70 on it, but its threshold translates all 14; the forest
+scores 0.39. (The earlier single-run model scored 0.85 and translated 13 of 14.) Report it separately from
 `evaluation_set`: its expectations were never executed against the originals, and it contains no
 AWS function.
+
+### Figures
+
+All four generators in `evaluation/figures/` default to this series (`--runs` selects others; a
+single run reproduces the single-run versions) and emit TikZ/pgfplots, an SVG preview and a generated
+caption. Their shared loaders live in `evaluation/figures/replicates.py`, so "validated", "cost" and
+`N*` mean the same thing in every figure.
+
+| figure stem | generator | shows |
+|:---|:---|:---|
+| `pipeline-funnel-replicates-f9e30f4b` | `pipeline_funnel.py` | buildable / validated / tested per bucket; mean over runs, whiskers lowest to highest run |
+| `energy-savings-replicates-f9e30f4b` | `savings_histogram.py` | per-function saving (median over the runs it validated in), AWS vs non-AWS, on Werner et al. Figure 1's scale |
+| `amortisation-spread-replicates-f9e30f4b` | `amortisation_spread.py` | per-function median `N*`; functions amortised per policy, run bands, portfolio ticks |
+| `nstar-distribution-replicates-f9e30f4b` | `nstar_distribution.py` | `N*` per function per run (range, median, never-repay), and per-run boxplots |
+
+`amortisation_spread.py` reads the prediction gate's out-of-fold decisions from
+`evaluation/prediction/results-replicates-f9e30f4b.json`.
 
 ### Reproducing
 

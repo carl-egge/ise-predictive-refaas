@@ -1,0 +1,9 @@
+% Suggested caption - the numbers are generated, so edit the prose only.
+\caption{How far a translation gets, by complexity bucket, over all 95
+  functions in each of the three runs of the replicate series. \emph{Buildable} is Go that compiles and
+  reaches the test stage; \emph{validated} additionally requires every fixture to
+  execute cleanly, with no execution error, timeout or setup failure;
+  \emph{tested} requires every fixture to pass, which is the pipeline's own
+  success criterion. The three nest by construction. Bars are means over the runs; whiskers span the lowest and the highest run. Overall
+  78\,\% / 64\,\% / 48\,\%; the D+ bucket (20 functions with
+  cyclomatic complexity above 20) reaches 45\,\% / 25\,\% / 13\,\% (tested: 0--25\,\% across runs), and is the only bucket in which fewer than half of the functions compile.}

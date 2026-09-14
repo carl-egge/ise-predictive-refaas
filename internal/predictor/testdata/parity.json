@@ -119,7 +119,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.02907498382647777,
+   "sklearn_score": 0.3584538888673325,
    "translate": false
   },
   {
@@ -182,7 +182,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.758231605721596,
+   "sklearn_score": 0.6762652498519238,
    "translate": true
   },
   {
@@ -245,7 +245,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.9553797011073225,
+   "sklearn_score": 0.8572383611537602,
    "translate": true
   },
   {
@@ -308,7 +308,7 @@
     2.25,
     0.0
    ],
-   "sklearn_score": 0.16822105595338324,
+   "sklearn_score": 0.054434247798588034,
    "translate": false
   },
   {
@@ -371,7 +371,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.13338304182904492,
+   "sklearn_score": 0.34057941057945307,
    "translate": false
   },
   {
@@ -434,7 +434,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.4216531077074231,
+   "sklearn_score": 0.424834502443076,
    "translate": false
   },
   {
@@ -497,7 +497,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.036159340652498394,
+   "sklearn_score": 0.03039154284783106,
    "translate": false
   },
   {
@@ -560,7 +560,7 @@
     1.6666666666666667,
     0.0
    ],
-   "sklearn_score": 0.13137136258697724,
+   "sklearn_score": 0.28682207732822607,
    "translate": false
   },
   {
@@ -623,7 +623,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.16993792894907492,
+   "sklearn_score": 0.32865081304556576,
    "translate": false
   },
   {
@@ -686,8 +686,8 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.956699438435411,
-   "translate": true
+   "sklearn_score": 0.3073193425557024,
+   "translate": false
   },
   {
    "function_id": "f10",
@@ -749,8 +749,8 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.33386244151614336,
-   "translate": false
+   "sklearn_score": 0.8254351217094313,
+   "translate": true
   },
   {
    "function_id": "f11",
@@ -812,8 +812,8 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.36894623192649956,
-   "translate": false
+   "sklearn_score": 0.7045988508437139,
+   "translate": true
   },
   {
    "function_id": "f12",
@@ -875,8 +875,8 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.9692681327928385,
-   "translate": true
+   "sklearn_score": 0.1993954591346345,
+   "translate": false
   },
   {
    "function_id": "f13",
@@ -938,7 +938,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.05342660616963308,
+   "sklearn_score": 0.4035242729034484,
    "translate": false
   },
   {
@@ -1001,7 +1001,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.9163123911333899,
+   "sklearn_score": 0.9932659405797137,
    "translate": true
   },
   {
@@ -1064,7 +1064,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.006595844941520596,
+   "sklearn_score": 0.08100585859910142,
    "translate": false
   },
   {
@@ -1127,7 +1127,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.08716442068274177,
+   "sklearn_score": 0.2648971559258698,
    "translate": false
   },
   {
@@ -1190,7 +1190,7 @@
     1.0,
     0.0
    ],
-   "sklearn_score": 0.8814654164714385,
+   "sklearn_score": 0.9860790062672758,
    "translate": true
   },
   {
@@ -1253,7 +1253,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.6351675905866176,
+   "sklearn_score": 0.7228274488891638,
    "translate": true
   },
   {
@@ -1316,8 +1316,8 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.9155276889139253,
-   "translate": true
+   "sklearn_score": 0.5464335530649561,
+   "translate": false
   },
   {
    "function_id": "f20",
@@ -1379,7 +1379,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.6045217521061165,
+   "sklearn_score": 0.7491240659621542,
    "translate": true
   },
   {
@@ -1442,7 +1442,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.021154226722609172,
+   "sklearn_score": 0.29599715488975226,
    "translate": false
   },
   {
@@ -1505,7 +1505,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.09386630226503448,
+   "sklearn_score": 0.025491985319145736,
    "translate": false
   },
   {
@@ -1568,7 +1568,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.7623635470117862,
+   "sklearn_score": 0.7308038637047235,
    "translate": true
   },
   {
@@ -1631,8 +1631,8 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.511222547070253,
-   "translate": true
+   "sklearn_score": 0.4943486065386389,
+   "translate": false
   },
   {
    "function_id": "f25",
@@ -1694,7 +1694,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.07344887927890176,
+   "sklearn_score": 0.48274009966388437,
    "translate": false
   },
   {
@@ -1757,7 +1757,7 @@
     4.0,
     0.0
    ],
-   "sklearn_score": 0.004725719067012399,
+   "sklearn_score": 3.366478927326814e-06,
    "translate": false
   },
   {
@@ -1820,7 +1820,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.040493567232734916,
+   "sklearn_score": 0.2474889071761572,
    "translate": false
   },
   {
@@ -1883,7 +1883,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.9389645708593813,
+   "sklearn_score": 0.9392048060071376,
    "translate": true
   },
   {
@@ -1946,7 +1946,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.0004618326395953929,
+   "sklearn_score": 0.2820247281950485,
    "translate": false
   },
   {
@@ -2009,7 +2009,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.6449335906059516,
+   "sklearn_score": 0.7692826547791534,
    "translate": true
   },
   {
@@ -2072,8 +2072,8 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.8741721048811611,
-   "translate": true
+   "sklearn_score": 0.33427321111834496,
+   "translate": false
   },
   {
    "function_id": "f32",
@@ -2135,8 +2135,8 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.7523224078337561,
-   "translate": true
+   "sklearn_score": 0.5547421201700412,
+   "translate": false
   },
   {
    "function_id": "f33",
@@ -2198,8 +2198,8 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.9619767138223447,
-   "translate": true
+   "sklearn_score": 0.16451717388794573,
+   "translate": false
   },
   {
    "function_id": "f34",
@@ -2261,7 +2261,7 @@
     1.3333333333333333,
     0.0
    ],
-   "sklearn_score": 0.09492525015130214,
+   "sklearn_score": 0.15239587395890158,
    "translate": false
   },
   {
@@ -2324,7 +2324,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.03870883588898467,
+   "sklearn_score": 0.07561236955691439,
    "translate": false
   },
   {
@@ -2387,7 +2387,7 @@
     2.4,
     0.0
    ],
-   "sklearn_score": 0.9448471082295051,
+   "sklearn_score": 0.8261492316452038,
    "translate": true
   },
   {
@@ -2450,8 +2450,8 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.07647827199035744,
-   "translate": false
+   "sklearn_score": 0.9875424152291092,
+   "translate": true
   },
   {
    "function_id": "f38",
@@ -2513,7 +2513,7 @@
     1.0,
     0.0
    ],
-   "sklearn_score": 0.007822488294164738,
+   "sklearn_score": 0.04007052193731552,
    "translate": false
   },
   {
@@ -2576,7 +2576,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.7013355084714497,
+   "sklearn_score": 0.8336078375963545,
    "translate": true
   },
   {
@@ -2639,7 +2639,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.9565827602964435,
+   "sklearn_score": 0.9039644695579084,
    "translate": true
   },
   {
@@ -2702,7 +2702,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.9487999384040924,
+   "sklearn_score": 0.9385804489379901,
    "translate": true
   },
   {
@@ -2765,7 +2765,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.22284708147144516,
+   "sklearn_score": 0.29295436621599535,
    "translate": false
   },
   {
@@ -2828,7 +2828,7 @@
     2.4,
     0.0
    ],
-   "sklearn_score": 0.09968547313651273,
+   "sklearn_score": 0.4072152390390585,
    "translate": false
   },
   {
@@ -2891,7 +2891,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.03677543297197267,
+   "sklearn_score": 0.08260267237142796,
    "translate": false
   },
   {
@@ -2954,7 +2954,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.41097121224367134,
+   "sklearn_score": 0.4837927584501194,
    "translate": false
   },
   {
@@ -3017,8 +3017,8 @@
     1.0,
     0.0
    ],
-   "sklearn_score": 0.6667262393966017,
-   "translate": true
+   "sklearn_score": 0.23516133749961404,
+   "translate": false
   },
   {
    "function_id": "f47",
@@ -3080,7 +3080,7 @@
     1.25,
     0.0
    ],
-   "sklearn_score": 0.042022198268729126,
+   "sklearn_score": 0.3918589422269606,
    "translate": false
   },
   {
@@ -3143,7 +3143,7 @@
     1.6,
     0.0
    ],
-   "sklearn_score": 0.03230334316616154,
+   "sklearn_score": 0.1672758514135633,
    "translate": false
   },
   {
@@ -3206,7 +3206,7 @@
     2.4,
     0.0
    ],
-   "sklearn_score": 0.30339869583291323,
+   "sklearn_score": 0.3886895659537454,
    "translate": false
   },
   {
@@ -3269,7 +3269,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.6176122123544009,
+   "sklearn_score": 0.6855375038723216,
    "translate": true
   },
   {
@@ -3332,7 +3332,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.06484913339468476,
+   "sklearn_score": 0.38054571611917287,
    "translate": false
   },
   {
@@ -3395,7 +3395,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.0020196974980014417,
+   "sklearn_score": 0.39250997842105634,
    "translate": false
   },
   {
@@ -3458,7 +3458,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.6217850950161492,
+   "sklearn_score": 0.8763821749852178,
    "translate": true
   },
   {
@@ -3521,7 +3521,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.0038490026658563473,
+   "sklearn_score": 0.007255201383722595,
    "translate": false
   },
   {
@@ -3584,8 +3584,8 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.06190989040560591,
-   "translate": false
+   "sklearn_score": 0.7659614597537272,
+   "translate": true
   },
   {
    "function_id": "f56",
@@ -3647,8 +3647,8 @@
     5.333333333333333,
     0.0
    ],
-   "sklearn_score": 0.7460526671873556,
-   "translate": true
+   "sklearn_score": 0.5677223455279297,
+   "translate": false
   },
   {
    "function_id": "f57",
@@ -3710,7 +3710,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.8515166714059998,
+   "sklearn_score": 0.8636272523420944,
    "translate": true
   },
   {
@@ -3773,7 +3773,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.06098266802148362,
+   "sklearn_score": 0.01989348525602785,
    "translate": false
   },
   {
@@ -3836,7 +3836,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.6691929265565851,
+   "sklearn_score": 0.6550443281965409,
    "translate": true
   },
   {
@@ -3899,8 +3899,8 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.6517139176612047,
-   "translate": true
+   "sklearn_score": 0.46803408631443844,
+   "translate": false
   },
   {
    "function_id": "f61",
@@ -3962,7 +3962,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.9820088067781315,
+   "sklearn_score": 0.999632153381154,
    "translate": true
   },
   {
@@ -4025,7 +4025,7 @@
     1.4,
     0.0
    ],
-   "sklearn_score": 0.15680590288389612,
+   "sklearn_score": 0.04597955791998572,
    "translate": false
   },
   {
@@ -4088,7 +4088,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 5.272443552324497e-05,
+   "sklearn_score": 0.001857653829948405,
    "translate": false
   },
   {
@@ -4151,7 +4151,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.11414839879675628,
+   "sklearn_score": 0.5453064388917517,
    "translate": false
   },
   {
@@ -4214,8 +4214,8 @@
     1.6,
     0.0
    ],
-   "sklearn_score": 0.9574406095972808,
-   "translate": true
+   "sklearn_score": 0.02054315456079866,
+   "translate": false
   },
   {
    "function_id": "f66",
@@ -4277,8 +4277,8 @@
     1.0,
     0.0
    ],
-   "sklearn_score": 0.36980564855097975,
-   "translate": false
+   "sklearn_score": 0.6802581977761575,
+   "translate": true
   },
   {
    "function_id": "f67",
@@ -4340,7 +4340,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.8530407123302155,
+   "sklearn_score": 0.6353753843688114,
    "translate": true
   },
   {
@@ -4403,7 +4403,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.9494497471649548,
+   "sklearn_score": 0.8758346508415102,
    "translate": true
   },
   {
@@ -4466,7 +4466,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.8697152640645842,
+   "sklearn_score": 0.9674460444191517,
    "translate": true
   },
   {
@@ -4529,7 +4529,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.9312829603364843,
+   "sklearn_score": 0.8169650352662425,
    "translate": true
   },
   {
@@ -4592,7 +4592,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.9346067071725817,
+   "sklearn_score": 0.8152419937119673,
    "translate": true
   },
   {
@@ -4655,8 +4655,8 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.1075923737797984,
-   "translate": false
+   "sklearn_score": 0.8915218137181518,
+   "translate": true
   },
   {
    "function_id": "f73",
@@ -4718,7 +4718,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.9539574551133566,
+   "sklearn_score": 0.8651293979401333,
    "translate": true
   },
   {
@@ -4781,7 +4781,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.02525955728285335,
+   "sklearn_score": 0.2339824777417997,
    "translate": false
   },
   {
@@ -4844,7 +4844,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.9511919858743774,
+   "sklearn_score": 0.863507998731135,
    "translate": true
   },
   {
@@ -4907,8 +4907,8 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.4482363596760839,
-   "translate": false
+   "sklearn_score": 0.8746450300033942,
+   "translate": true
   },
   {
    "function_id": "f77",
@@ -4970,7 +4970,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.9924580438850243,
+   "sklearn_score": 0.9987255467568975,
    "translate": true
   },
   {
@@ -5033,7 +5033,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.7843362693496223,
+   "sklearn_score": 0.698433389467727,
    "translate": true
   },
   {
@@ -5096,7 +5096,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.4433425046992225,
+   "sklearn_score": 0.5632135861672617,
    "translate": false
   },
   {
@@ -5159,8 +5159,8 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.865396915759255,
-   "translate": true
+   "sklearn_score": 0.3039130190888401,
+   "translate": false
   },
   {
    "function_id": "f81",
@@ -5222,7 +5222,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.9650826403224204,
+   "sklearn_score": 0.9428257588399729,
    "translate": true
   },
   {
@@ -5285,7 +5285,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.1262034965111518,
+   "sklearn_score": 0.2570098455745449,
    "translate": false
   },
   {
@@ -5348,8 +5348,8 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.019764152612492637,
-   "translate": false
+   "sklearn_score": 0.6152677458998138,
+   "translate": true
   },
   {
    "function_id": "f84",
@@ -5411,7 +5411,7 @@
     0.0,
     0.0
    ],
-   "sklearn_score": 0.9466558213927633,
+   "sklearn_score": 0.9769870175600034,
    "translate": true
   },
   {
@@ -5474,8 +5474,8 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.7168959161285966,
-   "translate": true
+   "sklearn_score": 0.28832876356026027,
+   "translate": false
   },
   {
    "function_id": "f86",
@@ -5537,7 +5537,7 @@
     4.666666666666667,
     0.0
    ],
-   "sklearn_score": 0.26521728570026054,
+   "sklearn_score": 0.11413800642453104,
    "translate": false
   },
   {
@@ -5600,7 +5600,7 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.9134085355012739,
+   "sklearn_score": 0.9198279524788419,
    "translate": true
   },
   {
@@ -5663,7 +5663,7 @@
     1.8,
     0.0
    ],
-   "sklearn_score": 0.0009425680624572673,
+   "sklearn_score": 0.0003261470344774166,
    "translate": false
   },
   {
@@ -5726,7 +5726,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.9591189088950939,
+   "sklearn_score": 0.9233329640493378,
    "translate": true
   },
   {
@@ -5789,7 +5789,7 @@
     4.0,
     0.0
    ],
-   "sklearn_score": 2.638061474927743e-05,
+   "sklearn_score": 9.940321696297598e-05,
    "translate": false
   },
   {
@@ -5852,7 +5852,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.005363042787500714,
+   "sklearn_score": 0.24344287530751407,
    "translate": false
   },
   {
@@ -5915,7 +5915,7 @@
     2.6,
     0.0
    ],
-   "sklearn_score": 0.005540900446662778,
+   "sklearn_score": 0.07453573074580092,
    "translate": false
   },
   {
@@ -5978,8 +5978,8 @@
     2.0,
     0.0
    ],
-   "sklearn_score": 0.9670800290351396,
-   "translate": true
+   "sklearn_score": 0.040210338457152474,
+   "translate": false
   },
   {
    "function_id": "f94",
@@ -6041,7 +6041,7 @@
     3.0,
     0.0
    ],
-   "sklearn_score": 0.0036723744010071363,
+   "sklearn_score": 0.06270739991095599,
    "translate": false
   }
  ]

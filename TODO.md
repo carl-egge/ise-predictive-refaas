@@ -104,6 +104,7 @@
 - [x] [I8] Measure the predictor's own energy in the same units as the pipeline
 - [~] [I9] Secondary objective (energy-saving potential): composed and measured; not shipped
 - [x] [I10] Service integration: `internal/predictor` + `predictGate` converter, off by default
+- [x] [I12] Retrained and re-evaluated on the replicate series — **2026-09-14**; M1 AUC 0.642 (p=0.040), M2 0.764, replicate ceiling 0.894; shipped model `model-replicates-f9e30f4b.json`
 
 ---
 
@@ -1428,6 +1429,8 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
   Hyperparameters fixed a priori as this item required, so [I7]'s non-nested outer protocol stays
   licensed (the *threshold* is still selected by an inner CV — it is a fitted quantity, not a
   hyperparameter).
+- *(Single-run results on 20260831-190900, superseded as the reported numbers by [I12]'s retraining on
+  the replicate series: M1 0.642, p = 0.040; M2 0.764.)*
 - **There is real ex-ante signal, and this is the headline of section I.** M1 logistic regression
   reaches **ROC-AUC 0.763 ± 0.030** under grouped 5×10 CV; a group-level label permutation test
   puts the null at **0.511 ± 0.088, p = 0.010** over 200 permutations. M2 random forest is
@@ -1580,6 +1583,11 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
   the *additional* energy of prediction is the inference alone — **1.6 mJ, ~10⁻⁷ of a translation**.
   Report both, as this item required; the standalone number is the conservative one and it is
   still three orders of magnitude clear.
+- **Against the replicate series (2026-09-14; 285 attempts over runs 20260904/0911/0912, mean
+  13.5 kJ, median 7.3 kJ):** standalone **3.6 × 10⁻³** of the mean attempt (6.7 × 10⁻³ of the
+  median), break-even at one avoided attempt per **277** screened; marginal **1.2 × 10⁻⁷**. The
+  predictor's own cost was not re-timed — it is the measured 48.8 J / 1.6 mJ above; only the
+  denominator changed (`predictor_energy.py` now takes one `--energy-json` per run and pools them).
 - The item expected ~10⁻⁶ for M1/M2. The standalone figure is worse than that only because the
   Python-AST extractor ([I3]'s accepted cost) dominates and is charged at GPU-node power; the
   conclusion is unchanged and now rests on a stopwatch rather than an assertion. **M3 was not run**
@@ -1710,6 +1718,10 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
   - **`internal/predictor`** reads an exported JSON model (coefficients, standardizer, threshold,
     provenance) and scores a vector. Pure stdlib — `go.mod` gains no ML dependency — and it
     imports neither `internal/pipeline` nor `internal/domain`, so it stays usable offline.
+    *(Single-run rationale, kept as history. Since [I12] the shipped file is
+    `model-replicates-f9e30f4b.json`, and on the replicate series the evidence runs the other way
+    in-corpus — the forest is the better gate — so M1 ships because the Go reader supports only
+    logistic regression, not because the forest failed.)*
     **M1 is what ships**, on [I7]'s evidence: the forest does not transfer (AUC 0.525 on
     `function_set`, 0.242 on bucket D+) and does not produce the calibrated probability [I9]
     composes with.
@@ -1796,6 +1808,55 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
   - **The caveat is real and must be stated with it**: the two artifacts ship *different fixture sets* (5 cases vs 4), and `f50` passed 4 of its 5. So the disagreement is partly attributable to a harder fixture, not purely to sampling stochasticity — the evidence is suggestive, not clean. They also cost very differently (29.4 kJ vs 11.1 kJ), i.e. `f50` burned repair budget `f59` did not.
   - `f29`/`f60` also disagree, but at similarity 0.038 (merged only by the same-repo rule), so they carry no information about stochasticity.
   - The other five groups — including `f92`/`f94` (0.978) and `f35`/`f44` (0.950) — agree internally. So **1 of the 2 genuinely near-identical pairs flipped**: too small a sample to quote a noise rate from, and exactly the reason the 20-function re-run named in [I1] is still the right follow-up. **Update 2026-09-14:** full replicates superseded that re-run. `f50`/`f59` disagree in 3 of 4 runs — (fail, pass), (pass, fail), (fail, fail), (fail, pass) for 20260831/0904/0911/0912 — and both are among the 23 functions whose outcome varies within the frozen-config trio, so the pair reads as two noisy draws rather than a stable difficulty difference.
+
+### [x] [I12] Retrain and re-evaluate the predictors on the replicate series
+- **Status: done 2026-09-14.** The thesis relies on the three frozen-configuration runs
+  (20260904-190539, 20260911-165103, 20260912-172904; config `f9e30f4b`), so its prediction results
+  must come from them too. **Everything in [I4]–[I9] that quotes run 20260831-190900 is the
+  single-run provenance of the method, not a reportable result.** Results of record: EVALUATION.md
+  "Replicate series → Prediction, retrained on this series"; `evaluation/prediction/results-replicates-f9e30f4b.{txt,json}`
+  and `…-N1e8.{txt,json}`.
+- **A protocol change, not a new method.** `evaluate.py` takes one `--dataset` per run. Each function
+  contributes one row per run with that run's label, cost and ΔE; folds are drawn over functions on
+  `group_id`, so replicates and near-duplicates never straddle a split; thresholds are chosen against
+  all runs at once; every figure is computed per run and averaged over 5 repeats × 3 runs. With one
+  dataset it reproduces the single-run implementation exactly — identical decisions and probabilities
+  to 2 × 10⁻¹⁶, checked against the committed version for every model variant, every baseline and the
+  permutation null. `export_parity.py` and `predictor_energy.py` take the same list.
+- **Datasets**: `dataset-<run-id>.csv` for the three runs and `dataset-functionset-20260913-120600.csv`,
+  built from the committed `features.csv` — a fresh `cmd/pyscan` scan is byte-identical, and every
+  feature vector recorded in the three run logs matches it value for value — and new
+  `energy-<run-id>.json` reports.
+- **Headline at N = 10⁶:** M1 AUC **0.642 ± 0.033** (permutation p = 0.040, null 0.507 ± 0.076); M2
+  **0.764**; replicate ceiling **0.894**. Net energy saved against B0 at the balanced point: M1 −11.8 Wh,
+  M2 +146.7 Wh; B3 `cc` threshold +123.9 Wh; B5 skip-AWS −203.6 Wh; oracle +341.9 Wh. Best learned
+  policy: M2 cost-weighted at the energy point, +225.3 Wh. `function_set`: M1 0.697 (its threshold
+  translates all 14), M2 0.394.
+- **At N = 10⁸** (thresholds and energy label fitted at that horizon, `results-replicates-f9e30f4b-N1e8.txt`):
+  always-translate nets +40,204 Wh against the oracle's +41,595 (3.5% headroom). Only the forest's
+  energy-point variants beat it — cost-weighted +132 Wh (+174 Wh at 10⁷), plain +28 Wh; every M1 policy
+  and B3 lose (−1,557 to −23,586 Wh). The energy target gets harder to learn as N rises (M2 AUC(tgt)
+  0.866 → 0.636, M1 0.715 → 0.586; 79 of 285 pairs worth translating at 10⁸ against 50 at 10⁶). The
+  bounded-useful-range finding of [I9] survives: selection matters around 10⁶, and above that only the
+  forest recovers the few percent that are left.
+- **What changed relative to the single run**: the family ranking reversed (forest ahead in-corpus,
+  logistic regression ahead on `function_set`); the signal is weaker (0.64 against 0.76) and only
+  marginally significant; the refitted coefficients lean on size and complexity (`halstead_vocabulary`,
+  `n_loops`, `cc_total`, `cc`) rather than on the AWS/fixture surface — consistent with the replicate
+  outcome table (A 63% vs D+ 13%; AWS split no longer significant).
+- **Shipped**: `model-replicates-f9e30f4b.json` (M1 on all 285 rows, threshold 0.579), wired into
+  `scripts/predict.json`, `.env.example`, the README and `internal/predictor/testdata` (parity
+  regenerated; `go test ./internal/predictor/...` passes). **Open decision:** in-corpus the forest is the
+  better gate, but `internal/predictor` reads only logistic regressions; shipping M2 needs a tree reader
+  and its own parity test.
+- **The gate window settles it more sharply than AUC does.** Applied through out-of-fold decisions, the
+  M2 gate beats both baselines in every run (2.2–2.7 × 10⁵ up to 1.7–4.6 × 10⁶ invocations; portfolio
+  break-even 2.2–2.7 × 10⁵, close to the oracle's 1.6–2.3 × 10⁵). The M1 gate has a window only in two
+  runs (8.4–9.9 × 10⁵, 6.8–9.9 × 10⁵) and none in 20260912-172904. The case for a tree reader is
+  therefore an energy case, not only an accuracy one.
+- Figures: `evaluation/figures/*-replicates-f9e30f4b.*`. The gate in
+  `amortisation-spread-replicates-f9e30f4b` uses M1's out-of-fold decisions (majority over the repeats),
+  never the full fit.
 
 ### Threats to validity (write these into the thesis, not just here)
 

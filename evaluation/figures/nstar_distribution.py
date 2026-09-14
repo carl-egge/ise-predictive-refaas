@@ -1,0 +1,502 @@
+#!/usr/bin/env python3
+"""Break-even per function across the replicate series.
+
+    N*_i,k = E_translation,i,k / (E_python,i,k - E_go,i,k)
+
+is measured once in every run k in which function i was a validated translation,
+so the replicate series gives up to three values per function. Two questions only
+a figure across runs can answer:
+
+  (a) How stable is one function's break-even? Each row is a function, each marker
+      one run. A function whose markers sit within a small factor of each other has
+      a break-even that belongs to the function; one whose markers span decades, or
+      that repays in one run and never in another, has a break-even that belongs to
+      what the model happened to write that time.
+  (b) How stable is the distribution? One box per run, plus one for the per-function
+      medians. The run-level median of this corpus moves by almost an order of
+      magnitude between runs of one configuration, which is why a single median N*
+      should never be quoted without its spread.
+
+With at most three values per function a box would be a fiction, so (a) draws the
+values themselves with their range and median; (b), with around thirty values per
+run, draws real boxes. Quartiles are taken in log10 space, the space the axis is
+drawn in; whiskers are the extremes rather than 1.5 IQR, because there is no outlier
+rule worth defending at this sample size.
+
+A validated translation that is not faster than Python never repays. It is drawn as
+a cross in the censored column at the right of (a) and counted beside its box in
+(b), rather than dropped - dropping it is what makes a median look optimistic.
+
+Stdlib only. Emits TikZ/pgfplots, an SVG preview, and a caption.
+
+    python3 evaluation/figures/nstar_distribution.py
+"""
+
+import argparse
+import math
+import os
+
+import replicates as rep
+from plotkit import Panel, esc, wrap
+
+HERE = os.path.join(rep.REPO, "evaluation", "figures")
+
+AWS_COLOR = "#1f4fd8"
+NON_COLOR = "#e8890c"
+NEVER_COLOR = "#8f8f8f"
+
+# One marker shape per run, in run order; offsets keep three markers on one row
+# from sitting on top of each other.
+TIKZ_MARKS = ["*", "square*", "triangle*", "diamond*", "pentagon*"]
+SVG_MARKS = ["circle", "square", "triangle", "diamond", "pentagon"]
+OFFSETS = {1: [0.0], 2: [-0.17, 0.17], 3: [-0.24, 0.0, 0.24]}
+
+XMIN, XMAX = 4, 9
+CENSORED_AT = 9.55
+XLIM = (XMIN - 0.15, 9.95)
+
+
+# ---------------------------------------------------------------- data ------
+
+def build(runs):
+    per_run, aws = [], {}
+    for run in runs:
+        jobs = rep.load_jobs(run)
+        per_run.append(rep.nstar(jobs, rep.load_costs(run), rep.load_runtime(run)))
+        for f, j in jobs.items():
+            aws[f] = j["aws"]
+    functions = sorted({f for ns in per_run for f in ns}, key=rep.function_order)
+    rows = []
+    for f in functions:
+        vals = [ns.get(f) for ns in per_run]  # None: not a validated, measured translation
+        present = [v for v in vals if v is not None]
+        rows.append({
+            "f": f,
+            "aws": aws[f],
+            "vals": vals,
+            "median": rep.log_median(present),
+            "finite": [v for v in present if not math.isinf(v)],
+            "never_runs": sum(1 for v in present if math.isinf(v)),
+        })
+    shown = sorted((r for r in rows if r["finite"]),
+                   key=lambda r: (r["median"], rep.function_order(r["f"])))
+    never = [r for r in rows if not r["finite"]]
+    return per_run, shown, never
+
+
+def box(values):
+    finite = [v for v in values if not math.isinf(v)]
+    if not finite:
+        return None
+    return {
+        "n": len(finite),
+        "never": len(values) - len(finite),
+        "min": min(finite),
+        "q1": rep.log_quantile(finite, 0.25),
+        "median": rep.log_quantile(finite, 0.5),
+        "q3": rep.log_quantile(finite, 0.75),
+        "max": max(finite),
+        "values": sorted(finite),
+    }
+
+
+def boxes(runs, per_run, shown, never):
+    out = [(r.id, box(list(ns.values()))) for r, ns in zip(runs, per_run)]
+    if len(runs) > 1:
+        meds = [r["median"] for r in shown] + [r["median"] for r in never]
+        out.append(("per-function median", box(meds)))
+    return [(label, b) for label, b in out if b]
+
+
+def stability(shown):
+    """How far one function's break-even moves between the runs that repay it."""
+    multi = [r for r in shown if len(r["finite"]) >= 2]
+    factors = sorted(max(r["finite"]) / min(r["finite"]) for r in multi)
+    mixed = [r for r in shown if r["never_runs"]]
+    return {
+        "multi": len(multi),
+        "factor_median": rep.median(factors) if factors else float("nan"),
+        "within_10x": sum(1 for x in factors if x <= 10),
+        "mixed": len(mixed),
+    }
+
+
+# ---------------------------------------------------------------- tikz ------
+
+TIKZ_HEAD = r"""% Break-even invocations per function - @DESC@.
+% Generated by evaluation/figures/nstar_distribution.py - do not edit by hand.
+%
+% Requires, in the document preamble:
+%   \usepackage{pgfplots}
+%   \pgfplotsset{compat=1.18}
+%   \usepgfplotslibrary{groupplots}
+%
+% Then: \input{figures/@STEM@.tex}
+\begin{tikzpicture}
+\definecolor{awsblue}{HTML}{@AWS@}
+\definecolor{nonawsorange}{HTML}{@NON@}
+\definecolor{nevergrey}{HTML}{@NEVER@}
+\pgfplotsset{
+  nstaraxis/.style={
+    width=\linewidth,
+    xmode=log, log basis x=10,
+    xmin=@XLO@, xmax=@XHI@,
+    xtick={@XTICKS@},
+    xmajorgrids, grid style={draw=black!10},
+    tick align=outside, tick pos=left,
+    y dir=reverse,
+    legend cell align=left,
+    legend style={draw=black!25, font=\footnotesize, fill=white,
+                  fill opacity=0.92, text opacity=1},
+  },
+}
+\begin{groupplot}[group style={group size=1 by 2, vertical sep=1.6cm}]
+"""
+
+TIKZ_TAIL = r"""\end{groupplot}
+\end{tikzpicture}
+"""
+
+
+def pt(x, y):
+    return "(axis cs:%.6g,%.4g)" % (x, y)
+
+
+def write_tikz(path, stem, runs, shown, never, bx):
+    K = len(runs)
+    offs = OFFSETS.get(K, [0.0] * K)
+    cens = 10 ** CENSORED_AT
+    head = (TIKZ_HEAD.replace("@DESC@", rep.describe(runs)).replace("@STEM@", stem)
+            .replace("@AWS@", AWS_COLOR[1:]).replace("@NON@", NON_COLOR[1:])
+            .replace("@NEVER@", NEVER_COLOR[1:])
+            .replace("@XLO@", "%g" % 10 ** XLIM[0]).replace("@XHI@", "%g" % 10 ** XLIM[1])
+            .replace("@XTICKS@", ",".join("1e%d" % k for k in range(XMIN, XMAX + 1))))
+    out = [head]
+
+    # -- panel (a) ----------------------------------------------------------
+    n = len(shown)
+    lines, ticks = [], []
+    marks = {(k, a): [] for k in range(K) for a in (True, False)}
+    crosses = []
+    for i, r in enumerate(shown):
+        y = i + 1
+        color = "awsblue" if r["aws"] else "nonawsorange"
+        lo = min(r["finite"])
+        hi = cens if r["never_runs"] else max(r["finite"])
+        if hi > lo:
+            lines.append(r"\draw[%s!65, line width=0.8pt] %s -- %s;" % (color, pt(lo, y), pt(hi, y)))
+        med = cens if math.isinf(r["median"]) else r["median"]
+        ticks.append(r"\draw[black, line width=1.1pt] %s -- %s;"
+                     % (pt(med, y - 0.36), pt(med, y + 0.36)))
+        for k, v in enumerate(r["vals"]):
+            if v is None:
+                continue
+            if math.isinf(v):
+                crosses.append((cens, y + offs[k]))
+            else:
+                marks[(k, r["aws"])].append((v, y + offs[k]))
+
+    body = [r"\draw[black!35, densely dotted] %s -- %s;" % (pt(10 ** (XMAX + 0.3), 0.3),
+                                                           pt(10 ** (XMAX + 0.3), n + 0.7))]
+    body += lines + ticks
+    # Data plots never enter the legend (forget plot): it is built below from
+    # neutral images, one per run shape, then the two colours and the censoring.
+    for k in range(K):
+        for a in (True, False):
+            pts = marks[(k, a)]
+            if not pts:
+                continue
+            body.append(r"\addplot[only marks, mark=%s, mark size=1.5pt, %s, "
+                        r"mark options={draw=black!60, line width=0.3pt}, forget plot] "
+                        r"coordinates {%s};"
+                        % (TIKZ_MARKS[k], "awsblue" if a else "nonawsorange",
+                           " ".join("(%.6g,%.4g)" % p for p in pts)))
+    legend = []
+    for k, run in enumerate(runs):
+        legend.append(r"\addlegendimage{only marks, mark=%s, mark size=1.7pt, black!55}"
+                      r"\addlegendentry{run \texttt{%s}}" % (TIKZ_MARKS[k], run.id))
+    legend.append(r"\addlegendimage{awsblue, line width=1.2pt}\addlegendentry{cloud function}")
+    legend.append(r"\addlegendimage{nonawsorange, line width=1.2pt}"
+                  r"\addlegendentry{non-cloud function}")
+    legend.append(r"\addlegendimage{only marks, mark=x, mark size=2pt, nevergrey}"
+                  r"\addlegendentry{validated, never repays}")
+    if crosses:
+        body.append(r"\addplot[only marks, mark=x, mark size=2pt, nevergrey, forget plot] "
+                    r"coordinates {%s};" % " ".join("(%.6g,%.4g)" % p for p in crosses))
+
+    height_a = max(9.0, 0.34 * n + 2.4)
+    out.append(r"""% (a) one row per function that repays in at least one run; one marker per run,
+% the bar spans the runs, the black tick is the median. Cheapest at the top.
+\nextgroupplot[nstaraxis, height=@HA@cm,
+  title={(a) Break-even per function, one marker per run},
+  xlabel={Invocations until net energy saving},
+  ymin=0.3, ymax=@YMAX@,
+  ytick={@YT@}, yticklabels={@YL@},
+  y tick label style={font=\tiny},
+  legend pos=south west,
+  legend style={font=\scriptsize},
+]
+@LEGEND@
+@BODY@
+"""
+               .replace("@HA@", "%.1f" % height_a)
+               .replace("@YMAX@", "%.1f" % (n + 0.7))
+               .replace("@YT@", ",".join(str(i + 1) for i in range(n)))
+               .replace("@YL@", ",".join(r["f"] for r in shown))
+               .replace("@LEGEND@", "\n".join(legend))
+               .replace("@BODY@", "\n".join(body)))
+
+    # -- panel (b) ----------------------------------------------------------
+    body = []
+    xnote = 10 ** (XMAX + 0.08)
+    for i, (label, b) in enumerate(bx):
+        y = i + 1
+        body.append(r"\fill[black!8] %s rectangle %s;" % (pt(b["q1"], y - 0.3), pt(b["q3"], y + 0.3)))
+        body.append(r"\draw[black!70] %s rectangle %s;" % (pt(b["q1"], y - 0.3), pt(b["q3"], y + 0.3)))
+        body.append(r"\draw[black, line width=1.3pt] %s -- %s;" % (pt(b["median"], y - 0.3), pt(b["median"], y + 0.3)))
+        body.append(r"\draw[black!70] %s -- %s;" % (pt(b["min"], y), pt(b["q1"], y)))
+        body.append(r"\draw[black!70] %s -- %s;" % (pt(b["q3"], y), pt(b["max"], y)))
+        for v in (b["min"], b["max"]):
+            body.append(r"\draw[black!70] %s -- %s;" % (pt(v, y - 0.15), pt(v, y + 0.15)))
+        jitter = [(-0.12, 0.0, 0.12)[j % 3] for j in range(len(b["values"]))]
+        body.append(r"\addplot[only marks, mark=*, mark size=0.8pt, black!45, forget plot] "
+                    r"coordinates {%s};"
+                    % " ".join("(%.6g,%.4g)" % (v, y + jitter[j]) for j, v in enumerate(b["values"])))
+        body.append(r"\node[anchor=west, font=\scriptsize, text=black!70] at %s "
+                    r"{$n=%d$, never %d};" % (pt(xnote, y), b["n"], b["never"]))
+
+    out.append(r"""
+% (b) repaying translations per run, and the per-function medians. Boxes are
+% quartiles in log10 space, whiskers the extremes; every value is drawn.
+\nextgroupplot[nstaraxis, height=@HB@cm,
+  title={(b) Distribution of break-even, per run},
+  xlabel={Invocations until net energy saving},
+  ymin=0.4, ymax=@YMAX@,
+  ytick={@YT@}, yticklabels={@YL@},
+  y tick label style={font=\scriptsize},
+]
+@BODY@
+"""
+               .replace("@HB@", "%.1f" % (1.3 * len(bx) + 1.8))
+               .replace("@YMAX@", "%.1f" % (len(bx) + 0.6))
+               .replace("@YT@", ",".join(str(i + 1) for i in range(len(bx))))
+               .replace("@YL@", ",".join(r"\texttt{%s}" % l if l[0].isdigit() else l
+                                         for l, _ in bx))
+               .replace("@BODY@", "\n".join(body)))
+    out.append(TIKZ_TAIL)
+    with open(path, "w") as fh:
+        fh.write("".join(out))
+
+
+CAPTION = r"""% Suggested caption - the numbers are generated, so edit the prose only.
+\caption{Break-even invocations per function across @DESC@. (a) Each row is one of the
+  @NSHOWN@ functions that repay in at least one run in which they were validated; markers
+  give its break-even in each run (@SHAPES@), a cross at the right a run in which its
+  validated translation is not faster than Python, and a missing marker a run in which it
+  was not validated. Bars span the runs, black ticks mark the median.@STAB@ A further
+  @NNEVER@ functions are validated but never repay in any run. (b) The repaying
+  translations of each run@PERFN@; boxes are quartiles on the logarithmic scale, whiskers
+  the extremes, and the counts give the repaying and the never-repaying translations. The
+  medians are @MEDS@.}
+"""
+
+
+def write_caption(path, runs, shown, never, bx):
+    s = stability(shown)
+    shapes = ", ".join(r"%s \texttt{%s}" % (name, run.id)
+                       for name, run in zip(["circle", "square", "triangle", "diamond",
+                                             "pentagon"], runs))
+    stab = ""
+    if len(runs) > 1 and s["multi"]:
+        within = ("all within a factor of ten" if s["within_10x"] == s["multi"]
+                  else "within a factor of ten for %d" % s["within_10x"])
+        stab = (" For the %d functions that repay in at least two runs, the highest and "
+                "lowest value differ by a median factor of %.1f (%s); %d functions repay in "
+                "one run and never in another."
+                % (s["multi"], s["factor_median"], within, s["mixed"]))
+    meds = ["%s %s" % (r"\texttt{%s}" % l if l[0].isdigit() else l, rep.tex_sci(b["median"]))
+            for l, b in bx]
+    text = (CAPTION
+            .replace("@DESC@", rep.describe(runs, tex=True))
+            .replace("@NSHOWN@", str(len(shown)))
+            .replace("@SHAPES@", shapes)
+            .replace("@STAB@", stab)
+            .replace("@NNEVER@", str(len(never)))
+            .replace("@PERFN@", " and, last, the per-function medians" if len(runs) > 1 else "")
+            .replace("@MEDS@", "; ".join(meds)))
+    with open(path, "w") as fh:
+        fh.write(text)
+
+
+# ----------------------------------------------------------------- svg ------
+
+def svg_mark(kind, x, y, fill, size=3.4):
+    if kind == "circle":
+        return '<circle cx="%.2f" cy="%.2f" r="%.2f" fill="%s" stroke="#555" stroke-width="0.4"/>' % (x, y, size, fill)
+    if kind == "square":
+        return ('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s" stroke="#555" '
+                'stroke-width="0.4"/>' % (x - size, y - size, 2 * size, 2 * size, fill))
+    if kind == "triangle":
+        return ('<path d="M %.2f %.2f L %.2f %.2f L %.2f %.2f Z" fill="%s" stroke="#555" '
+                'stroke-width="0.4"/>' % (x, y - size * 1.2, x - size * 1.1, y + size * 0.8,
+                                          x + size * 1.1, y + size * 0.8, fill))
+    return ('<path d="M %.2f %.2f L %.2f %.2f L %.2f %.2f L %.2f %.2f Z" fill="%s" '
+            'stroke="#555" stroke-width="0.4"/>' % (x, y - size * 1.3, x + size, y, x,
+                                                    y + size * 1.3, x - size, y, fill))
+
+
+def svg_cross(x, y, color, s=3.2):
+    return ('<path d="M %.2f %.2f L %.2f %.2f M %.2f %.2f L %.2f %.2f" stroke="%s" '
+            'stroke-width="1.5"/>' % (x - s, y - s, x + s, y + s, x - s, y + s, x + s, y - s,
+                                      color))
+
+
+def write_svg(path, runs, shown, never, bx):
+    K = len(runs)
+    offs = OFFSETS.get(K, [0.0] * K)
+    n = len(shown)
+    row_h = 15
+    ha = n * row_h + 20
+    hb = len(bx) * 46 + 20
+    W = 980
+    H = 60 + ha + 110 + hb + 150
+    svg = ['<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" '
+           'viewBox="0 0 %d %d" font-family="DejaVu Sans, Helvetica, Arial, sans-serif">'
+           % (W, H, W, H),
+           '<rect width="%d" height="%d" fill="#ffffff"/>' % (W, H)]
+    ticks = list(range(XMIN, XMAX + 1))
+
+    # panel (a): y grows downward in SVG, so row i sits at data y = n - i
+    p1 = Panel(110, 52, 790, ha, XLIM, (0.3, n + 0.7))
+    p1.frame("(a) Break-even per function, one marker per run",
+             "Invocations until net energy saving", "", ticks, [], xfmt=lambda k: "10^%d" % k)
+    p1.vline(XMAX + 0.3, "#bbbbbb", dash="2 3")
+    for i, r in enumerate(shown):
+        yv = n - i
+        color = AWS_COLOR if r["aws"] else NON_COLOR
+        yy = p1.py(yv)
+        p1.out.append('<text x="%.2f" y="%.2f" font-size="9" fill="#333" text-anchor="end" '
+                      'dominant-baseline="middle">%s</text>' % (p1.x - 6, yy, esc(r["f"])))
+        lo = math.log10(min(r["finite"]))
+        hi = CENSORED_AT if r["never_runs"] else math.log10(max(r["finite"]))
+        if hi > lo:
+            p1.out.append('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" '
+                          'stroke-opacity="0.65" stroke-width="1.6"/>'
+                          % (p1.px(lo), yy, p1.px(hi), yy, color))
+        med = CENSORED_AT if math.isinf(r["median"]) else math.log10(r["median"])
+        p1.out.append('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="#000" '
+                      'stroke-width="2"/>' % (p1.px(med), yy - 6, p1.px(med), yy + 6))
+        for k, v in enumerate(r["vals"]):
+            if v is None:
+                continue
+            y_k = yy - offs[k] * row_h
+            if math.isinf(v):
+                p1.out.append(svg_cross(p1.px(CENSORED_AT), y_k, NEVER_COLOR))
+            else:
+                p1.out.append(svg_mark(SVG_MARKS[k], p1.px(math.log10(v)), y_k, color))
+    lx, ly = p1.x + 12, p1.y + p1.h - 20 - 16 * (K + 3)
+    p1.out.append('<rect x="%.2f" y="%.2f" width="250" height="%d" fill="#fff" '
+                  'fill-opacity="0.92" stroke="#ccc"/>' % (lx - 6, ly - 12, 16 * (K + 3) + 10))
+    for k, run in enumerate(runs):
+        p1.out.append(svg_mark(SVG_MARKS[k], lx + 4, ly + k * 16, "#999"))
+        p1.out.append('<text x="%.2f" y="%.2f" font-size="10.5" dominant-baseline="middle">'
+                      'run %s</text>' % (lx + 16, ly + k * 16, run.id))
+    for j, (label, color) in enumerate([("cloud function", AWS_COLOR),
+                                        ("non-cloud function", NON_COLOR)]):
+        yy = ly + (K + j) * 16
+        p1.out.append('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" '
+                      'stroke-width="2.5"/>' % (lx - 2, yy, lx + 10, yy, color))
+        p1.out.append('<text x="%.2f" y="%.2f" font-size="10.5" dominant-baseline="middle">'
+                      '%s</text>' % (lx + 16, yy, label))
+    yy = ly + (K + 2) * 16
+    p1.out.append(svg_cross(lx + 4, yy, NEVER_COLOR))
+    p1.out.append('<text x="%.2f" y="%.2f" font-size="10.5" dominant-baseline="middle">'
+                  'validated, never repays</text>' % (lx + 16, yy))
+    svg += p1.out
+
+    top_b = 52 + ha + 110
+    p2 = Panel(190, top_b, 710, hb, XLIM, (0.4, len(bx) + 0.6))
+    p2.frame("(b) Distribution of break-even, per run",
+             "Invocations until net energy saving", "", ticks, [], xfmt=lambda k: "10^%d" % k)
+    for i, (label, b) in enumerate(bx):
+        yy = p2.py(len(bx) - i)
+        L = math.log10
+        p2.out.append('<text x="%.2f" y="%.2f" font-size="10.5" fill="#333" text-anchor="end" '
+                      'dominant-baseline="middle">%s</text>' % (p2.x - 8, yy, esc(label)))
+        p2.out.append('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="#555"/>'
+                      % (p2.px(L(b["min"])), yy, p2.px(L(b["max"])), yy))
+        for v in (b["min"], b["max"]):
+            p2.out.append('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="#555"/>'
+                          % (p2.px(L(v)), yy - 6, p2.px(L(v)), yy + 6))
+        p2.out.append('<rect x="%.2f" y="%.2f" width="%.2f" height="24" fill="#eee" '
+                      'stroke="#555"/>' % (p2.px(L(b["q1"])), yy - 12,
+                                           p2.px(L(b["q3"])) - p2.px(L(b["q1"]))))
+        p2.out.append('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="#000" '
+                      'stroke-width="2.5"/>' % (p2.px(L(b["median"])), yy - 12,
+                                                p2.px(L(b["median"])), yy + 12))
+        for j, v in enumerate(b["values"]):
+            p2.out.append('<circle cx="%.2f" cy="%.2f" r="1.8" fill="#777" fill-opacity="0.7"/>'
+                          % (p2.px(L(v)), yy + (-5, 0, 5)[j % 3]))
+        p2.out.append('<text x="%.2f" y="%.2f" font-size="10" fill="#555" '
+                      'dominant-baseline="middle">n = %d, never %d</text>'
+                      % (p2.px(XMAX + 0.08), yy, b["n"], b["never"]))
+    svg += p2.out
+
+    s = stability(shown)
+    caption = ("%s. (a) %d functions that repay in at least one run; markers per run, bar = "
+               "range, tick = median; crosses = validated but not faster than Python. %s"
+               "%d further functions never repay in any run. (b) Boxes are log-scale quartiles, "
+               "whiskers the extremes. Medians: %s."
+               % (rep.describe(runs)[0].upper() + rep.describe(runs)[1:], len(shown),
+                  ("For %d functions repaying in >= 2 runs the max/min ratio has median %.1f; "
+                   "%d repay in one run and never in another. "
+                   % (s["multi"], s["factor_median"], s["mixed"])) if len(runs) > 1 else "",
+                  len(never), "; ".join("%s %s" % (l, rep.plain_sci(b["median"]))
+                                        for l, b in bx)))
+    for i, line in enumerate(wrap(caption, 128)):
+        svg.append('<text x="80" y="%d" font-size="11" fill="#444">%s</text>'
+                   % (H - 74 + i * 15, esc(line)))
+    svg.append("</svg>")
+    with open(path, "w") as fh:
+        fh.write("\n".join(svg) + "\n")
+
+
+# ---------------------------------------------------------------- build -----
+
+def main():
+    ap = argparse.ArgumentParser()
+    rep.add_runs_argument(ap)
+    args = ap.parse_args()
+    runs = rep.select(args.runs)
+    stem = rep.stem("nstar-distribution", runs)
+
+    per_run, shown, never = build(runs)
+    bx = boxes(runs, per_run, shown, never)
+    os.makedirs(HERE, exist_ok=True)
+    write_tikz(os.path.join(HERE, stem + ".tex"), stem, runs, shown, never, bx)
+    write_svg(os.path.join(HERE, stem + ".svg"), runs, shown, never, bx)
+    write_caption(os.path.join(HERE, stem + "-caption.tex"), runs, shown, never, bx)
+
+    s = stability(shown)
+    print("wrote %s.{tex,svg,-caption.tex}" % os.path.join(HERE, stem))
+    print("  runs: %s" % ", ".join(r.id for r in runs))
+    print("  functions repaying in >=1 run: %d; validated but never repaying: %d"
+          % (len(shown), len(never)))
+    print("  repaying in >=2 runs: %d; median max/min factor %.2f; within 10x: %d; "
+          "repay in one run and never in another: %d"
+          % (s["multi"], s["factor_median"], s["within_10x"], s["mixed"]))
+    print("  %-22s %4s %6s %11s %11s %11s %11s %11s"
+          % ("box", "n", "never", "min", "q1", "median", "q3", "max"))
+    for label, b in bx:
+        print("  %-22s %4d %6d %11.4g %11.4g %11.4g %11.4g %11.4g"
+              % (label, b["n"], b["never"], b["min"], b["q1"], b["median"], b["q3"], b["max"]))
+    for r in shown:
+        print("  %-5s %-5s %s  median %s" % (
+            r["f"], "aws" if r["aws"] else "-",
+            "  ".join("%10s" % ("--" if v is None else "never" if math.isinf(v) else "%.3g" % v)
+                      for v in r["vals"]),
+            "never" if math.isinf(r["median"]) else "%.3g" % r["median"]))
+
+
+if __name__ == "__main__":
+    main()

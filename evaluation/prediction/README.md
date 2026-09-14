@@ -6,142 +6,167 @@ here re-runs one.**
 
 ## Why this can be answered without another translation run
 
-Run `20260831-190900` translated all 95 `evaluation_set` functions once. For every function
-the repo therefore already holds three measured quantities:
+The replicate series — runs `20260904-190539`, `20260911-165103` and `20260912-172904` —
+translated all 95 `evaluation_set` functions three times on one frozen configuration
+(`scripts/benchmark.json` sha `f9e30f4b`, pipeline code identical apart from a comment). For every
+(function *i*, run *k*) the repo therefore already holds three measured quantities:
 
 | symbol | meaning | source |
 |:---|:---|:---|
-| `y_i`  | did the translation pass all its tests | `runs/run-20260831-170746.jsonl` |
-| `E_i`  | facility joules that attempt actually cost — **failures included** | `go run ./cmd/energy -json` |
-| `ΔE_i` | per-invocation joules the Go version saves over Python | `evaluation/runtime-20260831-190900.json` ([H6], RAPL, bare metal) |
+| `y_ki`  | did that translation pass all its tests | `runs/run-<ts>.jsonl` |
+| `E_ki`  | facility joules that attempt actually cost — **failures included** | `go run ./cmd/energy -json` → `energy-<run-id>.json` |
+| `ΔE_ki` | per-invocation joules the Go version saves over Python | `evaluation/runtime-<run-id>.json` ([H6], RAPL, bare metal) |
 
-`ΔE_i` exists only for translations that **passed their fixtures**. `cmd/runtime` used to
-measure any Go package it found, and `scripts/run-benchmark.sh` archives the package of a
-failed job too, so the runtime files once carried rows for translations that compute the wrong
-answer (24 of 66 in the 20260831 file). They were rebuilt with `cmd/runtime -runlog` on
-2026-09-06. Nothing in this directory's published results moves: `benefit` is weighted by
-`y_i`, so a `ΔE` on a failed function was multiplied by zero. Rebuild the dataset anyway if you
-regenerate it, so the CSV's `runtime_measured` column means what it says.
+`ΔE` exists only for translations that **passed their fixtures**: the runtime files are built with
+`cmd/runtime -runlog`, because `scripts/run-benchmark.sh` archives the package of a failed job too,
+and timing a translation that computes the wrong answer measures how fast the wrong answer is
+produced.
 
-A prediction gate is then a decision vector `d ∈ {translate, skip}^95` and its effect is a
-sum over already-measured numbers:
+A prediction gate is then a decision vector `d ∈ {translate, skip}^95` — the features are
+deterministic, so one decision per function serves every run — and its effect in run *k* is a sum
+over already-measured numbers:
 
 ```
-spend(d)      = Σ dᵢ · Eᵢ
-benefit(d, N) = Σ dᵢ · yᵢ · N · ΔEᵢ
-net(d, N)     = benefit(d, N) − spend(d)
+spend_k(d)      = Σ dᵢ · E_ki
+benefit_k(d, N) = Σ dᵢ · y_ki · N · ΔE_ki
+net_k(d, N)     = benefit_k(d, N) − spend_k(d)
 ```
 
-Skipping a function removes its measured cost and, if it would have succeeded, forfeits its
-measured benefit. No simulation, no re-translation. The one quantity this replay cannot
-supply is the predictor's own cost, which `predictor_energy.py` measures directly.
+Skipping a function removes its measured cost and, if it would have succeeded in that run, forfeits
+its measured benefit. No simulation, no re-translation. Every reported figure is computed per run
+and averaged over the runs and the CV repeats. The one quantity this replay cannot supply is the
+predictor's own cost, which `predictor_energy.py` measures directly.
+
+**Why three runs rather than one.** A quarter of the corpus (23 of 95 functions) changes outcome
+between runs of one configuration; the runs agree pairwise on 82–85% of labels (Fleiss κ 0.68). A
+model trained on one run learns that run's draw. `evaluate.py` therefore takes one `--dataset` per
+run and trains on every (function, run) row: a function that passed twice and failed once is seen
+as exactly that.
+
+The earlier single-run analysis on `20260831-190900` — a *different* pipeline version (`cleaner` →
+`coder`, before [C8a]/[C11a]/[C13]/[C14]/[C15]) — is kept as provenance: `dataset-20260831-190900.csv`,
+`results-20260831-190900.*` and `model-20260831-190900.json`. With a single `--dataset`,
+`evaluate.py` reproduces those results exactly (checked against the committed single-run
+implementation: identical decisions and probabilities to 2 × 10⁻¹⁶).
 
 ## Reproducing
 
 ```sh
 pip install -r evaluation/prediction/requirements.txt
+P=evaluation/prediction
 
-# 1. ex-ante features + the [I11] near-duplicate group_id
-go run ./cmd/pyscan evaluation/evaluation_set/*.zip > evaluation/prediction/features.csv \
-    2> evaluation/prediction/features.stderr.txt
+# 1. ex-ante features + the [I11] near-duplicate group_id. Deterministic: the vector every
+#    replicate run log recorded is identical to this table, value for value.
+go run ./cmd/pyscan evaluation/evaluation_set/*.zip > $P/features.csv 2> $P/features.stderr.txt
 
-# 2. measured per-function translation energy (successes and failures)
-go run ./cmd/energy -json -runtime evaluation/runtime-20260831-190900.json \
-    runs/run-20260831-170746.jsonl > evaluation/prediction/energy-20260831-190900.json
+# 2. measured per-attempt translation energy, one report per run (successes and failures)
+go run ./cmd/energy -json -runtime evaluation/runtime-20260904-190539.json \
+    runs/run-20260904-170428.jsonl > $P/energy-20260904-190539.json
+go run ./cmd/energy -json -runtime evaluation/runtime-20260911-165103.json \
+    runs/run-20260911-144954.jsonl > $P/energy-20260911-165103.json
+go run ./cmd/energy -json -runtime evaluation/runtime-20260912-172904.json \
+    runs/run-20260912-152820.jsonl > $P/energy-20260912-172904.json
 
-# 3. the one table every method consumes  [I4]
-python3 evaluation/prediction/build_dataset.py \
-    --features evaluation/prediction/features.csv \
-    --run-log runs/run-20260831-170746.jsonl \
-    --energy  evaluation/prediction/energy-20260831-190900.json \
-    --runtime evaluation/runtime-20260831-190900.json \
-    --run-id  20260831-190900
+# 3. one table per run  [I4]
+python3 $P/build_dataset.py --features $P/features.csv --run-id 20260904-190539 \
+    --run-log runs/run-20260904-170428.jsonl --energy $P/energy-20260904-190539.json \
+    --runtime evaluation/runtime-20260904-190539.json
+python3 $P/build_dataset.py --features $P/features.csv --run-id 20260911-165103 \
+    --run-log runs/run-20260911-144954.jsonl --energy $P/energy-20260911-165103.json \
+    --runtime evaluation/runtime-20260911-165103.json
+python3 $P/build_dataset.py --features $P/features.csv --run-id 20260912-172904 \
+    --run-log runs/run-20260912-152820.jsonl --energy $P/energy-20260912-172904.json \
+    --runtime evaluation/runtime-20260912-172904.json
 
-# 3b. the same table for the external corroboration corpus
+# 3b. the external corroboration corpus, run on the same frozen configuration
 go run ./cmd/pyscan evaluation/function_set/*.zip \
-    > evaluation/prediction/features-functionset.csv \
-    2> evaluation/prediction/features-functionset.stderr.txt
-go run ./cmd/energy -json -runtime evaluation/runtime-functionset.json \
-    runs/run-20260831-084331.jsonl \
-    > evaluation/prediction/energy-functionset-20260831.json
-python3 evaluation/prediction/build_dataset.py \
-    --features evaluation/prediction/features-functionset.csv \
-    --run-log runs/run-20260831-084331.jsonl \
-    --energy  evaluation/prediction/energy-functionset-20260831.json \
-    --runtime evaluation/runtime-functionset.json \
-    --run-id  functionset-20260831
+    > $P/features-functionset.csv 2> $P/features-functionset.stderr.txt
+go run ./cmd/energy -json -runtime evaluation/runtime-functionset-20260913-120600.json \
+    runs/run-20260913-100522.jsonl > $P/energy-functionset-20260913-120600.json
+python3 $P/build_dataset.py --features $P/features-functionset.csv \
+    --run-id functionset-20260913-120600 --run-log runs/run-20260913-100522.jsonl \
+    --energy $P/energy-functionset-20260913-120600.json \
+    --runtime evaluation/runtime-functionset-20260913-120600.json
 
 # 3c. confirm the two corpora share no near-duplicate group before using 3b as "external"
 go run ./cmd/pyscan evaluation/evaluation_set/*.zip evaluation/function_set/*.zip \
     2>/dev/null | cut -d, -f1,5   # no group_id may contain both an f* and a pf*
 
-# 4. baselines, models, energy sweep, breakdowns, cost-sensitive variants
-#    [I5]/[I6]/[I7]/[I9] -- ~20 min, dominated by the random forests
-python3 evaluation/prediction/evaluate.py \
-    --dataset evaluation/prediction/dataset-20260831-190900.csv \
-    --horizon 1e6 --permutations 200 --breakdown \
-    --external evaluation/prediction/dataset-functionset-20260831.csv \
-    --json-out evaluation/prediction/results-20260831-190900.json \
-    | tee evaluation/prediction/results-20260831-190900.txt
+# 4. baselines, models, energy sweep, breakdowns, cost-sensitive variants, model export
+#    [I5]/[I6]/[I7]/[I9]/[I10] -- about an hour, dominated by the random forests
+D="--dataset $P/dataset-20260904-190539.csv --dataset $P/dataset-20260911-165103.csv \
+   --dataset $P/dataset-20260912-172904.csv"
+python3 $P/evaluate.py $D --horizon 1e6 --permutations 200 --breakdown \
+    --external $P/dataset-functionset-20260913-120600.csv \
+    --json-out $P/results-replicates-f9e30f4b.json \
+    --export-model $P/model-replicates-f9e30f4b.json \
+    > $P/results-replicates-f9e30f4b.txt
 
 # 4a. the second horizon, for the bounded-useful-range finding in [I9]
-python3 evaluation/prediction/evaluate.py \
-    --dataset evaluation/prediction/dataset-20260831-190900.csv --horizon 1e8
+python3 $P/evaluate.py $D --horizon 1e8 --json-out $P/results-replicates-f9e30f4b-N1e8.json \
+    > $P/results-replicates-f9e30f4b-N1e8.txt
 
-# 4b. export the shipped model for internal/predictor  [I10]
-python3 evaluation/prediction/evaluate.py \
-    --dataset evaluation/prediction/dataset-20260831-190900.csv \
-    --horizon 1e6 \
-    --export-model evaluation/prediction/model-20260831-190900.json
-
-# 4c. refresh the Go-side parity fixture whenever the model is re-exported
-cp evaluation/prediction/model-20260831-190900.json internal/predictor/testdata/model.json
-python3 evaluation/prediction/export_parity.py \
-    --dataset evaluation/prediction/dataset-20260831-190900.csv \
-    --model   evaluation/prediction/model-20260831-190900.json
+# 4b. refresh the Go-side parity fixture whenever the model is re-exported
+cp $P/model-replicates-f9e30f4b.json internal/predictor/testdata/model.json
+python3 $P/export_parity.py $D --model $P/model-replicates-f9e30f4b.json
 go test ./internal/predictor/...   # asserts the Go reader matches scikit-learn to 1e-9
 
 # 5. the predictor's own energy, in energy.config.json's units  [I8]
 go build -o /tmp/pyscan ./cmd/pyscan
-python3 evaluation/prediction/predictor_energy.py --pyscan-bin /tmp/pyscan \
+python3 $P/predictor_energy.py --pyscan-bin /tmp/pyscan \
     --artifacts 'evaluation/evaluation_set/*.zip' \
-    --energy-json evaluation/prediction/energy-20260831-190900.json
+    --energy-json $P/energy-20260904-190539.json --energy-json $P/energy-20260911-165103.json \
+    --energy-json $P/energy-20260912-172904.json
+
+# 6. the figures (evaluation/figures, stdlib only; --runs defaults to the replicate series)
+python3 evaluation/figures/pipeline_funnel.py
+python3 evaluation/figures/savings_histogram.py
+python3 evaluation/figures/nstar_distribution.py
+python3 evaluation/figures/amortisation_spread.py   # reads step 4's out-of-fold gate decisions
 ```
 
 Steps 1, 2 and 5 need the Go toolchain and a `python3` on PATH for the embedded scanner;
-steps 3 and 4 need only the two Python packages.
+steps 3, 4 and 6 need only Python (scikit-learn for 4).
 
 ## Protocol notes that are load-bearing
 
-- **Grouping is mandatory.** Splits use `StratifiedGroupKFold` on `group_id`, not
-  `function_id` and not `repo_uri` — [I11] measured 16 functions in 7 near-duplicate groups,
-  four of which cross repository boundaries. Effective N is **86, not 95**.
+- **Grouping is mandatory, and it is over functions.** Splits use `StratifiedGroupKFold` on
+  `group_id`, not `function_id` and not `repo_uri` — [I11] measured 16 functions in 7 near-duplicate
+  groups, four of which cross repository boundaries. Effective N is **86, not 95**. Folds are drawn
+  over functions and every replicate row of a function follows it, so no function — and no
+  near-duplicate of it — is ever on both sides of a split.
+- **Replicates are stacked, not averaged.** Each function contributes one training row per run with
+  that run's label; folds are stratified on whether a function passed in at least half the runs. A
+  model sees label noise as it is instead of a majority vote that hides it. Reported AUC is the mean
+  of the per-run AUCs; `evaluate.py` also prints the AUC against the majority label and the
+  **replicate ceiling** — the AUC of predicting each run's labels from the mean of the other runs,
+  roughly the best any per-function score can do (0.88–0.91 on this series).
 - **Every fitted quantity lives inside the training fold**, including the decision threshold,
-  which is chosen by an inner 5-fold CV on the training fold only. Choosing an operating
-  point on the test fold is the standard way a study like this invalidates itself quietly.
+  which is chosen by an inner 5-fold CV on the training fold only, against every run's outcomes at
+  once. Choosing an operating point on the test fold is the standard way a study like this
+  invalidates itself quietly.
 - **Two operating points are reported** because they optimise different things: `balanced`
-  maximises balanced accuracy against the label the model was trained on, and `energy` maximises
-  net joules at the stated horizon (always against the real outcomes and measured energies,
-  whatever the model was trained on). They differ a lot.
+  maximises balanced accuracy against the label the model was trained on, and `energy` maximises net
+  joules at the stated horizon (always against the real outcomes and measured energies, whatever the
+  model was trained on). They differ a lot.
 - **Three training targets are reported per model** ([I9]). The plain rows train on
-  `all_tests_passed`; `[cost-weighted]` keeps that label but weights each example by the regret
-  of getting it wrong, `|v_i|` where `v_i = y_i·N·ΔE_i − E_i`; `[energy-target]` relabels to
-  `z_i = 1{v_i > 0}` — the decision that would have been right — and weights the same way. Every
-  term of `v` is measured for every row, so no value is imputed.
+  `all_tests_passed`; `[cost-weighted]` keeps that label but weights each example by the regret of
+  getting it wrong, `|v_ki|` where `v_ki = y_ki·N·ΔE_ki − E_ki`; `[energy-target]` relabels to
+  `z_ki = 1{v_ki > 0}` — the decision that would have been right in that run — and weights the same
+  way. Every term of `v` is measured for every row, so no value is imputed.
 - **Read AUC(tgt), not AUC(y), for the energy-target rows.** They were trained to predict
   worthwhileness, so scoring them against success measures a question they were told to ignore.
   The table prints both, with that warning inline.
 - **`--horizon N` is a reported parameter, not a tuned one.** It defines the `[energy-target]`
-  label and both energy operating points, so results travel as a curve over `N`. Reporting one
-  horizon hides the range finding: below ~10⁵ nothing repays, above ~10⁷–10⁸ everything does, and
-  a gate only earns its keep in between.
+  label and both energy operating points, so results travel as a curve over `N`.
+- **Out-of-fold decisions are what the figures use.** `--json-out` records, per function, the mean
+  held-out probability and how often its held-out decision was "translate" over the repeats.
+  `evaluation/figures/amortisation_spread.py` draws the gate from those; a gate evaluated on the runs
+  it was fitted on may use nothing else.
 - **`function_set` is corroboration, never the headline.** n = 14, its expectations were never
-  executed against the Python originals, and its run used a slightly different
-  `scripts/benchmark.json` (repair-stage `temperature`/`top_p`) from a dirty tree. It is a
-  cross-corpus *and* cross-configuration test.
-- **Labels are single-run** ([I1]). Their stability has since been measured on three
-  frozen-configuration replicates (2026-09-04/11/12): 82–85% pairwise agreement, Fleiss κ 0.68.
-  Those runs used a later configuration than the one these labels come from, so they bound the
-  noise rather than re-label this table. `f50`/`f59` are structurally identical source with
-  opposite labels here, and disagree in 3 of 4 runs overall — see [I11]'s closure note for the
-  caveat that their fixture sets also differ.
+  executed against the Python originals, and it contains no AWS function. Its run
+  (`functionset-20260913-120600`) used the same frozen configuration from a clean tree, so it is a
+  cross-corpus test only, no longer a cross-configuration one.
+- **`f50`/`f59` are structurally identical source** and disagree in 3 of the 4 runs recorded so far,
+  so the ceiling on any deterministic ex-ante predictor is demonstrably below 100% — see [I11]'s
+  closure note for the caveat that their fixture sets also differ.
