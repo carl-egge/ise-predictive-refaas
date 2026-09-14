@@ -139,6 +139,9 @@ steps 3 and 4 need only the two Python packages.
   executed against the Python originals, and its run used a slightly different
   `scripts/benchmark.json` (repair-stage `temperature`/`top_p`) from a dirty tree. It is a
   cross-corpus *and* cross-configuration test.
-- **Labels are single-run and their stability is unmeasured** ([I1]). `f50`/`f59` are
-  structurally identical source with opposite labels, so the ceiling is demonstrably below
-  100% — see [I11]'s closure note for the caveat that their fixture sets also differ.
+- **Labels are single-run** ([I1]). Their stability has since been measured on three
+  frozen-configuration replicates (2026-09-04/11/12): 82–85% pairwise agreement, Fleiss κ 0.68.
+  Those runs used a later configuration than the one these labels come from, so they bound the
+  noise rather than re-label this table. `f50`/`f59` are structurally identical source with
+  opposite labels here, and disagree in 3 of 4 runs overall — see [I11]'s closure note for the
+  caveat that their fixture sets also differ.

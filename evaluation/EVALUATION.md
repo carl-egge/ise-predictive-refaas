@@ -11,6 +11,11 @@ so those three stay assumed and are swept instead. See
 [The GWDG reply](#the-gwdg-reply-2026-08-22) and
 [Open Questions](#open-questions).
 
+**Results of record (2026-09-14):** three `evaluation_set` runs on one frozen configuration
+plus one `function_set` run on it — see
+[Replicate series](#replicate-series-results-of-record-2026-09-14). Single-run figures elsewhere
+in this document are one column of those tables.
+
 ---
 
 ## 1. Goal
@@ -55,10 +60,11 @@ method (absolute accuracy) into a demonstrated non-issue.
 Verified against the implementation (2026-07-05). These constrain how the
 energy model is applied:
 
-- A translation is a **task graph**, not a fixed call sequence: the canonical
-  evaluation pipeline (`default.json`) runs `cleaner` → `coder` →
-  `goBuilder` ⇄ `gollmRecovery` (fixer) → `goTester` ⇄ `testRecovery`
-  (realign) → `testRecoveryBuild`. Retries and recovery hops mean the number
+- A translation is a **task graph**, not a fixed call sequence: the evaluation
+  configuration (`scripts/benchmark.json`, sha `f9e30f4b` since 2026-09-04) runs
+  `pyScan` → `summary` (optional) → `coder2` → `goBuilder` ⇄ `gollmRecovery` (fixer) →
+  `testRouter` ⇄ `testRecovery` (realign) → `testRecoveryBuild`; run `20260831-190900`
+  and earlier opened with `cleaner` → `coder` instead. Retries and recovery hops mean the number
   of LLM calls per function is **variable and outcome-dependent** — which is
   exactly why per-stage attribution matters more than a per-call average.
 - Every stage's LLM parameters (`model_name`, `temperature`, …) can be
@@ -66,8 +72,8 @@ energy model is applied:
   coefficients are per-model; see [H3] in `TODO.md`.
 - The pipeline also performs **local compute** — `go mod init/tidy`,
   `go build`, one `./fn` execution per fixture per test round, optionally
-  Floci containers — which the LLM-only energy model does not currently
-  capture. See [Local compute](#local-compute-non-llm-pipeline-energy).
+  Floci containers — which is RAPL-measured per job and per stage since
+  2026-09-04. See [Local compute](#local-compute-non-llm-pipeline-energy--measured-since-2026-09-04).
 - Non-LLM energy aside, translation cost is dominated by retries: the same
   stage can execute up to `maxRetryCount` times, and each execution is a full
   prompt round trip.
@@ -382,11 +388,10 @@ scaling a representative round:
   host energy as `NOT COUNTED` rather than invent it — the same rule §6’s
   meters enforce.
 
-**Gross and marginal are reported side by side**, because they differ by far
-more than the choice between them looks like it should. About **92% of a job’s
+**Gross and marginal are reported side by side.** About **90% of a job’s
 wall clock is spent waiting on the remote LLM API**, with the pipeline host
 close to idle — measured over run 20260831-190900: 24,101 s of 26,134 s inside
-LLM stages, against 2,033 s of actual local compute. So:
+LLM stages (92%), and 89%, 94% and 91% on the three replicate runs. So:
 
 - **gross** = every joule the host drew while the conversion occupied it;
 - **marginal** = gross − `idle_watts × duration`, the part the conversion
@@ -398,11 +403,16 @@ document already adopts for the inference side; the gross figure is the honest
 answer to “what did this machine burn while producing that translation”. The
 report prints both, and the write-up must state which it quotes.
 
-For scale, run 20260831-190900 re-costed with the fallback at a nominal
-25 W / 11 W idle: mean `E_translation` moves from **11.5 kJ to 16.1 kJ** per
-completed translation. The host term is neither negligible nor dominant —
-which is precisely why it had to be measured rather than argued about. → [H5],
-closed.
+**What the measurement found.** Before metering, run 20260831-190900 was re-costed
+with the fallback at a nominal 25 W / 11 W idle, which moved mean `E_translation`
+from 11.5 kJ to 16.1 kJ per completed translation (+40%). The measured runs do not
+bear that out: the host package idles at **0.37–0.40 W** and averages **0.9–1.2 W**
+over a run, so the host term is **1.4–2.4% of run spend** (20–27 kJ gross per
+95-function run) and gross is only **1.5–1.7×** marginal. The nominal wattage
+overstated the host by roughly twentyfold; the term is small but not zero, and it
+had to be measured to know that. Caveat: RAPL package counters cover the processor
+package, not memory, storage or peripherals, so the figure is a lower bound on what
+the machine drew. → [H5], closed.
 
 ---
 
@@ -478,8 +488,11 @@ completed only 11 translations), `runtime-20260831-190900.json` 66 → 42, `runt
 (20260904-190539) 59 → 46, `runtime-functionset.json` 14 → 10. **Break-even `N*` is unaffected**
 — `cmd/energy` joins runtime measurements against the run's *completed* translations, so the
 extra rows were never costed — but every descriptive Go-vs-Python ratio computed straight from
-these files was. On 20260904-190539 the steady-state median moves from 1.7× (all 59) to 1.4×
-(the 46 validated); cold start is unchanged at ≈46× either way.
+these files was. On 20260904-190539 the median steady-state *energy* ratio moves from 1.66× (all
+59) to 1.28× (the 46 validated), and the *wall-time* ratio from 1.84× to 1.39×; the cold-start
+energy ratio is essentially unchanged (46.6× → 46.3×). Say which ratio is quoted — an earlier
+revision of this paragraph paired the energy figure before the filter with the time figure after
+it.
 
 #### How far a translation gets, by complexity bucket (2026-09-06)
 
@@ -499,17 +512,20 @@ all four buckets.
 | D+ (cc > 20) | 20 | 45% | 20% | 15% |
 | **all** | 95 | **79%** | **63%** | **49%** |
 
-Two things the middle column buys. First, **A/B/C lose more functions to
-behavioural divergence than to anything else** — B goes 96 → 72 → 56, so a fifth
-of the bucket compiles and runs but answers differently, and another fifth runs
-and mismatches. That is a different engineering problem from code that does not
-run, and a bare pass/fail rate cannot separate them. Second, **D+ is the only
-bucket that fails before it runs**: 55% never compile at all, and of the 45% that
-do, more than half then fail to execute. Complexity is not degrading the
-*translation quality* here so much as preventing a translation from existing —
-which is the shape a pre-translation gate could act on, and the reason the D+
-regression from run `20260831-190900` (7/20 → 3/20 completed) matters more than
-its three functions suggest.
+Two things the middle column buys. First, **A/B/C lose more functions after
+compiling than before** — B goes 96 → 72 → 56, so a quarter of the bucket compiles
+but does not execute cleanly (an execution error, timeout or setup failure), and a
+further sixth executes and returns the wrong answer. That is a different engineering
+problem from code that does not compile, and a bare pass/fail rate cannot separate
+them. Second, **D+ is the only bucket that mostly fails before it runs**: 55% never
+compile at all, and of the 45% that do, more than half then fail to execute.
+Complexity is not degrading the *translation quality* here so much as preventing a
+translation from existing — which is the shape a pre-translation gate could act on,
+and the reason the D+ regression from run `20260831-190900` (7/20 → 3/20 completed)
+matters more than a four-function drop suggests. Both statements are re-checked
+against the replicates in [Replicate series](#replicate-series-results-of-record-2026-09-14):
+B and C hold in all three runs, A is at parity in one, and D+ fails to compile for
+14/20 and 8/20 on the other two.
 
 The [A19] caveat applies: `Metrics.TestOutcomes` describes the last validation
 round, so "validated" is a property of the final artifact, not a claim that no
@@ -537,7 +553,8 @@ non-AWS function in this corpus does not save energy** — its savings are a coi
 flip around zero, and 13 of the 23 are negative. Every joule of the corpus-level
 win comes from the AWS functions, where the Go SDK replaces boto3's import and
 client-construction cost. That is also why the corpus median steady-state ratio is
-only 1.28×: half the corpus has nothing to win.
+only 1.28×: half the corpus has nothing to win. The split replicates on both further runs of
+the same configuration — see [Replicate series](#replicate-series-results-of-record-2026-09-14).
 
 Two things about the comparison to the paper. Its x-axis is labelled per
 invocation, but a mean of 201 J per single invocation cannot be reconciled with its
@@ -621,6 +638,12 @@ are not):**
 | Go speedup, steady state | **1.9×** | 1.0× | 4.3× |
 | Go speedup, cold start | **15.0×** | 3.9× | 21.0× |
 
+> **Superseded by measurement — do not quote the table above.** On RAPL, over validated
+> translations only, the paper set gives **1.05× steady-state / 19.0× cold-start energy** (run
+> `functionset-20260913-120600`, 11 of 14 translated; 0.96× / 26.3× by wall time) and
+> `evaluation_set` gives **1.28× / 46×** (run `20260904-190539`). The qualitative finding below
+> survives and strengthens: cold start is 18–36× the steady-state advantage, not 8×.
+
 The gap between the two rows is the finding: this section predicted cold start would be where Go's
 advantage is largest, and on this set it is roughly **eight times larger** than the steady-state
 advantage. For short serverless invocations, which is what this corpus is, the cold-start column is
@@ -681,11 +704,205 @@ translate-all**, since both translate every function that succeeds and therefore
 31; their entire difference is in attempts not paid for, visible only in the portfolio marker.
 Perfect screening buys avoided waste, not additional successes.
 
+The portfolio markers also bound the gate. On this run it beats translate-all only below
+8.7 × 10⁵ invocations and is net-positive only above 1.1 × 10⁶, so there is no invocation count
+at which it beats both baselines — and the replicates do not rescue it (see
+[Replicate series](#replicate-series-results-of-record-2026-09-14)).
+
 Two things the write-up must state. The gate curve uses the model fitted on the **previous** run
 (`model-20260831-190900.json`) scored against this one, which is the honest transfer setting.
 And this corpus sits at 10⁴ to 10⁹ invocations where theirs sits at 10² to 10⁵: explainable rather
 than contradictory, since they used 27B to 32B models against this pipeline's 123B, and their
 per-invocation savings were larger.
+
+---
+
+## Replicate series: results of record (2026-09-14)
+
+**These are the numbers the Evaluation chapter should quote.** Three full `evaluation_set` runs on
+one frozen configuration, plus one `function_set` run on the same configuration, recomputed from
+the run logs, `cmd/energy` on the current `energy.config.json`, and the validated-only runtime
+reports. The single-run figures earlier in this document (run `20260904-190539`) are one column
+of these tables, and the figures in `evaluation/figures/` are drawn for that run only.
+
+| run id | run log | commit | wall clock | completed |
+|:---|:---|:---|--:|--:|
+| `20260904-190539` | `run-20260904-170428.jsonl` | `8a9cf24` | 5.5 h | 47 / 95 |
+| `20260911-165103` | `run-20260911-144954.jsonl` | `437f687` | 8.5 h | 43 / 95 |
+| `20260912-172904` | `run-20260912-152820.jsonl` | `f67cd1c` | 6.0 h | 46 / 95 |
+| `functionset-20260913-120600` | `run-20260913-100522.jsonl` | `eb48c31` | 0.1 h | 11 / 14 |
+
+All four use `scripts/benchmark.json` sha `f9e30f4b` on the same host with Floci enabled,
+`REQUIRE_META` and a 2 s LLM interval, and **the pipeline code is identical across them** — the
+only change between the commits is a comment in `internal/floci/deployer.go`. (The `20260911`
+manifest counts one of its 52 failures as a client-side error; the run log records all 52 as
+failed jobs.) Run `20260831-190900` (config `e82fbaf9`: `cleaner` → `coder`, before [C8a], [C11a],
+[C13], [C14], [C15]) is a different pipeline version. It stays the prediction model's training
+run and is not pooled with these.
+
+### Outcomes and label stability
+
+| | 0904 | 0911 | 0912 | mean |
+|:---|--:|--:|--:|--:|
+| completed (= every fixture passed) | 47 | 43 | 46 | 45.3 ± 2.1 (47.7%) |
+| bucket A (n = 25) | 16 | 16 | 15 | 62.7% |
+| bucket B (n = 25) | 14 | 15 | 13 | 56.0% |
+| bucket C (n = 25) | 14 | 12 | 13 | 52.0% |
+| bucket D+ (n = 20) | 3 | 0 | 5 | 13.3% |
+| AWS (n = 58) | 24 | 25 | 24 | 42.0% |
+| non-AWS (n = 37) | 23 | 18 | 22 | 56.8% |
+| `goTester` route (n = 55) | 33 | 27 | 32 | 55.8% |
+| Floci route (n = 40) | 14 | 16 | 14 | 36.7% |
+| Fisher, A vs D+ | p = 0.002 | p < 0.001 | p = 0.034 | |
+| Fisher, AWS vs non-AWS | p = 0.06 | p = 0.67 | p = 0.10 | |
+
+- **Stability is measured, no longer assumed.** Pairwise agreement is 85.3% / 84.2% / 82.1%
+  (Cohen κ 0.71 / 0.68 / 0.64), Fleiss κ **0.68**. 34 functions always pass, 38 never do, and
+  **23 vary** (12 pass once, 11 twice); 57 pass at least once. Predicting one run's labels from
+  the mean of the other two reaches AUC 0.91 / 0.89 / 0.88, which is roughly the ceiling for any
+  per-function score. Across the configuration change agreement is lower: `20260831-190900`
+  against the three runs 75.8% / 69.5% / 72.6% (κ 0.52 / 0.38 / 0.45).
+- **A single run is ±2 functions.** A single-run difference of that order is not evidence,
+  including the +5 between `20260831-190900` and `20260904-190539`.
+- **The signal structure differs from the `20260831-190900` reading.** Per-function success
+  probability over the three runs is 0.63 for bucket A against 0.13 for D+ (Mann–Whitney
+  p = 0.0002), but 0.42 for AWS against 0.57 for non-AWS (p = 0.13). On `20260831-190900` it was
+  the reverse: A vs D+ p = 0.37, AWS 27.6% vs 70.3% (p = 5.5 × 10⁻⁵). That reading belongs to
+  that pipeline version — most plausibly the Floci endpoint defect fixed in [C11a], which depressed
+  AWS functions there — and must not be reported as a property of the corpus.
+
+### How far a translation gets
+
+| bucket | buildable (0904 / 0911 / 0912) | validated | tested | lost: no build / exec fail / mismatch |
+|:---|:---|:---|:---|:---|
+| A | 84 / 84 / 80% | 72 / 72 / 76% | 64 / 64 / 60% | 4/3/2 · 4/3/2 · 5/1/4 |
+| B | 96 / 96 / 96% | 72 / 84 / 72% | 56 / 60 / 52% | 1/6/4 · 1/3/6 · 1/6/5 |
+| C | 84 / 84 / 80% | 80 / 68 / 76% | 56 / 48 / 52% | 4/1/6 · 4/4/5 · 5/1/6 |
+| D+ | 45 / 30 / 60% | 20 / 20 / 35% | 15 / 0 / 25% | 11/5/1 · 14/2/4 · 8/5/2 |
+| **all** | **79 / 76 / 80%** | **63 / 63 / 66%** | **49 / 45 / 48%** | |
+
+Final-round fixtures passing: 235/313, 224/303, 240/321. B and C lose more functions after
+compiling than before in every run; A does in two runs and is at parity (5 vs 5) in the third.
+D+ is the only bucket where compilation is the dominant loss, and it is a majority of the
+bucket in two of three runs (55%, 70%, 40%).
+
+### Translation energy
+
+| | 0904 | 0911 | 0912 |
+|:---|--:|--:|--:|
+| total spend (facility, incl. measured host) | 357.9 Wh | 321.4 Wh | 389.4 Wh |
+| share spent on failed attempts | 75.5% | 81.8% | 75.9% |
+| cost per success, failures amortised | 7.62 Wh | 7.47 Wh | 8.47 Wh |
+| per completed translation, mean / median | 1.86 / 1.11 Wh | 1.36 / 0.94 Wh | 2.04 / 1.08 Wh |
+| repair share of inference, completed translations only | 47.0% | 37.0% | 49.1% |
+| repair share of inference, **all attempts** | 65.9% | 65.3% | 68.3% |
+| `summary` stage share, all attempts | 5.1% | 5.7% | 4.7% |
+| host energy (RAPL, gross) as share of spend | 1.9% | 2.4% | 1.4% |
+| gross / marginal host energy | 1.49 | 1.70 | 1.66 |
+| wall clock inside LLM stages | 89.3% | 94.2% | 90.7% |
+| tokens, prompt / output | 1.69 M / 0.84 M | 1.54 M / 0.74 M | 1.83 M / 0.92 M |
+
+Mean total spend is 356 ± 34 Wh (1.28 MJ). **The repair share `cmd/energy` prints is of completed
+translations only**; over every attempt the two repair stages take two thirds of inference energy,
+because failed jobs are the ones that exhaust the repair budget. Say which one is quoted.
+
+### Go vs. Python at runtime (RAPL, validated translations only)
+
+| | 0904 | 0911 | 0912 | 0912 without early exits |
+|:---|--:|--:|--:|--:|
+| validated translations measured | 46 of 47 | 40 of 43 | 45 of 46 | 41 |
+| steady-state energy ratio, median | 1.28× | 1.31× | 1.81× | 1.25× |
+| … AWS functions | 2.93× | 2.62× | 3.77× | 3.14× |
+| … non-AWS functions | 0.99× | 0.78× | 0.88× | |
+| cold-start energy ratio, median | 46.3× | 45.5× | 46.9× | |
+| Go faster at steady state | 31 / 46 | 29 / 40 | 29 / 45 | |
+| saving per 1,000 invocations, AWS: median (positive) | 21.7 J (21/23) | 28.0 J (21/22) | 57.6 J (21/23) | 36.4 J |
+| saving per 1,000 invocations, non-AWS: median (positive) | −0.001 J (10/23) | −0.035 J (8/18) | −0.018 J (8/22) | |
+| Mann–Whitney, AWS vs non-AWS savings | 1.2 × 10⁻⁵ | 6.8 × 10⁻⁶ | 1.2 × 10⁻⁵ | |
+
+- Not measured: f72 in 0904 and 0911 (Go side raised on an unset `AWS_LAMBDA_FUNCTION_NAME`),
+  f25 and f29 in 0911 and f25 in 0912 (`TIMEOUT`).
+- **The AWS asymmetry replicates in every run**, and so does the cold-start figure. 33 functions
+  are validated in all three runs; their per-invocation saving has the same sign in 26 and a
+  Spearman correlation of 0.80–0.92 between runs.
+- **Early-exit translations.** In 0912, f20, f30, f56 and f72 measure below 1 mJ per Go
+  invocation against more than 10 mJ for Python; no function does so in the other two runs. No
+  fixture sets an environment variable, so f30's suite (every case expects the error response for
+  an unset `DESTINATION_BUCKET`) is measured on that error branch. The 0912 translation checks the
+  variable before building its S3 client (0.19 mJ); the 0904/0911 translations attempt the call
+  first (18 mJ). Observable behaviour is identical. This inflates speedup ratios far more than
+  savings, since the Python side dominates the difference.
+
+### Break-even
+
+| | 0904 | 0911 | 0912 | 0912 without early exits |
+|:---|--:|--:|--:|--:|
+| repay / never repay | 31 / 15 | 29 / 11 | 29 / 16 | 25 / 16 |
+| `N*` range | 1.44 × 10⁴ – 6.65 × 10⁸ | 1.48 × 10⁴ – 4.34 × 10⁸ | 1.51 × 10⁴ – 1.74 × 10⁸ | |
+| span | 4.7 decades | 4.5 decades | 4.1 decades | |
+| `N*` median (repaying functions) | 1.02 × 10⁶ | 4.46 × 10⁵ | 1.28 × 10⁵ | 3.97 × 10⁵ |
+| repay within 10⁵ / 10⁶ / 10⁷ | 7 / 15 / 19 | 9 / 17 / 19 | 13 / 18 / 20 | |
+| rank of the first non-AWS function | 16 | 17 | 19 | |
+
+The cheapest functions are the same in every run — f76 (1.4–1.5 × 10⁴), f77 (1.6–3.2 × 10⁴),
+f45 (2.6–3.9 × 10⁴), f30 (3.3–3.5 × 10⁴) — while the median moves by almost an order of magnitude.
+**Quote the distribution, not the median.**
+
+| policy: translated / succeeded / amortise, portfolio `N*` | 0904 | 0911 | 0912 |
+|:---|:---|:---|:---|
+| translate all | 95 / 47 / 31, 9.3 × 10⁵ | 95 / 43 / 29, 8.6 × 10⁵ | 95 / 46 / 29, 7.9 × 10⁵ |
+| skip AWS functions | 37 / 23 / 10, 2.0 × 10⁸ | 37 / 18 / 8, 1.9 × 10⁸ | 37 / 22 / 8, 1.2 × 10⁸ |
+| prediction gate (M1 fitted on `20260831-190900`) | 45 / 34 / 20, 1.1 × 10⁶ | 45 / 29 / 19, 7.0 × 10⁵ | 45 / 32 / 17, 9.1 × 10⁵ |
+| oracle | 47 / 47 / 31, 2.3 × 10⁵ | 43 / 43 / 29, 1.6 × 10⁵ | 46 / 46 / 29, 1.9 × 10⁵ |
+
+**The gate has no robust useful range.** It beats translate-all only below 8.7 × 10⁵ /
+9.4 × 10⁵ / 7.4 × 10⁵ invocations and is net-positive only above 1.1 × 10⁶ / 7.0 × 10⁵ /
+9.1 × 10⁵. The window in which it beats both baselines is empty in 0904, 7.0–9.4 × 10⁵ in 0911,
+and empty in 0912 (with or without the early exits: 7.9 × 10⁵ against 1.3 × 10⁶). Both ends scale
+with the same energy constants, so the window's existence does not depend on §8's assumptions.
+Skipping AWS functions is two orders of magnitude worse than translating everything in every run.
+
+### The shipped predictor on the replicates
+
+`model-20260831-190900.json` (M1, threshold 0.465) translates the same 45 functions in every run,
+since the features are deterministic.
+
+| | 0904 | 0911 | 0912 |
+|:---|--:|--:|--:|
+| AUC | 0.78 | 0.70 | 0.74 |
+| accuracy | 0.75 | 0.68 | 0.72 |
+| TP / FP / FN / TN | 34 / 11 / 13 / 37 | 29 / 16 / 14 / 36 | 32 / 13 / 14 / 36 |
+| AUC of the training run's own labels used as the score | 0.76 | 0.69 | 0.73 |
+| replicate ceiling (mean of the other two runs) | 0.91 | 0.89 | 0.88 |
+
+Against a later pipeline version the model is only 0.01–0.02 AUC better than simply reusing the
+labels it was trained on, and well below what the runs themselves permit. On 0904, 19 of its 24
+errors are functions whose label flipped since the training run; 10 of its 13 false negatives
+failed there and pass here (9 of those use AWS; 12 of all 13 false negatives do). That is [I10]'s
+"a gate learns a pipeline version", now measured three times.
+
+### `function_set` on the frozen configuration
+
+`functionset-20260913-120600`: **11 of 14** (78.6%). pf8, pf10 and pf14 fail, all on output
+mismatch, and every function builds. TODO.md open question 1 records pf10 and pf14 as fixtures no
+correct translation can satisfy (a live API body, `datetime.now()` timestamps under tolerant
+matching) and pf8 as a genuine divergence. The earlier run on the old configuration (dirty tree) scored 10 of 14, and only pf11
+changed. Energy 10.30 Wh in total, 49.8% on failures, 0.94 Wh per success. Runtime over the 11
+validated translations: **1.05× steady-state, 19.0× cold-start energy**, 6 of 11 faster at steady
+state; `N*` computed for 6 (median 3.3 × 10⁷, range 2.9 × 10⁴ – 2.4 × 10⁸), 5 never repay. M1
+scores AUC 0.85 and translates 13 of 14, keeping all 11 successes. Report it separately from
+`evaluation_set`: its expectations were never executed against the originals, and it contains no
+AWS function.
+
+### Reproducing
+
+```sh
+go run ./cmd/energy -runtime evaluation/runtime-<run-id>.json runs/run-<log>.jsonl   # add -json / -sweep
+```
+
+Everything else is computed from the run logs and the validated-only runtime reports, using the
+definitions of `evaluation/figures/pipeline_funnel.py` (buildable / validated / tested) and
+`evaluation/figures/amortisation_spread.py` (policies, portfolio break-even).
 
 ---
 
@@ -726,21 +943,24 @@ coefficients are assumptions, the tokens are facts.
 
 | Parameter varied | Range | Effect on E per translation | Status after the reply |
 |---|---|---|---|
-| Concurrency `B` | 8 → 128 | ×2.6 → ×0.6 (10 Wh → 3 Wh) | **assumed; declined by GWDG — permanent** |
+| Concurrency `B` | 8 → 128 | ×2.8 → ×0.55 | **assumed; declined by GWDG — permanent** |
 | Node power `P_node` | 1400 → 2550 W | ×0.82 → ×1.50 | **assumed; unanswered** |
-| Prefill peak | 989 → 1979 TFLOP/s | ×1.45 → ×1.00 | W8A16 vs W8A8 ambiguity inside the FP8 answer |
-| Precision | FP8 → BF16 | ×1.00 → ×1.55 | **settled: FP8** — kept as a counterfactual |
-| MFU | 0.30 → 0.50 | ×1.15 → ×0.91 | assumed |
+| Prefill peak | 989 → 1979 TFLOP/s | ×1.40 → ×1.00 | W8A16 vs W8A8 ambiguity inside the FP8 answer |
+| Precision | FP8 → BF16 | ×1.00 → ×1.60 | **settled: FP8** — kept as a counterfactual |
+| MFU | 0.30 → 0.50 | ×1.13 → ×0.92 | assumed |
 | PUE | 1.03 → 1.2 | ×0.98 → ×1.14 | assumed; unanswered |
 
-The multipliers above are from the `run-20260807-132133` archive; they shift
-slightly with the prompt/output token mix of a given run, since `B` and
-precision act on the decode term while MFU and the prefill peak act on
-prefill. Regenerate the table from the batch actually reported.
+Regenerated 2026-09-14 with `go run ./cmd/energy -sweep` over the three replicate runs
+(`20260904-190539`, `20260911-165103`, `20260912-172904`). The multipliers agree to two decimals
+across them except `B` = 8 (×2.81 / ×2.75 / ×2.81), the prefill peak (×1.40 / ×1.42 / ×1.40) and
+precision (×1.60 / ×1.58 / ×1.60); central mean facility energy per completed translation is
+1.84 / 1.33 / 2.02 Wh. They shift slightly with a run's prompt/output token mix, since `B` and
+precision act on the decode term while MFU and the prefill peak act on prefill. The earlier
+`run-20260807-132133` archive gave ×2.6 → ×0.6, ×1.45, ×1.55 and ×1.15 → ×0.91.
 
 Two rows changed character with the reply. **Precision** is no longer an
 unknown — it is a resolved constant, and its row now shows what the
-confirmation was worth (a 1.55× overestimate avoided). **Concurrency** is no
+confirmation was worth (a 1.6× overestimate avoided). **Concurrency** is no
 longer pending — GWDG holds the data and may not share it, so no future
 correspondence will collapse this row, and the sweep is the reported result
 rather than a stand-in for one.
@@ -819,9 +1039,10 @@ Write this section. Items to cover:
   every stage, and `E_translation = E_inference × PUE + E_host`. Two caveats
   remain. The host figure is a whole-machine package counter, so it includes
   whatever else that machine was doing — the run host has to be otherwise
-  quiet. And ~92% of a job's wall clock is spent waiting on the LLM API, so
-  gross and marginal host energy differ by roughly 4×; both are reported, and a
-  quoted figure must say which it is (see
+  quiet. And ~90% of a job's wall clock is spent waiting on the LLM API, so
+  gross host energy is 1.5–1.7× the marginal figure on the measured runs; both are
+  reported, and a quoted figure must say which it is. RAPL package counters also
+  exclude memory, storage and peripherals, so the host term is a lower bound (see
   [Local compute](#local-compute-non-llm-pipeline-energy--measured-since-2026-09-04)).
 - Single model, single provider, single hardware generation. If any run mixes
   models across stages, per-stage coefficients must be applied — a run-level
@@ -837,6 +1058,16 @@ Write this section. Items to cover:
   test exercises, so a wrong translation of `requests.post(...)` passes the
   benchmark — do not claim HTTP-integration fidelity (EVALUATION_DATASET.md
   gotcha 5).
+- **No fixture sets an environment variable** (0 of 392) although 15 of 95 functions
+  read one, so some suites exercise only an error branch — all three f30 fixtures,
+  including `happy-path-copy-and-delete`, expect the error response the original
+  returns when `DESTINATION_BUCKET` is unset. `cmd/runtime` measures the same branch,
+  so a translation that fails fast on the missing variable looks far cheaper than one
+  that attempts the call, with identical observable output (f30: 0.19 mJ against
+  18 mJ Go steady-state per invocation in runs `20260912-172904` and
+  `20260904-190539`). Per-function speedups therefore partly measure how a
+  translation handles missing configuration; see
+  [Replicate series](#replicate-series-results-of-record-2026-09-14).
 - 27 tests across 14 functions use `outputMode: "shape"` (types only, no
   values), so they cannot catch a value regression; exclude or mark them when
   claiming value-level equivalence.

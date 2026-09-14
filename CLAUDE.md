@@ -60,9 +60,10 @@ cmd/energy/            analysis tool: run logs -> energy per translation/stage/f
                        run log carries a counter reading, ESTIMATED from
                        host.fallback_power_watts otherwise, and NOT COUNTED when
                        neither exists - never silently zero. Gross and marginal (net
-                       of the measured idle baseline) are both reported: ~92% of a
-                       job's wall clock is spent waiting on the LLM API, so they
-                       differ by ~4x and a quoted figure must say which it is.
+                       of the measured idle baseline) are both reported: ~90% of a
+                       job's wall clock is spent waiting on the LLM API, and on the
+                       measured runs gross is ~1.5-1.7x marginal (idle ~0.4 W vs
+                       ~1 W average); a quoted figure must say which it is.
 cmd/runtime/           analysis tool: measures the Go translation against the Python
                        original over the same fixture payloads; emits the per-function
                        joules cmd/energy needs for break-even N*. Never runs during a
@@ -142,7 +143,7 @@ cmd/refaas/main.go
 - **N escalates until the difference clears the measured repetition spread.** Most of this corpus does microseconds of work against a millisecond of startup, so at a fixed N the naive answer is a per-invocation cost of *zero* — which would enter `runtime.json` as "free to run" and make `N*` infinite. Unresolvable functions are reported `UNRESOLVED` and **omitted** from `runtime.json` (`cmd/energy` names a missing function, but would cost a zero as free).
 - **Fixture `setup` is applied before measuring** (`cmd/runtime/provision.go` → `floci.ApplySetup`): 40 of the 95 evaluation_set functions declare setup, and invoking one against an empty emulator measures its *error path* — the fastest path through it — which biases the comparison toward whichever side fails faster rather than merely losing a data point. Setup runs once per function, outside the timed region (the actions are idempotent, and a bucket creation charged to invocation 1 would land in the startup term). The emulator is probed with `Clients.Ping` before any function is measured, so a run cannot get an hour in before discovering it is down. `-no-provision` skips those functions explicitly instead.
 - **Three meters and no fabricated joules**: `rapl` (powercap sysfs, no root or perf needed — the primary), `perf`, and `time`. The `time` meter reports **no energy at all** unless `-watts` states a package power, and then tags every figure `energy_derived`. **Neither RAPL nor perf works under WSL2**, so measured energy needs a bare-metal Linux host. **That run has since happened** (2026-08-31, run id `20260831-190900`, host `carl-eikermann-UX310UAK`): `evaluation/runtime-report-20260831-190900.json` records `meter: rapl` and `energy_derived: false`, so the joule figures and `N*` derived from it are measured rather than derived. Check that pair of fields before quoting any runtime figure — the older `runtime-report.json` files are not all measured.
-- First result (paper set, derived energy): Go is **1.9× median steady state but 15.0× median cold start**. `runtime.json` carries the *steady-state* figure deliberately — break-even concerns a deployed function, which at `N*` invocations is overwhelmingly warm — with the cold figures in `-report`.
+- The first, WSL-derived paper-set figures (1.9× steady / 15.0× cold) are superseded and must not be quoted. Measured on RAPL over *validated* translations: `evaluation_set` run `20260904-190539` median **1.28× steady-state vs 46× cold-start energy** (replicates `20260911-165103` 1.31×/45×, `20260912-172904` 1.81×/47× — the last inflated by translations that return early on an unset environment variable, since no fixture sets one); `function_set` run `functionset-20260913-120600` 1.05×/19×. See EVALUATION.md "Replicate series". `runtime.json` carries the *steady-state* figure deliberately — break-even concerns a deployed function, which at `N*` invocations is overwhelmingly warm — with the cold figures in `-report`.
 
 ### Build/test stages (`internal/builder`)
 

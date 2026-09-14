@@ -1,4 +1,4 @@
-| `PYSCAN_PYTHON` |<div id="top">
+<div id="top">
 
 <!-- HEADER STYLE: CLASSIC -->
 <div align="center">
@@ -284,7 +284,7 @@ This will start the service running on port 8080. However, for isolation, it is 
 | `FLOCI_REGION` | `us-east-1` | AWS region used for the Floci-backed Lambda deployment, when enabled. |
 | `FLOCI_LAMBDA_ENDPOINT` | _(auto-detected)_ | AWS endpoint the *deployed* Lambda uses to reach the emulator — not the same as `FLOCI_ENDPOINT`, which is a host-side address that means "the container itself" from inside a Lambda. Leave unset to detect it; set to `off` to inject nothing. See [Optional: Floci integration testing](#optional-floci-integration-testing). |
 | `PYSCAN_PYTHON` | _(auto)_ | Interpreter used by the `pyScan` source-analysis stage; auto-detected as `python3` then `python` on PATH. Set to pin a specific one. |
-| `RUN_LOG_DIR` | `runs` | Directory for the append-only JSONL run log of completed jobs; `off` (or empty) disables persistence. |
+| `RUN_LOG_DIR` | `runs` | Directory for the append-only JSONL run log of every finished job (failures tagged `"completed": false`); `off` (or empty) disables persistence. |
 | `REQUIRE_META` | `false` | Benchmark mode (`true`/`1`): reject uploads without a `meta.json`, so no benchmark result ends up unattributable to a dataset element. |
 
 ---
