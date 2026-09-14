@@ -893,8 +893,8 @@ exists does not depend on §8's assumptions.
 
 | gate (out-of-fold decisions, majority over repeats) | translated | 0904 | 0911 | 0912 |
 |:---|--:|:---|:---|:---|
-| M1 logistic regression (the shipped model) | 49 | 8.4 × 10⁵ – 9.9 × 10⁵ | 6.8 × 10⁵ – 9.9 × 10⁵ | empty (1.0 × 10⁶ against 7.0 × 10⁵) |
-| M2 random forest | 46 | 2.2 × 10⁵ – 4.6 × 10⁶ | 2.4 × 10⁵ – 4.0 × 10⁶ | 2.7 × 10⁵ – 1.7 × 10⁶ |
+| M1 logistic regression | 49 | 8.4 × 10⁵ – 9.9 × 10⁵ | 6.8 × 10⁵ – 9.9 × 10⁵ | empty (1.0 × 10⁶ against 7.0 × 10⁵) |
+| M2 random forest (the shipped model) | 46 | 2.2 × 10⁵ – 4.6 × 10⁶ | 2.4 × 10⁵ – 4.0 × 10⁶ | 2.7 × 10⁵ – 1.7 × 10⁶ |
 
 The logistic-regression gate is at best marginally useful and not in every run. The forest gate is
 useful in all three, over roughly one order of magnitude of invocations, and its portfolio break-even
@@ -967,14 +967,21 @@ Replicate ceiling for any per-function score: AUC 0.894.
   manages 8.4–9.9 × 10⁵ and 6.8–9.9 × 10⁵ in two runs and nothing in the third (table under
   "Break-even" above). The forest AUC spread over repeats and runs is ±0.054, the logistic
   regression's ±0.033.
-- **Which model ships.** `internal/predictor` reads a logistic regression only, so
-  `model-replicates-f9e30f4b.json` is M1 refitted on all 285 rows (threshold 0.579;
-  `export_parity.py` regenerated `internal/predictor/testdata/parity.json` and the Go parity test
-  passes). On the replicate evidence the forest is the better in-corpus gate; shipping it needs a
-  tree reader in Go. That decision is open.
+- **The forest ships.** `internal/predictor` now reads random forests as well as logistic
+  regressions: every tree as flat node arrays, inputs compared as float32 the way scikit-learn
+  walks its trees. `model-replicates-f9e30f4b-rf.json` is M2 refitted on all 285 rows (500 trees,
+  38,622 nodes, 1.1 MB; threshold 0.512, the mean inner-CV balanced point). The Go parity test
+  reproduces scikit-learn's probabilities on all 95 functions to 1.1 × 10⁻¹⁶
+  (`internal/predictor/testdata/parity-rf.json`; the logistic regression keeps its own fixture).
+  `scripts/predict.json` and `.env.example` point at it. As for the logistic regression, the
+  deployed gate is the full fit with an averaged threshold, while the window analysis above uses
+  the out-of-fold decisions — the honest estimate of how that deployed model behaves.
 - **The predictor's own cost.** Pooled over the 285 attempts (mean 13.5 kJ), the standalone predictor
-  (48.8 J) is 3.6 × 10⁻³ of an attempt and pays for itself if it avoids one wasted attempt per 277
-  screened; its marginal cost (1.6 mJ) is 1.2 × 10⁻⁷ of an attempt.
+  (48.8 J, dominated by feature extraction) is 3.6 × 10⁻³ of an attempt and pays for itself if it
+  avoids one wasted attempt per 277 screened. Its marginal cost is the inference alone: one forest
+  decision takes 16 µs in Go (`BenchmarkScoreShipped`; 2.0 µs for the logistic regression), 28 mJ at
+  the node power, i.e. 2.1 × 10⁻⁶ of an attempt. The benchmark ran on the development machine, not the
+  RAPL host, and is charged at the GPU node's power as an upper bound.
 
 #### The earlier model, scored out of configuration
 

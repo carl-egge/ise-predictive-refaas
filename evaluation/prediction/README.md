@@ -99,17 +99,23 @@ D="--dataset $P/dataset-20260904-190539.csv --dataset $P/dataset-20260911-165103
 python3 $P/evaluate.py $D --horizon 1e6 --permutations 200 --breakdown \
     --external $P/dataset-functionset-20260913-120600.csv \
     --json-out $P/results-replicates-f9e30f4b.json \
-    --export-model $P/model-replicates-f9e30f4b.json \
+    --export-model $P/model-replicates-f9e30f4b-lr.json \
     > $P/results-replicates-f9e30f4b.txt
+
+# 4-rf. export the shipped random forest from those results without re-running them: the
+#    same full fit evaluate.py would make, with its inner-CV balanced threshold
+python3 $P/export_model.py $D --results $P/results-replicates-f9e30f4b.json --kind rf \
+    --out $P/model-replicates-f9e30f4b-rf.json
 
 # 4a. the second horizon, for the bounded-useful-range finding in [I9]
 python3 $P/evaluate.py $D --horizon 1e8 --json-out $P/results-replicates-f9e30f4b-N1e8.json \
     > $P/results-replicates-f9e30f4b-N1e8.txt
 
-# 4b. refresh the Go-side parity fixture whenever the model is re-exported
-cp $P/model-replicates-f9e30f4b.json internal/predictor/testdata/model.json
-python3 $P/export_parity.py $D --model $P/model-replicates-f9e30f4b.json
-go test ./internal/predictor/...   # asserts the Go reader matches scikit-learn to 1e-9
+# 4b. refresh the Go-side parity fixtures whenever a model is re-exported: writes
+#     internal/predictor/testdata/parity-<kind>.json and copies the model beside it
+python3 $P/export_parity.py $D --model $P/model-replicates-f9e30f4b-lr.json
+python3 $P/export_parity.py $D --model $P/model-replicates-f9e30f4b-rf.json
+go test ./internal/predictor/...   # asserts the Go reader matches scikit-learn to 1e-9, per kind
 
 # 5. the predictor's own energy, in energy.config.json's units  [I8]
 go build -o /tmp/pyscan ./cmd/pyscan

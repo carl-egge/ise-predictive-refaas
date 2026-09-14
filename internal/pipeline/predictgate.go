@@ -199,15 +199,15 @@ func scoreVector(cfg PredictConfig, fv *domain.FeatureVector) (predictor.Predict
 	return prediction, nil
 }
 
-// modelCache holds parsed models. A model is a few kilobytes of coefficients
-// and never changes underneath a job, so re-reading it per conversion would be
-// pure syscall overhead — the same reason the llmconnector clients cache their
-// transport in Configure.
+// modelCache holds parsed models. A model is a few kilobytes of coefficients or
+// a few megabytes of trees and never changes underneath a job, so re-reading it
+// per conversion would be pure parsing overhead — the same reason the
+// llmconnector clients cache their transport in Configure.
 //
 // The key includes the file's size and modification time rather than the path
 // alone, so replacing a model in place is picked up on the next job without a
 // /reconfigure. That matters because the obvious failure mode of a path-keyed
-// cache is silent: the service keeps scoring with the old coefficients and
+// cache is silent: the service keeps scoring with the old model and
 // nothing in the logs says so.
 var modelCache = struct {
 	sync.Mutex

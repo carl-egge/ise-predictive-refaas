@@ -488,73 +488,133 @@ def report_external(kind, c, ext, N, folds, seed, horizons, target=None, weight=
     return out, p_e
 
 
-def export_model(path, c, N, folds, repeats, schema_version, results):
-    """Export M1 for internal/predictor ([I10]).
+EXPORT_KINDS = {
+    # kind -> (results label, provenance id prefix, internal/predictor model kind)
+    "lr": ("M1 logistic regression", "m1-lr-", "logistic_regression"),
+    "rf": ("M2 random forest", "m2-rf-", "random_forest"),
+}
 
-    The shipped artifact is a vector of coefficients, not a pickled estimator:
-    it keeps go.mod free of any ML dependency, it is auditable by reading, and
-    it makes the deployed decision boundary a reviewable part of the thesis.
 
-    M1 rather than M2: the linear model gives the calibrated probability [I9]
-    composes with and is the arm that transferred to function_set; the per-model
-    comparison is re-reported in the results this export accompanies.
+def write_model_json(path, payload):
+    """Indented JSON, except that each tree of a forest is written compactly on
+    one line: a forest is tens of thousands of nodes, and one number per line
+    would make the file several times larger for no reader's benefit."""
+    trees = payload.get("trees")
+    head = {k: v for k, v in payload.items() if k != "trees"}
+    with open(path, "w") as fh:
+        text = json.dumps(head, indent=1)
+        if trees is None:
+            fh.write(text + "\n")
+            return
+        body = ",\n".join("  " + json.dumps(t, separators=(",", ":")) for t in trees)
+        fh.write(text[:-2] + ',\n "trees": [\n' + body + "\n ]\n}\n")
 
-    The model is fitted on every (function, run) row. The exported threshold is
-    the *balanced* operating point, averaged over the inner-CV selections of every
-    repeat. The energy point is deliberately not shipped: it encodes this
+
+def export_model(path, c, N, folds, repeats, schema_version, results, kind="lr"):
+    """Export M1 (kind "lr") or M2 (kind "rf") for internal/predictor ([I10], [I12]).
+
+    The shipped artifact is plain numbers, not a pickled estimator: it keeps
+    go.mod free of any ML dependency and it makes the deployed decision boundary
+    a reviewable part of the thesis. A logistic regression is its standardizer and
+    coefficients. A random forest is every tree as flat node arrays in the layout
+    of scikit-learn's tree_ - split feature (an index into `features`), threshold,
+    children, and the positive-class fraction at each node - which is enough for
+    internal/predictor to reproduce predict_proba exactly
+    (evaluation/prediction/export_parity.py pins that).
+
+    The model is fitted on every (function, run) row with seed 0. The exported
+    threshold is the *balanced* operating point, averaged over the inner-CV
+    selections of every repeat; it is read from `results` when they hold it (so an
+    export can never disagree with the numbers it accompanies) and recomputed
+    otherwise. The energy point is deliberately not shipped: it encodes this
     corpus's delta-E distribution as much as its labels, and on function_set it
     degenerated to translating nothing.
     """
+    label, prefix, go_kind = EXPORT_KINDS[kind]
     Xs, Ys, _, _, _ = c.stacked()
-    model = make_model("lr", 0).fit(Xs, Ys)
+    if np.isnan(Xs).any():
+        raise SystemExit("the feature table contains NaN; internal/predictor refuses to score "
+                         "missing values, so a model fitted on them cannot be exported")
+    model = make_model(kind, 0).fit(Xs, Ys)
     keep = model.named_steps["var"].get_support()
     kept = [col for col, k in zip(c.cols, keep) if k]
-    scaler = model.named_steps["sc"]
     clf = model.named_steps["clf"]
 
-    thresholds = []
-    for r in range(repeats):
-        _, thr = oof_probs_and_thresholds("lr", c, N, folds, seed=100 + r)
-        thresholds.append(float(np.mean(thr["balanced"])))
+    rows = results.get("%s [balanced pt]" % label, [])
+    by_repeat = {}
+    for s in rows:
+        if "mean_threshold" in s:
+            by_repeat.setdefault(s.get("repeat", 0), s["mean_threshold"])
+    if by_repeat:
+        thresholds = [by_repeat[r] for r in sorted(by_repeat)]
+    else:
+        thresholds = []
+        for r in range(repeats):
+            _, thr = oof_probs_and_thresholds(kind, c, N, folds, seed=100 + r)
+            thresholds.append(float(np.mean(thr["balanced"])))
 
-    aucs = [s["roc_auc"] for s in results.get("M1 logistic regression [balanced pt]", [])
-            if "roc_auc" in s]
+    aucs = [s["roc_auc"] for s in rows if "roc_auc" in s]
     ident = c.run_ids[0] if c.K == 1 else "replicates-" + "+".join(c.run_ids)
     payload = {
-        "model": "logistic_regression",
+        "model": go_kind,
         "feature_schema_version": schema_version,
         "features": kept,
-        "mean": [float(v) for v in scaler.mean_],
-        "scale": [float(v) for v in scaler.scale_],
-        "coefficients": [float(v) for v in clf.coef_[0]],
-        "intercept": float(clf.intercept_[0]),
-        "threshold": float(np.mean(thresholds)),
-        "provenance": {
-            "id": "m1-lr-" + ident,
-            "datasets": [os.path.basename(p) for p in c.paths],
-            "runs": c.run_ids,
-            "trained_on": int(c.n),
-            "trained_on_rows": int(c.K * c.n),
-            "positives_per_run": [int(v) for v in c.Y.sum(axis=1)],
-            "independent_groups": int(len(set(c.groups))),
-            "dropped_zero_variance_columns": int(len(c.cols) - len(kept)),
-            "cv_roc_auc_mean": float(np.mean(aucs)) if aucs else None,
-            "cv_roc_auc_std": float(np.std(aucs)) if aucs else None,
-            "cv_protocol": "StratifiedGroupKFold over functions on group_id, %d folds x %d "
-                           "repeats; AUC per run, averaged" % (folds, repeats),
-            "threshold_objective": "balanced_accuracy",
-            "threshold_horizon_invocations": None,
-            "hyperparameters": "C=1.0, L2, class_weight=balanced, fixed a priori (no tuning)",
-            "caveat": "labels are the per-run outcomes of %d run%s of one pipeline "
-                      "configuration; this model predicts what THIS pipeline fails at, "
-                      "not translatability" % (c.K, "" if c.K == 1 else "s"),
-        },
     }
-    with open(path, "w") as fh:
-        json.dump(payload, fh, indent=1)
-        fh.write("\n")
-    print("  %d features kept of %d (%d zero-variance columns dropped), threshold %.3f"
-          % (len(kept), len(c.cols), len(c.cols) - len(kept), payload["threshold"]))
+    if kind == "lr":
+        scaler = model.named_steps["sc"]
+        payload.update({
+            "mean": [float(v) for v in scaler.mean_],
+            "scale": [float(v) for v in scaler.scale_],
+            "coefficients": [float(v) for v in clf.coef_[0]],
+            "intercept": float(clf.intercept_[0]),
+        })
+        hyper = "C=1.0, L2, class_weight=balanced, fixed a priori (no tuning)"
+    else:
+        pos = list(clf.classes_).index(1)
+        trees = []
+        for est in clf.estimators_:
+            t = est.tree_
+            # Normalised here rather than trusting the stored convention: older
+            # scikit-learn stores weighted counts, newer stores fractions, and
+            # predict_proba normalises either way.
+            frac = t.value[:, 0, pos] / t.value[:, 0, :].sum(axis=1)
+            trees.append({
+                "feature": [int(v) for v in t.feature],
+                "threshold": [float(v) for v in t.threshold],
+                "left": [int(v) for v in t.children_left],
+                "right": [int(v) for v in t.children_right],
+                "value": [float(v) for v in frac],
+            })
+        payload["trees"] = trees
+        hyper = ("n_estimators=500, min_samples_leaf=2, class_weight=balanced_subsample, "
+                 "fixed a priori (no tuning)")
+    payload["threshold"] = float(np.mean(thresholds))
+    payload["provenance"] = {
+        "id": prefix + ident,
+        "datasets": [os.path.basename(p) for p in c.paths],
+        "runs": c.run_ids,
+        "trained_on": int(c.n),
+        "trained_on_rows": int(c.K * c.n),
+        "positives_per_run": [int(v) for v in c.Y.sum(axis=1)],
+        "independent_groups": int(len(set(c.groups))),
+        "dropped_zero_variance_columns": int(len(c.cols) - len(kept)),
+        "cv_roc_auc_mean": float(np.mean(aucs)) if aucs else None,
+        "cv_roc_auc_std": float(np.std(aucs)) if aucs else None,
+        "cv_protocol": "StratifiedGroupKFold over functions on group_id, %d folds x %d "
+                       "repeats; AUC per run, averaged" % (folds, repeats),
+        "threshold_objective": "balanced_accuracy",
+        "threshold_horizon_invocations": None,
+        "hyperparameters": hyper,
+        "caveat": "labels are the per-run outcomes of %d run%s of one pipeline "
+                  "configuration; this model predicts what THIS pipeline fails at, "
+                  "not translatability" % (c.K, "" if c.K == 1 else "s"),
+    }
+    write_model_json(path, payload)
+    print("  %s: %d features kept of %d (%d zero-variance columns dropped), threshold %.3f%s"
+          % (go_kind, len(kept), len(c.cols), len(c.cols) - len(kept), payload["threshold"],
+             ", %d trees, %d nodes" % (len(payload["trees"]),
+                                       sum(len(t["left"]) for t in payload["trees"]))
+             if kind == "rf" else ""))
     return path
 
 
@@ -581,7 +641,9 @@ def main():
                     help="a second dataset CSV (e.g. function_set) used as a one-shot "
                          "external corroboration set")
     ap.add_argument("--export-model", default="",
-                    help="write M1 as a JSON model for internal/predictor ([I10])")
+                    help="write a JSON model for internal/predictor ([I10])")
+    ap.add_argument("--export-kind", choices=sorted(EXPORT_KINDS), default="lr",
+                    help="which model --export-model writes: lr (M1) or rf (M2)")
     ap.add_argument("--feature-schema-version", type=int, default=1,
                     help="pyscan.FeatureSchemaVersion the dataset was built under; "
                          "stamped into the exported model so the Go side can refuse "
@@ -842,7 +904,7 @@ def main():
 
     if args.export_model:
         path = export_model(args.export_model, c, N, args.folds, args.repeats,
-                            args.feature_schema_version, results)
+                            args.feature_schema_version, results, kind=args.export_kind)
         print("\nwrote %s" % path)
 
     if args.json_out:

@@ -1,5 +1,5 @@
 {
- "model": "model.json",
+ "model": "model-lr.json",
  "feature_names": [
   "lloc",
   "cc",

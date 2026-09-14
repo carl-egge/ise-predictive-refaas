@@ -145,8 +145,8 @@ out-of-fold decisions, has that window only in two runs (8.4e5 to 9.9e5 and 6.8e
 and none in the third. The random forest has it in all three, from 2.2e5 to 2.7e5 up to
 1.7e6 to 4.6e6 invocations. Both ends scale with the same energy constants, so whether the
 window exists does not depend on C1; it depends on which functions the gate declines and
-which of them happen to succeed. The deployed gate is the weaker of the two only because
-the Go reader supports logistic regression alone.
+which of them happen to succeed. The deployed gate is the random forest; the Go reader
+reproduces its probabilities to 1e-16, so the window describes the model that ships.
 
 **N6. A measurement defect was found and corrected, and disclosing it is a strength.** An
 earlier runtime measurement timed 13 translations that had never passed their tests,

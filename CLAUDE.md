@@ -82,9 +82,11 @@ cmd/refaas/main.go
        -> internal/pipeline Runner: holds compiled Pipeline + LLM Client, executes ConversionRequests
             -> internal/pyscan       deterministic Python AST analysis (pyScan stage): prompt
                                      hints + the ex-ante feature vector for prediction
-            -> internal/predictor    reads the exported JSON model and scores a feature
-                                     vector (predictGate stage); no ML dependency, and
-                                     off unless PREDICT_ENABLED / predict.enabled
+            -> internal/predictor    reads the exported JSON model (logistic regression or
+                                     random forest as flat tree arrays; the shipped gate is
+                                     the forest) and scores a feature vector (predictGate
+                                     stage); no ML dependency, parity with scikit-learn pinned
+                                     per kind in testdata; off unless PREDICT_ENABLED
             -> internal/translator   LLM-backed Converters (cleaner/coder/fixer/realign)
             -> internal/builder      build + test Converters/validators
             -> internal/llmconnector LLM Client implementations (ollama, gemini, chatai)

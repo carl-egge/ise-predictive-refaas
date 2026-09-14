@@ -104,7 +104,7 @@
 - [x] [I8] Measure the predictor's own energy in the same units as the pipeline
 - [~] [I9] Secondary objective (energy-saving potential): composed and measured; not shipped
 - [x] [I10] Service integration: `internal/predictor` + `predictGate` converter, off by default
-- [x] [I12] Retrained and re-evaluated on the replicate series — **2026-09-14**; M1 AUC 0.642 (p=0.040), M2 0.764, replicate ceiling 0.894; shipped model `model-replicates-f9e30f4b.json`
+- [x] [I12] Retrained and re-evaluated on the replicate series — **2026-09-14**; M1 AUC 0.642 (p=0.040), M2 0.764, replicate ceiling 0.894; shipped model `model-replicates-f9e30f4b-rf.json` (M2, via the new tree reader)
 
 ---
 
@@ -1718,10 +1718,9 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
   - **`internal/predictor`** reads an exported JSON model (coefficients, standardizer, threshold,
     provenance) and scores a vector. Pure stdlib — `go.mod` gains no ML dependency — and it
     imports neither `internal/pipeline` nor `internal/domain`, so it stays usable offline.
-    *(Single-run rationale, kept as history. Since [I12] the shipped file is
-    `model-replicates-f9e30f4b.json`, and on the replicate series the evidence runs the other way
-    in-corpus — the forest is the better gate — so M1 ships because the Go reader supports only
-    logistic regression, not because the forest failed.)*
+    *(Single-run rationale, kept as history. Since [I12] the evidence runs the other way on the
+    replicate series — the forest is the better gate — and the forest ships:
+    `model-replicates-f9e30f4b-rf.json`, read by the tree reader added to `internal/predictor`.)*
     **M1 is what ships**, on [I7]'s evidence: the forest does not transfer (AUC 0.525 on
     `function_set`, 0.242 on bucket D+) and does not produce the calibrated probability [I9]
     composes with.
@@ -1844,11 +1843,23 @@ translated packages `cmd/runtime` needs — then the measurement pass against `r
   marginally significant; the refitted coefficients lean on size and complexity (`halstead_vocabulary`,
   `n_loops`, `cc_total`, `cc`) rather than on the AWS/fixture surface — consistent with the replicate
   outcome table (A 63% vs D+ 13%; AWS split no longer significant).
-- **Shipped**: `model-replicates-f9e30f4b.json` (M1 on all 285 rows, threshold 0.579), wired into
-  `scripts/predict.json`, `.env.example`, the README and `internal/predictor/testdata` (parity
-  regenerated; `go test ./internal/predictor/...` passes). **Open decision:** in-corpus the forest is the
-  better gate, but `internal/predictor` reads only logistic regressions; shipping M2 needs a tree reader
-  and its own parity test.
+- **Shipped: the random forest** (`model-replicates-f9e30f4b-rf.json`, M2 on all 285 rows, 500 trees /
+  38,622 nodes / 1.1 MB, threshold 0.512), wired into `scripts/predict.json`, `.env.example` and the
+  README. The logistic regression stays exported as `model-replicates-f9e30f4b-lr.json` (threshold
+  0.579). Done 2026-09-14:
+  - `internal/predictor` gained `random_forest`: trees as flat node arrays in scikit-learn's `tree_`
+    layout, scored as the mean positive-class leaf fraction (= `predict_proba`), inputs cast to float32
+    before each split comparison as scikit-learn does. Load validation refuses a tree whose children do
+    not come after their parent (which is what guarantees a walk terminates), out-of-range feature
+    indices, leaf values outside [0, 1], half leaf markers, and a forest carrying coefficients (or a
+    logistic regression carrying trees). Scoring refuses NaN and values beyond float32 range.
+  - Parity per kind: `testdata/parity-lr.json` + `model-lr.json`, `parity-rf.json` + `model-rf.json`
+    (the old `model.json`/`parity.json` are gone); worst difference 2.2 × 10⁻¹⁶ (lr), 1.1 × 10⁻¹⁶ (rf).
+  - `evaluate.py --export-kind lr|rf`; new `export_model.py` exports from an existing `--json-out`
+    without re-running the evaluation, taking the threshold from the results (the LR re-export through
+    it is byte-for-byte the evaluated model); `export_parity.py` picks the kind from the model file.
+  - `BenchmarkScoreShipped`: 16 µs per forest decision (2.0 µs logistic regression) → 28 mJ marginal,
+    2.1 × 10⁻⁶ of a mean attempt.
 - **The gate window settles it more sharply than AUC does.** Applied through out-of-fold decisions, the
   M2 gate beats both baselines in every run (2.2–2.7 × 10⁵ up to 1.7–4.6 × 10⁶ invocations; portfolio
   break-even 2.2–2.7 × 10⁵, close to the oracle's 1.6–2.3 × 10⁵). The M1 gate has a window only in two
